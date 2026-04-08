@@ -254,6 +254,15 @@ func (m *Manager) Ping(jid string) bool {
 	return ok && sess.Client.IsConnected()
 }
 
+// Reconnect tenta reconectar uma sessão que estava desconectada.
+func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
+	// Se já está conectada, não faz nada
+	if m.Ping(s.JID) {
+		return nil
+	}
+	return m.connectSession(ctx, s)
+}
+
 // ListSessions retorna todos os JIDs ativos.
 func (m *Manager) ListSessions() []string {
 	m.mu.RLock()

@@ -44,41 +44,32 @@ func (w *Watchdog) loop(ctx context.Context) {
 }
 
 func (w *Watchdog) check(ctx context.Context) {
-	sessions := w.waManager.ListSessions()
+	// Busca todas as sessões do banco (ativas + desconectadas, exceto banidas)
+	dbSessions, err := w.repo.ListAllSessions(ctx)
+	if err != nil {
+		w.log.Error("watchdog: list sessions error", zap.Error(err))
+		return
+	}
+
 	alive := 0
-	dead := 0
+	reconnected := 0
 
-	for _, jid := range sessions {
-		if w.waManager.Ping(jid) {
+	for _, s := range dbSessions {
+		if w.waManager.Ping(s.JID) {
 			alive++
+			continue
+		}
+
+		// Sessão não está respondendo — tenta reconectar
+		w.log.Warn("session not responding, attempting reconnect", zap.String("jid", s.JID))
+		if err := w.waManager.Reconnect(ctx, &s); err != nil {
+			w.log.Error("watchdog reconnect failed", zap.String("jid", s.JID), zap.Error(err))
+			_ = w.repo.UpdateSessionStatus(ctx, s.JID, db.SessionDisconnected)
 		} else {
-			dead++
-			w.log.Warn("session not responding, attempting reconnect", zap.String("jid", jid))
-			_ = w.repo.UpdateSessionStatus(ctx, jid, db.SessionDisconnected)
+			reconnected++
+			w.log.Info("watchdog reconnected session", zap.String("jid", s.JID))
 		}
 	}
 
-	// Tenta recarregar sessões desconectadas do banco
-	if dead > 0 {
-		dbSessions, err := w.repo.ListActiveSessions(ctx)
-		if err != nil {
-			w.log.Error("watchdog: list sessions error", zap.Error(err))
-			return
-		}
-
-		reconnected := 0
-		for _, s := range dbSessions {
-			if !w.waManager.Ping(s.JID) {
-				// A reconexão é feita via LoadAll, aqui apenas logamos
-				w.log.Info("session needs reconnect", zap.String("jid", s.JID), zap.String("phone", s.Phone))
-				reconnected++
-			}
-		}
-
-		if reconnected > 0 {
-			w.log.Info("watchdog reconnect triggered", zap.Int("count", reconnected))
-		}
-	}
-
-	w.log.Debug("watchdog heartbeat", zap.Int("alive", alive), zap.Int("dead", dead))
+	w.log.Debug("watchdog heartbeat", zap.Int("alive", alive), zap.Int("reconnected", reconnected))
 }

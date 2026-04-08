@@ -64,6 +64,28 @@ func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession
 	return sessions, nil
 }
 
+// ListAllSessions retorna todas as sessões (ativas e desconectadas), exceto banidas.
+// Usada pelo watchdog para tentar reconectar sessões que caíram.
+func (r *Repository) ListAllSessions(ctx context.Context) ([]WhatsAppSession, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
+		 FROM whatsapp_sessions WHERE status != 'banned'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []WhatsAppSession
+	for rows.Next() {
+		var s WhatsAppSession
+		if err := rows.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, nil
+}
+
 func (r *Repository) UpdateSessionStatus(ctx context.Context, jid string, status SessionStatus) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE whatsapp_sessions SET status = $1, last_seen = NOW() WHERE jid = $2`,
