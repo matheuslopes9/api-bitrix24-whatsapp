@@ -78,12 +78,12 @@ func (m *Manager) AddSession(ctx context.Context, phone string) error {
 		return err
 	}
 
-	container, err := sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on", waLog.Noop)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:"+dbPath+"?_foreign_keys=on", waLog.Noop)
 	if err != nil {
 		return fmt.Errorf("open sqlite store: %w", err)
 	}
 
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		return fmt.Errorf("get device: %w", err)
 	}
@@ -92,7 +92,7 @@ func (m *Manager) AddSession(ctx context.Context, phone string) error {
 
 	if client.Store.ID == nil {
 		// Nova sessão — processa QR em background
-		go m.connectWithQR(phone, dbPath, client)
+		go m.connectWithQR(context.Background(), phone, dbPath, client)
 		return nil
 	}
 
@@ -119,7 +119,7 @@ func (m *Manager) AddSession(ctx context.Context, phone string) error {
 }
 
 // connectWithQR estabelece conexão nova com geração de QR via event handler.
-func (m *Manager) connectWithQR(phone, dbPath string, client *whatsmeow.Client) {
+func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, client *whatsmeow.Client) {
 	// Usa event handler direto — mais confiável que GetQRChannel
 	client.AddEventHandler(func(rawEvt interface{}) {
 		m.log.Info("raw whatsapp event", zap.String("type", fmt.Sprintf("%T", rawEvt)), zap.String("phone", phone))
@@ -261,11 +261,11 @@ func (m *Manager) ListSessions() []string {
 }
 
 func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) error {
-	container, err := sqlstore.New("sqlite3", "file:"+s.SessionFile+"?_foreign_keys=on", waLog.Noop)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:"+s.SessionFile+"?_foreign_keys=on", waLog.Noop)
 	if err != nil {
 		return err
 	}
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		return err
 	}
