@@ -150,8 +150,6 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 			jid := evt.ID.String()
 			sessionID := uuid.New()
 			sess := &Session{ID: sessionID, JID: jid, Phone: phone, Client: client, dbPath: dbPath}
-			// Adiciona handler de mensagens imediatamente após o pair
-			client.AddEventHandler(m.buildEventHandler(sess))
 			m.mu.Lock()
 			m.sessions[jid] = sess
 			m.mu.Unlock()
@@ -160,8 +158,9 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 				Status: db.SessionActive, SessionFile: dbPath,
 			})
 			m.log.Info("session paired via qr", zap.String("jid", jid), zap.String("phone", phone))
+			// AddEventHandler fora do handler atual para evitar deadlock no whatsmeow
+			go client.AddEventHandler(m.buildEventHandler(sess))
 		case *events.Connected:
-			// Sessão já foi configurada no PairSuccess — apenas atualiza status
 			jid := client.Store.ID.String()
 			_ = m.repo.UpdateSessionStatus(context.Background(), jid, db.SessionActive)
 			m.log.Info("session connected after scan", zap.String("jid", jid))
