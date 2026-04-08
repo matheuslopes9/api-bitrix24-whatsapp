@@ -83,10 +83,13 @@ type tokenResponse struct {
 }
 
 // SaveToken salva um token diretamente (usado pelo app local no installation handler).
+// Normaliza o domain para sempre usar o valor da config (evita mismatch https:// vs sem).
 func (c *Client) SaveToken(ctx context.Context, domain, accessToken, refreshToken string, expiresIn int) error {
+	// Usa sempre o domain da config para garantir consistência na busca
+	normalizedDomain := c.cfg.Domain
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
-		Domain:       domain,
+		Domain:       normalizedDomain,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
