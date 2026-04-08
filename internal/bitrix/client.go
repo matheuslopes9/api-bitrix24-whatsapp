@@ -311,6 +311,15 @@ func (c *Client) ConnectorSetDelivery(ctx context.Context, connectorID string, l
 	return err
 }
 
+// BindEvent registra um webhook para um evento específico do Bitrix24.
+func (c *Client) BindEvent(ctx context.Context, event, handlerURL string) error {
+	_, err := c.call(ctx, "event.bind", map[string]interface{}{
+		"event":   event,
+		"handler": handlerURL,
+	})
+	return err
+}
+
 // ─── CRM ──────────────────────────────────────────────────────────────────
 
 // FindOrCreateLead procura um lead pelo telefone ou cria um novo.

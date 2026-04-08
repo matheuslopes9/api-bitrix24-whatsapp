@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
@@ -183,10 +184,13 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// Registra e ativa o conector no Contact Center (executa em background para não travar o callback)
+	// Registra conector, ativa na Open Line e vincula evento de reply (background)
+	eventURL := h.cfg.Bitrix.RedirectURI // base: https://<dominio>/bitrix/callback
+	// Deriva a URL do evento trocando o sufixo
+	eventURL = strings.TrimSuffix(eventURL, "/bitrix/callback") + "/bitrix/connector/event"
 	go func() {
-		ctx := context.Background() // c.Context() é inválido após o handler retornar
-		handlerURL := h.cfg.Bitrix.RedirectURI // reutiliza a URL base do app
+		ctx := context.Background()
+		handlerURL := h.cfg.Bitrix.RedirectURI
 		if err := h.bitrixClient.RegisterConnector(ctx, "whatsapp_uc", "WhatsApp UC", handlerURL); err != nil {
 			h.log.Warn("imconnector.register failed", zap.Error(err))
 		} else {
@@ -196,6 +200,12 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			h.log.Warn("imconnector.activate failed", zap.Error(err))
 		} else {
 			h.log.Info("imconnector activated", zap.Int("line_id", h.cfg.Bitrix.OpenLineID))
+		}
+		// Registra o webhook de reply do operador via event.bind
+		if err := h.bitrixClient.BindEvent(ctx, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("event.bind ONIMCONNECTORMESSAGEADD failed", zap.Error(err))
+		} else {
+			h.log.Info("event.bind ONIMCONNECTORMESSAGEADD ok", zap.String("url", eventURL))
 		}
 	}()
 
