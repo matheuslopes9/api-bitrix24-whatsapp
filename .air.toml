@@ -1,0 +1,9 @@
+[build]
+  cmd = "go build -o ./bin/connector ./cmd/server"
+  bin = "./bin/connector"
+  include_ext = ["go"]
+  exclude_dir = ["bin", "deploy", "migrations"]
+  delay = 1000
+
+[log]
+  time = true

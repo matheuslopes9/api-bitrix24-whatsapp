@@ -1,0 +1,90 @@
+package api
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
+	"go.uber.org/zap"
+)
+
+func New(
+	cfg *config.Config,
+	repo *db.Repository,
+	waManager *whatsapp.Manager,
+	bitrixClient *bitrix.Client,
+	q *queue.Queue,
+	metrics *telemetry.Metrics,
+	log *zap.Logger,
+) *fiber.App {
+
+	app := fiber.New(fiber.Config{
+		AppName:      "WhatsApp-Bitrix24 Connector",
+		ReadTimeout:  60_000,
+		WriteTimeout: 60_000,
+		ErrorHandler: jsonErrorHandler,
+	})
+
+	app.Use(recover.New())
+	app.Use(cors.New())
+	app.Use(logger.New(logger.Config{
+		Format: "[${time}] ${status} ${method} ${path} ${latency}\n",
+	}))
+
+	h := newHandlers(cfg, repo, waManager, bitrixClient, q, metrics, log)
+
+	// ─── Health ──────────────────────────────────────────────────────────
+	app.Get("/health", h.health)
+
+	// ─── WhatsApp Sessions ───────────────────────────────────────────────
+	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
+	wa.Post("/sessions", h.addSession)
+	wa.Get("/sessions", h.listSessions)
+	wa.Get("/sessions/:phone/qr", h.getSessionQR)
+	wa.Delete("/sessions/:jid", h.removeSession)
+	wa.Post("/send", h.sendMessage)
+
+	// ─── Bitrix24 ────────────────────────────────────────────────────────
+	bx := app.Group("/bitrix")
+	bx.Get("/oauth/start", h.bitrixOAuthStart)
+	bx.Get("/callback", h.bitrixOAuthCallback)
+	bx.Post("/callback", h.bitrixOAuthCallback)   // Bitrix local app envia POST no install
+	bx.Post("/webhook", h.bitrixWebhook)           // Recebe eventos do Bitrix (resposta do operador)
+
+	// ─── Relatórios ──────────────────────────────────────────────────────
+	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
+	stats.Get("/daily", h.dailyStats)
+	stats.Get("/queues", h.queueStats)
+
+	// ─── Prometheus metrics ──────────────────────────────────────────────
+	app.Get("/metrics", metrics.Handler())
+
+	return app
+}
+
+func jsonErrorHandler(ctx *fiber.Ctx, err error) error {
+	code := fiber.StatusInternalServerError
+	if e, ok := err.(*fiber.Error); ok {
+		code = e.Code
+	}
+	return ctx.Status(code).JSON(fiber.Map{"error": err.Error()})
+}
+
+func authMiddleware(secret string) fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
+		if secret == "" {
+			return ctx.Next()
+		}
+		auth := ctx.Get("X-API-Key")
+		if auth != secret {
+			return fiber.ErrUnauthorized
+		}
+		return ctx.Next()
+	}
+}

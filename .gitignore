@@ -1,0 +1,6 @@
+.env
+bin/
+sessions/
+media/
+*.db
+*.log
