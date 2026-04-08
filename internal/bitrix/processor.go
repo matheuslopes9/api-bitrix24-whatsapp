@@ -31,12 +31,13 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		return fmt.Errorf("ensure contact: %w", err)
 	}
 
-	// 2. Envia mensagem para o Open Lines (apenas texto por enquanto)
+	// 2. Adiciona mensagem como comentário no Lead do CRM
 	text := job.Text
 	if text == "" {
 		text = "[" + job.MessageType + "]"
 	}
-	if err := p.client.SendMessage(ctx, contact.BitrixID, text); err != nil {
+	comment := fmt.Sprintf("📱 WhatsApp (%s): %s", job.FromPhone, text)
+	if err := p.client.AddLeadComment(ctx, contact.BitrixID, comment); err != nil {
 		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("send to bitrix: %w", err)
 	}
@@ -51,22 +52,17 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	return nil
 }
 
-// ensureContact garante que temos um lead e uma sessão de chat no Bitrix para este contato.
+// ensureContact garante que temos um lead no CRM para este contato.
 func (p *Processor) ensureContact(ctx context.Context, job *queue.InboundJob) (*db.ContactMapping, error) {
 	existing, err := p.repo.GetContactByJID(ctx, job.FromJID, job.SessionID)
 	if err == nil {
 		return existing, nil
 	}
 
-	// Abre (ou recupera) uma sessão no Open Lines
-	sessionID, err := p.client.OpenChatSession(ctx, p.lineID, job.FromPhone, job.FromName, "")
+	// Cria ou recupera Lead no CRM pelo telefone
+	leadID, err := p.client.FindOrCreateLead(ctx, job.FromPhone, job.FromName)
 	if err != nil {
-		// Fallback: cria um Lead no CRM
-		leadID, err2 := p.client.FindOrCreateLead(ctx, job.FromPhone, job.FromName)
-		if err2 != nil {
-			return nil, fmt.Errorf("open chat: %v | create lead: %w", err, err2)
-		}
-		sessionID = leadID
+		return nil, fmt.Errorf("create lead: %w", err)
 	}
 
 	contact := &db.ContactMapping{
@@ -74,8 +70,8 @@ func (p *Processor) ensureContact(ctx context.Context, job *queue.InboundJob) (*
 		WAJID:        job.FromJID,
 		WAPhone:      job.FromPhone,
 		WAName:       job.FromName,
-		BitrixEntity: "openlines",
-		BitrixID:     sessionID,
+		BitrixEntity: "lead",
+		BitrixID:     leadID,
 		SessionID:    &job.SessionID,
 	}
 
