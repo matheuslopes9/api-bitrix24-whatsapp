@@ -1,4 +1,5 @@
 .env
+CREDENCIAIS.md
 bin/
 sessions/
 media/

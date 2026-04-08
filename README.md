@@ -1,13 +1,13 @@
 # WhatsApp ↔ Bitrix24 Connector
 
-Conector de alta performance entre WhatsApp e Bitrix24 Open Lines, capaz de gerenciar até **1.000 conversas simultâneas**.
+Conector de alta performance entre WhatsApp e Bitrix24 Open Lines, capaz de gerenciar múltiplas sessões simultâneas.
 
 ## Stack
 
 | Componente | Tecnologia |
 |---|---|
-| Linguagem | Go 1.23 |
-| WhatsApp | whatsmeow (protocolo nativo) |
+| Linguagem | Go 1.25 |
+| WhatsApp | whatsmeow v0.0.0-20260327181659-02ec817e7cf4 |
 | HTTP | Fiber v2 |
 | Banco de dados | PostgreSQL (pgxpool) |
 | Cache / Filas | Redis |
@@ -32,15 +32,25 @@ WhatsApp ──► Manager ──► Queue (Redis) ──► Worker Pool ──�
 
 ## Endpoints
 
-### WhatsApp
+### UI (sem autenticação)
 
-| Método | Rota | Auth | Descrição |
-|---|---|---|---|
-| `POST` | `/wa/sessions` | Bearer | Inicia nova sessão (retorna imediatamente) |
-| `GET` | `/wa/sessions` | Bearer | Lista sessões ativas |
-| `GET` | `/wa/sessions/:phone/qr` | Bearer | Polling para obter QR code |
-| `DELETE` | `/wa/sessions/:jid` | Bearer | Remove sessão |
-| `POST` | `/wa/send` | Bearer | Envia mensagem de texto |
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/connect` | Página de conexão WhatsApp (QR scan) |
+| `POST` | `/ui/sessions` | Inicia nova sessão |
+| `GET` | `/ui/sessions/:phone/qr` | Polling do QR code |
+| `GET` | `/ui/sessions` | Lista sessões ativas |
+| `DELETE` | `/ui/sessions/:jid` | Desconecta sessão |
+
+### WhatsApp (requer `X-API-Key`)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/wa/sessions` | Inicia nova sessão |
+| `GET` | `/wa/sessions` | Lista sessões ativas |
+| `GET` | `/wa/sessions/:phone/qr` | Polling para obter QR code |
+| `DELETE` | `/wa/sessions/:jid` | Remove sessão |
+| `POST` | `/wa/send` | Envia mensagem de texto |
 
 ### Bitrix24
 
@@ -56,20 +66,23 @@ WhatsApp ──► Manager ──► Queue (Redis) ──► Worker Pool ──�
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Métricas Prometheus |
+| `GET` | `/stats/daily` | Estatísticas diárias (requer `X-API-Key`) |
+| `GET` | `/stats/queues` | Status das filas (requer `X-API-Key`) |
 
 ## Autenticação da API
 
-Todas as rotas `/wa/*` exigem header:
+Rotas `/wa/*` e `/stats/*` exigem header:
 ```
-Authorization: Bearer <APP_SECRET>
+X-API-Key: <APP_SECRET>
 ```
 
-## Fluxo de Conexão WhatsApp
+## Fluxo de Conexão WhatsApp (via UI)
 
-1. `POST /wa/sessions` com `{"phone": "5519910001772"}` — retorna `{"status": "connecting", "qr_url": "..."}`
-2. Fazer polling em `GET /wa/sessions/5519910001772/qr` a cada 2s
-3. Quando `status == "ready"`, exibir o `qr` (string Base64 ou texto) para escanear
-4. Após escaneamento, a sessão fica ativa e o QR some
+1. Acessar `https://<dominio>/connect`
+2. Digitar o número no formato `5519910001772`
+3. Clicar em **Conectar** e aguardar o QR code aparecer
+4. Escanear com o WhatsApp do celular (⋮ → Aparelhos conectados → Conectar um aparelho)
+5. Sessão ativa aparece na lista "Dispositivos conectados"
 
 ## Deploy no EasyPanel
 
@@ -83,26 +96,29 @@ Authorization: Bearer <APP_SECRET>
 ### Passo a passo
 
 1. Criar serviço **App** no EasyPanel apontando para o repo GitHub
-2. Build command: automático via `Dockerfile`
+2. Build automático via `Dockerfile`
 3. Configurar variáveis de ambiente (ver seção abaixo)
-4. Rodar migrations manualmente no PostgreSQL:
+4. Rodar migrations no terminal do PostgreSQL (EasyPanel):
    ```sql
-   -- conectar via EasyPanel terminal no serviço PostgreSQL
-   psql -U admin -d whatsapp-bitrix -f /path/to/migrations/001_init.sql
+   psql -U admin -d whatsapp-bitrix
+   \i /path/to/migrations/001_init.sql
    ```
-5. Acessar `https://<dominio-easypanel>/bitrix/oauth/start` para autenticar no Bitrix24
+5. Acessar `https://<dominio>/connect` para conectar o WhatsApp
+6. Acessar `https://<dominio>/bitrix/oauth/start` para autenticar no Bitrix24
 
 ### Variáveis de ambiente
+
+> **Atenção:** Não use `#` em senhas/secrets — o EasyPanel interpreta como comentário e trunca o valor.
 
 ```env
 APP_PORT=3000
 APP_ENV=production
-APP_SECRET=<string-forte>
+APP_SECRET=<string-forte-sem-hash>
 
 POSTGRES_HOST=<nome-servico-easypanel>
 POSTGRES_PORT=5432
 POSTGRES_USER=admin
-POSTGRES_PASSWORD=<senha>
+POSTGRES_PASSWORD=<senha-sem-hash>
 POSTGRES_DB=whatsapp-bitrix
 POSTGRES_SSLMODE=disable
 POSTGRES_MAX_OPEN_CONNS=50
@@ -110,7 +126,7 @@ POSTGRES_MAX_IDLE_CONNS=10
 
 REDIS_HOST=<nome-servico-easypanel>
 REDIS_PORT=6379
-REDIS_PASSWORD=<senha>
+REDIS_PASSWORD=<senha-sem-hash>
 REDIS_DB=0
 
 WA_SESSIONS_DIR=./sessions
@@ -132,9 +148,10 @@ WATCHDOG_PING_INTERVAL_SECS=30
 ## Desenvolvimento local
 
 ### Requisitos
-- Go 1.23+
+- Go 1.25+
 - Docker + Docker Compose
 - CGO habilitado (necessário para sqlite3)
+- gcc / musl-dev instalados
 
 ### Subir infraestrutura local
 ```bash
@@ -172,6 +189,10 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 ├── cmd/server/          # Entrypoint
 ├── internal/
 │   ├── api/             # HTTP handlers + rotas (Fiber)
+│   │   ├── server.go    # Setup do app Fiber e rotas
+│   │   ├── ui.go        # Handlers da UI /connect
+│   │   ├── handlers.go  # Handlers da API /wa/*
+│   │   └── ...
 │   ├── bitrix/          # Cliente Bitrix24 + processador de eventos
 │   ├── config/          # Configuração via viper/env
 │   ├── db/              # Repositório PostgreSQL
@@ -187,12 +208,15 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 
 ## Status atual
 
-- [x] Autenticação Bitrix24 (ONAPPINSTALL recebido com sucesso)
-- [x] Gerenciamento de sessões WhatsApp (async QR)
+- [x] Deploy EasyPanel configurado e rodando
+- [x] PostgreSQL e Redis conectados
+- [x] Gerenciamento de sessões WhatsApp (async QR via goroutine)
+- [x] UI `/connect` com QR scan, lista de dispositivos e botão desconectar
+- [x] WhatsApp conectado via QR scan em produção
 - [x] Fila Redis com worker pool
 - [x] Watchdog de reconexão
 - [x] Métricas Prometheus
-- [x] Deploy EasyPanel configurado
-- [ ] Escaneamento QR testado em produção
-- [ ] Open Lines ID configurado
-- [ ] Testes end-to-end WA → Bitrix e Bitrix → WA
+- [ ] Open Lines ID configurado no Bitrix24
+- [ ] Fluxo WA → Bitrix24 (criação de lead/conversa)
+- [ ] Fluxo Bitrix24 → WA (resposta do operador)
+- [ ] Testes end-to-end
