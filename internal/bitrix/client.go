@@ -219,6 +219,94 @@ func (c *Client) SendFile(ctx context.Context, sessionID int64, fileName string,
 	return err
 }
 
+// ─── Im Connector (Open Channel) ─────────────────────────────────────────
+
+// ConnectorMessage representa uma mensagem de cliente enviada ao connector.
+type ConnectorMessage struct {
+	User    ConnectorUser    `json:"user"`
+	Message ConnectorMsgBody `json:"message"`
+	Chat    ConnectorChat    `json:"chat"`
+}
+
+type ConnectorUser struct {
+	ID    string `json:"ID"`
+	Name  string `json:"NAME"`
+	Phone string `json:"PHONE"`
+}
+
+type ConnectorMsgBody struct {
+	ID   string `json:"ID"`
+	Text string `json:"TEXT"`
+}
+
+type ConnectorChat struct {
+	ID string `json:"ID"`
+}
+
+// RegisterConnector registra este app como conector de canal externo no Bitrix24.
+// Deve ser chamado uma vez durante a instalação do app.
+func (c *Client) RegisterConnector(ctx context.Context, connectorID, name, handlerURL string) error {
+	_, err := c.call(ctx, "imconnector.register", map[string]interface{}{
+		"ID":                connectorID,
+		"NAME":              name,
+		"ICON":              map[string]string{},
+		"PLACEMENT_HANDLER": handlerURL,
+	})
+	return err
+}
+
+// ActivateConnector ativa o conector em uma Open Line específica.
+func (c *Client) ActivateConnector(ctx context.Context, connectorID string, lineID int, active bool) error {
+	activeVal := "0"
+	if active {
+		activeVal = "1"
+	}
+	_, err := c.call(ctx, "imconnector.activate", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"ACTIVE":    activeVal,
+	})
+	return err
+}
+
+// ConnectorSendMessage entrega uma mensagem de cliente ao Contact Center.
+// Retorna o chat_id criado/existente no Bitrix24.
+func (c *Client) ConnectorSendMessage(ctx context.Context, connectorID string, lineID int, msg ConnectorMessage) (string, error) {
+	raw, err := c.call(ctx, "imconnector.send.messages", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"MESSAGES":  []ConnectorMessage{msg},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// Resposta é array de resultados
+	var results []struct {
+		ChatID interface{} `json:"chat_id"`
+	}
+	if err := json.Unmarshal(raw, &results); err == nil && len(results) > 0 {
+		return fmt.Sprintf("%v", results[0].ChatID), nil
+	}
+
+	// Fallback: objeto simples
+	var single struct {
+		ChatID interface{} `json:"chat_id"`
+	}
+	_ = json.Unmarshal(raw, &single)
+	return fmt.Sprintf("%v", single.ChatID), nil
+}
+
+// ConnectorSetDelivery confirma entrega de mensagem do operador ao canal externo.
+func (c *Client) ConnectorSetDelivery(ctx context.Context, connectorID string, lineID int, messageID string) error {
+	_, err := c.call(ctx, "imconnector.send.status.delivery", map[string]interface{}{
+		"CONNECTOR":  connectorID,
+		"LINE":       lineID,
+		"MESSAGE_ID": messageID,
+	})
+	return err
+}
+
 // ─── CRM ──────────────────────────────────────────────────────────────────
 
 // FindOrCreateLead procura um lead pelo telefone ou cria um novo.

@@ -107,6 +107,32 @@ func (r *Repository) UpsertContact(ctx context.Context, c *ContactMapping) error
 	return err
 }
 
+func (r *Repository) GetContactByWAJID(ctx context.Context, jid string) (*ContactMapping, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, wa_jid, wa_phone, wa_name, bitrix_entity, bitrix_id, bitrix_chat_id, session_id, created_at, updated_at
+		FROM contact_mapping WHERE wa_jid = $1 ORDER BY created_at DESC LIMIT 1`, jid)
+
+	var c ContactMapping
+	err := row.Scan(&c.ID, &c.WAJID, &c.WAPhone, &c.WAName, &c.BitrixEntity, &c.BitrixID, &c.BitrixChatID, &c.SessionID, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *Repository) GetSessionByID(ctx context.Context, id uuid.UUID) (*WhatsAppSession, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
+		 FROM whatsapp_sessions WHERE id = $1`, id)
+
+	var s WhatsAppSession
+	err := row.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 func (r *Repository) GetContactByJID(ctx context.Context, jid string, sessionID uuid.UUID) (*ContactMapping, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, wa_jid, wa_phone, wa_name, bitrix_entity, bitrix_id, bitrix_chat_id, session_id, created_at, updated_at

@@ -182,6 +182,22 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
+	// Registra e ativa o conector no Contact Center (executa em background para não travar o callback)
+	go func() {
+		ctx := c.Context()
+		handlerURL := h.cfg.Bitrix.RedirectURI // reutiliza a URL base do app
+		if err := h.bitrixClient.RegisterConnector(ctx, "whatsapp_uc", "WhatsApp UC", handlerURL); err != nil {
+			h.log.Warn("imconnector.register failed", zap.Error(err))
+		} else {
+			h.log.Info("imconnector registered")
+		}
+		if err := h.bitrixClient.ActivateConnector(ctx, "whatsapp_uc", h.cfg.Bitrix.OpenLineID, true); err != nil {
+			h.log.Warn("imconnector.activate failed", zap.Error(err))
+		} else {
+			h.log.Info("imconnector activated", zap.Int("line_id", h.cfg.Bitrix.OpenLineID))
+		}
+	}()
+
 	return c.SendStatus(fiber.StatusOK)
 }
 
@@ -192,6 +208,97 @@ func (h *handlers) bitrixOAuthStart(c *fiber.Ctx) error {
 	})
 }
 
+
+// POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD do Bitrix24
+// O operador respondeu no Contact Center → encaminha para o WhatsApp correto
+func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
+	h.log.Info("connector event received", zap.String("body", string(c.Body())))
+
+	var payload struct {
+		Event string `json:"event"`
+		Data  struct {
+			Connector string `json:"CONNECTOR"`
+			Line      int    `json:"LINE"`
+			Messages  []struct {
+				Message struct {
+					ID   string `json:"id"`
+					Text string `json:"text"`
+				} `json:"message"`
+				Chat struct {
+					ID string `json:"ID"` // JID do contato WhatsApp (definido por nós)
+				} `json:"chat"`
+				Im struct {
+					ChatID    int `json:"chat_id"`
+					MessageID int `json:"message_id"`
+				} `json:"im"`
+			} `json:"MESSAGES"`
+		} `json:"data"`
+		Auth struct {
+			Domain string `json:"domain"`
+		} `json:"auth"`
+	}
+
+	if err := c.BodyParser(&payload); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	for _, m := range payload.Data.Messages {
+		if m.Message.Text == "" || m.Chat.ID == "" {
+			continue
+		}
+
+		// Busca o contato pelo JID (chat.ID que definimos como job.FromJID)
+		contact, err := h.repo.GetContactByWAJID(c.Context(), m.Chat.ID)
+		if err != nil {
+			h.log.Warn("connector event: contact not found", zap.String("jid", m.Chat.ID), zap.Error(err))
+			continue
+		}
+
+		// Descobre qual sessão WA usar
+		sessionJID := ""
+		if contact.SessionID != nil {
+			sess, err := h.repo.GetSessionByID(c.Context(), *contact.SessionID)
+			if err == nil {
+				sessionJID = sess.JID
+			}
+		}
+		if sessionJID == "" {
+			h.log.Warn("connector event: no session found for contact", zap.String("jid", m.Chat.ID))
+			continue
+		}
+
+		// Coloca na fila de saída
+		if err := h.q.PushOutbound(c.Context(), &queue.OutboundJob{
+			SessionJID: sessionJID,
+			ToJID:      m.Chat.ID,
+			Text:       m.Message.Text,
+		}); err != nil {
+			h.log.Error("connector event: push outbound failed", zap.Error(err))
+			continue
+		}
+
+		// Confirma entrega ao Bitrix
+		go func(msgID string) {
+			_ = h.bitrixClient.ConnectorSetDelivery(
+				c.Context(), payload.Data.Connector, payload.Data.Line, msgID,
+			)
+		}(m.Message.ID)
+
+		h.log.Info("operator reply queued",
+			zap.String("to_jid", m.Chat.ID),
+			zap.String("session", sessionJID),
+			zap.String("text_preview", m.Message.Text[:min(len(m.Message.Text), 50)]))
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // POST /bitrix/webhook — recebe mensagens do operador via Bitrix
 func (h *handlers) bitrixWebhook(c *fiber.Ctx) error {

@@ -66,7 +66,8 @@ func New(
 	bx.Get("/oauth/start", h.bitrixOAuthStart)
 	bx.Get("/callback", h.bitrixOAuthCallback)
 	bx.Post("/callback", h.bitrixOAuthCallback)   // Bitrix local app envia POST no install
-	bx.Post("/webhook", h.bitrixWebhook)           // Recebe eventos do Bitrix (resposta do operador)
+	bx.Post("/webhook", h.bitrixWebhook)              // Recebe eventos do Bitrix (legado)
+	bx.Post("/connector/event", h.bitrixConnectorEvent) // ONIMCONNECTORMESSAGEADD — reply do operador
 
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
