@@ -1,6 +1,6 @@
 module github.com/uctechnology/api-bitrix24-whatsapp
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.4
