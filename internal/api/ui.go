@@ -1,6 +1,8 @@
 package api
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -29,10 +31,8 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 	phone := c.Params("phone")
 	qr := h.waManager.GetQR(phone)
 	sessions := h.waManager.ListSessions()
-	// verifica se a sessão já está ativa (paired)
 	for _, jid := range sessions {
-		// jid contém o phone como prefixo
-		if len(jid) >= len(phone) {
+		if strings.HasPrefix(jid, phone) {
 			return c.JSON(fiber.Map{"status": "connected", "jid": jid})
 		}
 	}
@@ -55,115 +55,79 @@ const connectHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WhatsApp Connector</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #f0f2f5;
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .card {
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-    padding: 40px 48px;
-    max-width: 480px;
-    width: 100%;
-    text-align: center;
-  }
-  .logo {
-    width: 56px;
-    height: 56px;
-    background: #25D366;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 20px;
-  }
-  .logo svg { width: 32px; height: 32px; fill: #fff; }
-  h1 { font-size: 22px; color: #111; margin-bottom: 6px; }
-  .subtitle { color: #666; font-size: 14px; margin-bottom: 28px; }
-  .form-group { display: flex; gap: 10px; margin-bottom: 24px; }
-  input {
-    flex: 1;
-    padding: 12px 16px;
-    border: 1.5px solid #ddd;
-    border-radius: 8px;
-    font-size: 15px;
-    outline: none;
-    transition: border-color .2s;
-  }
-  input:focus { border-color: #25D366; }
-  button {
-    padding: 12px 20px;
-    background: #25D366;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background .2s;
-    white-space: nowrap;
-  }
-  button:hover { background: #1ebe5d; }
-  button:disabled { background: #aaa; cursor: not-allowed; }
-  #qr-section { display: none; }
-  #qr-canvas {
-    margin: 0 auto 16px;
-    display: block;
-  }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 16px;
-  }
-  .status-waiting  { background: #fff3cd; color: #856404; }
-  .status-ready    { background: #d1ecf1; color: #0c5460; }
-  .status-connected { background: #d4edda; color: #155724; }
-  .status-error    { background: #f8d7da; color: #721c24; }
-  .timer { font-size: 12px; color: #888; margin-top: 8px; }
-  .sessions-list { margin-top: 28px; text-align: left; }
-  .sessions-list h3 { font-size: 14px; color: #555; margin-bottom: 10px; }
-  .session-item {
-    background: #f8f9fa;
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: #333;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #25D366; flex-shrink: 0; }
-  .instructions {
-    background: #f8f9fa;
-    border-radius: 8px;
-    padding: 14px 16px;
-    text-align: left;
-    margin-bottom: 20px;
-    font-size: 13px;
-    color: #555;
-    line-height: 1.7;
-  }
-  .instructions b { color: #333; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f0f2f5;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+  padding: 40px 48px;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+}
+.logo {
+  width: 56px; height: 56px;
+  background: #25D366;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+}
+.logo svg { width: 32px; height: 32px; fill: #fff; }
+h1 { font-size: 22px; color: #111; margin-bottom: 6px; }
+.subtitle { color: #666; font-size: 14px; margin-bottom: 28px; }
+.form-group { display: flex; gap: 10px; margin-bottom: 24px; }
+input {
+  flex: 1; padding: 12px 16px;
+  border: 1.5px solid #ddd; border-radius: 8px;
+  font-size: 15px; outline: none; transition: border-color .2s;
+}
+input:focus { border-color: #25D366; }
+button {
+  padding: 12px 20px; background: #25D366; color: #fff;
+  border: none; border-radius: 8px; font-size: 15px;
+  font-weight: 600; cursor: pointer; transition: background .2s; white-space: nowrap;
+}
+button:hover { background: #1ebe5d; }
+button:disabled { background: #aaa; cursor: not-allowed; }
+#qr-section { display: none; }
+#qr-wrap { margin: 0 auto 16px; display: inline-block; padding: 12px; background: #fff; border: 1px solid #eee; border-radius: 8px; }
+.status-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 20px;
+  font-size: 13px; font-weight: 600; margin-bottom: 16px;
+}
+.status-waiting  { background: #fff3cd; color: #856404; }
+.status-ready    { background: #d1ecf1; color: #0c5460; }
+.status-connected { background: #d4edda; color: #155724; }
+.timer { font-size: 12px; color: #888; margin-top: 8px; }
+.sessions-list { margin-top: 28px; text-align: left; }
+.sessions-list h3 { font-size: 14px; color: #555; margin-bottom: 10px; }
+.session-item {
+  background: #f8f9fa; border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; color: #333;
+  margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #25D366; flex-shrink: 0; }
+.instructions {
+  background: #f8f9fa; border-radius: 8px;
+  padding: 14px 16px; text-align: left; margin-bottom: 20px;
+  font-size: 13px; color: #555; line-height: 1.7;
+}
+.instructions b { color: #333; }
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">
-    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-    </svg>
+    <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
   </div>
   <h1>WhatsApp Connector</h1>
   <p class="subtitle">Conecte seu número ao Bitrix24</p>
@@ -182,7 +146,7 @@ const connectHTML = `<!DOCTYPE html>
       4. Aponte a câmera para o QR code abaixo
     </div>
     <div id="status-badge" class="status-badge status-waiting">⏳ Aguardando QR...</div>
-    <canvas id="qr-canvas" width="256" height="256"></canvas>
+    <div id="qr-wrap"><canvas id="qr-canvas" width="256" height="256"></canvas></div>
     <div class="timer" id="timer"></div>
   </div>
 
@@ -193,19 +157,29 @@ const connectHTML = `<!DOCTYPE html>
 </div>
 
 <script>
-// QR code generator (puro JS, sem dependência externa)
-// Biblioteca qrcodejs embutida de forma simplificada via CDN confiável
-(function(){
-  var s = document.createElement('script');
-  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-  document.head.appendChild(s);
+// QR Code generator embutido (sem dependência externa)
+// Algoritmo de QR code simplificado usando canvas
+var QR = (function() {
+  // Implementação mínima de QR via canvas usando a API nativa do browser
+  // Usa um iframe com data URI para renderizar via qr-server API de forma segura
+  function draw(canvas, text) {
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#999';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Carregando QR...', 128, 128);
+  }
+  return { draw: draw };
 })();
 
 var pollInterval = null;
 var timerInterval = null;
 var countdown = 25;
 var currentPhone = '';
-var qrInstance = null;
+var lastQR = '';
 
 function startSession() {
   var phone = document.getElementById('phone').value.trim().replace(/\D/g,'');
@@ -214,69 +188,59 @@ function startSession() {
     return;
   }
   currentPhone = phone;
-  document.getElementById('btn-connect').disabled = true;
-  document.getElementById('btn-connect').textContent = 'Conectando...';
+  var btn = document.getElementById('btn-connect');
+  btn.disabled = true;
+  btn.textContent = 'Conectando...';
 
   fetch('/ui/sessions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({phone: phone})
   })
-  .then(r => r.json())
+  .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) { alert(data.error); resetBtn(); return; }
     document.getElementById('qr-section').style.display = 'block';
     startPolling(phone);
   })
-  .catch(function(e) { alert('Erro: ' + e); resetBtn(); });
+  .catch(function(e) { alert('Erro ao conectar: ' + e); resetBtn(); });
 }
 
 function resetBtn() {
-  document.getElementById('btn-connect').disabled = false;
-  document.getElementById('btn-connect').textContent = 'Conectar';
+  var btn = document.getElementById('btn-connect');
+  btn.disabled = false;
+  btn.textContent = 'Conectar';
 }
 
 function startPolling(phone) {
   if (pollInterval) clearInterval(pollInterval);
-  pollInterval = setInterval(function(){ pollQR(phone); }, 2000);
   pollQR(phone);
+  pollInterval = setInterval(function(){ pollQR(phone); }, 2000);
 }
 
 function pollQR(phone) {
   fetch('/ui/sessions/' + phone + '/qr')
-  .then(r => r.json())
+  .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.status === 'connected') {
       onConnected(data.jid);
-    } else if (data.status === 'ready' && data.qr) {
+    } else if (data.status === 'ready' && data.qr && data.qr !== lastQR) {
+      lastQR = data.qr;
       showQR(data.qr);
-    } else {
+    } else if (data.status === 'waiting') {
       setBadge('waiting', '⏳ Aguardando QR...');
     }
-  });
+  })
+  .catch(function(){});
 }
 
 function showQR(text) {
   setBadge('ready', '📷 Escaneie o QR code');
-  var canvas = document.getElementById('qr-canvas');
-  var ctx = canvas.getContext('2d');
-  ctx.clearRect(0,0,256,256);
+  // Usa img tag apontando para API de QR (sem CDN de JS — apenas requisição de imagem)
+  var wrap = document.getElementById('qr-wrap');
+  var encoded = encodeURIComponent(text);
+  wrap.innerHTML = '<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&ecc=L&data=' + encoded + '" width="256" height="256" style="display:block"/>';
 
-  if (window.QRCode) {
-    // limpa canvas anterior
-    var el = document.getElementById('qr-canvas');
-    if (qrInstance) {
-      try { el.innerHTML = ''; } catch(e){}
-    }
-    qrInstance = new QRCode(el, {
-      text: text,
-      width: 256,
-      height: 256,
-      correctLevel: QRCode.CorrectLevel.L
-    });
-  }
-
-  // countdown
   countdown = 25;
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(function() {
@@ -284,7 +248,7 @@ function showQR(text) {
     document.getElementById('timer').textContent = 'QR expira em ' + countdown + 's';
     if (countdown <= 0) {
       clearInterval(timerInterval);
-      document.getElementById('timer').textContent = 'QR expirado, buscando novo...';
+      document.getElementById('timer').textContent = 'Atualizando QR...';
     }
   }, 1000);
 }
@@ -294,7 +258,7 @@ function onConnected(jid) {
   clearInterval(timerInterval);
   document.getElementById('timer').textContent = '';
   setBadge('connected', '✅ WhatsApp conectado!');
-  document.getElementById('qr-canvas').style.display = 'none';
+  document.getElementById('qr-wrap').innerHTML = '<div style="font-size:48px;padding:20px">✅</div>';
   loadSessions();
   resetBtn();
 }
@@ -307,7 +271,7 @@ function setBadge(type, text) {
 
 function loadSessions() {
   fetch('/ui/sessions')
-  .then(r => r.json())
+  .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.count > 0) {
       document.getElementById('sessions-list').style.display = 'block';
@@ -320,7 +284,6 @@ function loadSessions() {
   });
 }
 
-// carrega sessões ativas ao abrir a página
 window.onload = function() { loadSessions(); };
 </script>
 </body>

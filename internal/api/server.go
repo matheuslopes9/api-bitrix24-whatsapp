@@ -1,6 +1,8 @@
 package api
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -26,8 +28,9 @@ func New(
 
 	app := fiber.New(fiber.Config{
 		AppName:      "WhatsApp-Bitrix24 Connector",
-		ReadTimeout:  60_000,
-		WriteTimeout: 60_000,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
 		ErrorHandler: jsonErrorHandler,
 	})
 
