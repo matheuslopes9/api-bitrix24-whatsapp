@@ -72,50 +72,55 @@ func (m *Manager) LoadAll(ctx context.Context) error {
 
 // AddSession inicia conexão WhatsApp em background. Retorna imediatamente.
 // Se for nova sessão, o QR fica disponível via GetQR(phone) após alguns segundos.
-func (m *Manager) AddSession(ctx context.Context, phone string) error {
+func (m *Manager) AddSession(_ context.Context, phone string) error {
 	dbPath := filepath.Join(m.cfg.SessionsDir, phone+".db")
 	if err := os.MkdirAll(m.cfg.SessionsDir, 0o755); err != nil {
 		return err
 	}
+	// Tudo em background — nunca bloqueia a request HTTP
+	go m.initSession(phone, dbPath)
+	return nil
+}
 
+func (m *Manager) initSession(phone, dbPath string) {
+	ctx := context.Background()
 	container, err := sqlstore.New(ctx, "sqlite3", "file:"+dbPath+"?_foreign_keys=on", waLog.Noop)
 	if err != nil {
-		return fmt.Errorf("open sqlite store: %w", err)
+		m.log.Error("open sqlite store", zap.String("phone", phone), zap.Error(err))
+		return
 	}
 
 	deviceStore, err := container.GetFirstDevice(ctx)
 	if err != nil {
-		return fmt.Errorf("get device: %w", err)
+		m.log.Error("get device", zap.String("phone", phone), zap.Error(err))
+		return
 	}
 
 	client := whatsmeow.NewClient(deviceStore, waLog.Noop)
 
 	if client.Store.ID == nil {
-		// Nova sessão — processa QR em background
-		go m.connectWithQR(context.Background(), phone, dbPath, client)
-		return nil
+		// Nova sessão — gera QR
+		m.connectWithQR(ctx, phone, dbPath, client)
+		return
 	}
 
-	// Sessão já existe — reconecta em background
-	go func() {
-		if err := client.Connect(); err != nil {
-			m.log.Error("reconnect error", zap.String("phone", phone), zap.Error(err))
-			return
-		}
-		jid := client.Store.ID.String()
-		sessionID := uuid.New()
-		sess := &Session{ID: sessionID, JID: jid, Phone: phone, Client: client, dbPath: dbPath}
-		client.AddEventHandler(m.buildEventHandler(sess))
-		m.mu.Lock()
-		m.sessions[jid] = sess
-		m.mu.Unlock()
-		_ = m.repo.UpsertSession(context.Background(), &db.WhatsAppSession{
-			ID: sessionID, JID: jid, Phone: phone,
-			Status: db.SessionActive, SessionFile: dbPath,
-		})
-		m.log.Info("session reconnected", zap.String("jid", jid))
-	}()
-	return nil
+	// Sessão já existe — reconecta
+	if err := client.Connect(); err != nil {
+		m.log.Error("reconnect error", zap.String("phone", phone), zap.Error(err))
+		return
+	}
+	jid := client.Store.ID.String()
+	sessionID := uuid.New()
+	sess := &Session{ID: sessionID, JID: jid, Phone: phone, Client: client, dbPath: dbPath}
+	client.AddEventHandler(m.buildEventHandler(sess))
+	m.mu.Lock()
+	m.sessions[jid] = sess
+	m.mu.Unlock()
+	_ = m.repo.UpsertSession(ctx, &db.WhatsAppSession{
+		ID: sessionID, JID: jid, Phone: phone,
+		Status: db.SessionActive, SessionFile: dbPath,
+	})
+	m.log.Info("session reconnected", zap.String("jid", jid))
 }
 
 // connectWithQR estabelece conexão nova com geração de QR via event handler.
