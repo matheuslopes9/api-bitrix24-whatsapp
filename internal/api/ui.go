@@ -6,13 +6,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// GET /connect — página de conexão WhatsApp (sem auth, serve HTML)
+// GET /connect
 func (h *handlers) connectPage(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.SendString(connectHTML)
 }
 
-// POST /ui/sessions — proxy interno (usa a API key do servidor)
+// POST /ui/sessions
 func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 	var body struct {
 		Phone string `json:"phone"`
@@ -26,29 +26,29 @@ func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "connecting", "phone": body.Phone})
 }
 
-// GET /ui/sessions/:phone/qr — proxy interno para QR
+// GET /ui/sessions/:phone/qr
 func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 	phone := c.Params("phone")
-	qr := h.waManager.GetQR(phone)
 	sessions := h.waManager.ListSessions()
 	for _, jid := range sessions {
 		if strings.HasPrefix(jid, phone) {
 			return c.JSON(fiber.Map{"status": "connected", "jid": jid})
 		}
 	}
+	qr := h.waManager.GetQR(phone)
 	if qr == "" {
 		return c.JSON(fiber.Map{"status": "waiting", "qr": ""})
 	}
 	return c.JSON(fiber.Map{"status": "ready", "qr": qr})
 }
 
-// GET /ui/sessions — lista sessões ativas
+// GET /ui/sessions
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 	jids := h.waManager.ListSessions()
 	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
 }
 
-// DELETE /ui/sessions/:jid — desconecta sessão
+// DELETE /ui/sessions/:jid
 func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
 	jid := c.Params("jid")
 	h.waManager.Disconnect(jid)
@@ -62,73 +62,38 @@ const connectHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WhatsApp Connector</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #f0f2f5;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.card {
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-  padding: 40px 48px;
-  max-width: 480px;
-  width: 100%;
-  text-align: center;
-}
-.logo {
-  width: 56px; height: 56px;
-  background: #25D366;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 20px;
-}
-.logo svg { width: 32px; height: 32px; fill: #fff; }
-h1 { font-size: 22px; color: #111; margin-bottom: 6px; }
-.subtitle { color: #666; font-size: 14px; margin-bottom: 28px; }
-.form-group { display: flex; gap: 10px; margin-bottom: 24px; }
-input {
-  flex: 1; padding: 12px 16px;
-  border: 1.5px solid #ddd; border-radius: 8px;
-  font-size: 15px; outline: none; transition: border-color .2s;
-}
-input:focus { border-color: #25D366; }
-button {
-  padding: 12px 20px; background: #25D366; color: #fff;
-  border: none; border-radius: 8px; font-size: 15px;
-  font-weight: 600; cursor: pointer; transition: background .2s; white-space: nowrap;
-}
-button:hover { background: #1ebe5d; }
-button:disabled { background: #aaa; cursor: not-allowed; }
-#qr-section { display: none; }
-#qr-wrap { margin: 0 auto 16px; display: inline-block; padding: 12px; background: #fff; border: 1px solid #eee; border-radius: 8px; }
-.status-badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 14px; border-radius: 20px;
-  font-size: 13px; font-weight: 600; margin-bottom: 16px;
-}
-.status-waiting  { background: #fff3cd; color: #856404; }
-.status-ready    { background: #d1ecf1; color: #0c5460; }
-.status-connected { background: #d4edda; color: #155724; }
-.timer { font-size: 12px; color: #888; margin-top: 8px; }
-.sessions-list { margin-top: 28px; text-align: left; }
-.sessions-list h3 { font-size: 14px; color: #555; margin-bottom: 10px; }
-.session-item {
-  background: #f8f9fa; border-radius: 8px;
-  padding: 10px 14px; font-size: 13px; color: #333;
-  margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
-}
-.dot { width: 8px; height: 8px; border-radius: 50%; background: #25D366; flex-shrink: 0; }
-.instructions {
-  background: #f8f9fa; border-radius: 8px;
-  padding: 14px 16px; text-align: left; margin-bottom: 20px;
-  font-size: 13px; color: #555; line-height: 1.7;
-}
-.instructions b { color: #333; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.1);padding:36px 40px;max-width:500px;width:100%;text-align:center}
+.logo{width:56px;height:56px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 18px}
+.logo svg{width:30px;height:30px;fill:#fff}
+h1{font-size:22px;color:#111;margin-bottom:6px}
+.subtitle{color:#666;font-size:14px;margin-bottom:28px}
+.form-row{display:flex;gap:10px;margin-bottom:20px}
+input{flex:1;padding:11px 14px;border:1.5px solid #ddd;border-radius:8px;font-size:15px;outline:none;transition:border-color .2s}
+input:focus{border-color:#25D366}
+.btn{padding:11px 18px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .2s}
+.btn:hover{background:#1ebe5d}
+.btn:disabled{background:#aaa;cursor:not-allowed}
+.btn-red{background:#fff;color:#e53935;border:1.5px solid #e53935;padding:7px 14px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:background .2s,color .2s}
+.btn-red:hover{background:#e53935;color:#fff}
+#qr-section{display:none;margin-bottom:20px}
+.instructions{background:#f8f9fa;border-radius:8px;padding:12px 16px;text-align:left;margin-bottom:16px;font-size:13px;color:#555;line-height:1.7}
+.instructions b{color:#333}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;margin-bottom:14px}
+.badge-wait{background:#fff3cd;color:#856404}
+.badge-ready{background:#d1ecf1;color:#0c5460}
+.badge-ok{background:#d4edda;color:#155724}
+.timer{font-size:12px;color:#888;margin-top:8px;min-height:18px}
+#qr-wrap{display:inline-block;padding:10px;background:#fff;border:1px solid #eee;border-radius:8px;margin-bottom:4px}
+#qr-wrap img{display:block}
+.divider{border:none;border-top:1px solid #eee;margin:20px 0}
+.sessions-title{font-size:14px;font-weight:600;color:#444;text-align:left;margin-bottom:12px}
+.session-item{display:flex;align-items:center;justify-content:space-between;background:#f8f9fa;border-radius:8px;padding:10px 14px;margin-bottom:8px;gap:12px}
+.session-info{display:flex;align-items:center;gap:8px;min-width:0}
+.dot{width:9px;height:9px;border-radius:50%;background:#25D366;flex-shrink:0}
+.jid{font-size:12px;color:#333;word-break:break-all}
+.no-sessions{font-size:13px;color:#999;text-align:center;padding:12px 0}
 </style>
 </head>
 <body>
@@ -139,196 +104,160 @@ button:disabled { background: #aaa; cursor: not-allowed; }
   <h1>WhatsApp Connector</h1>
   <p class="subtitle">Conecte seu número ao Bitrix24</p>
 
-  <div class="form-group">
+  <div class="form-row">
     <input type="text" id="phone" placeholder="5519910001772" maxlength="20"/>
-    <button id="btn-connect" onclick="startSession()">Conectar</button>
+    <button class="btn" id="btn-connect" onclick="startSession()">Conectar</button>
   </div>
 
   <div id="qr-section">
     <div class="instructions">
       <b>Como escanear:</b><br>
       1. Abra o WhatsApp no celular<br>
-      2. Toque em <b>⋮ Menu → Aparelhos conectados</b><br>
+      2. Toque em <b>⋮ → Aparelhos conectados</b><br>
       3. Toque em <b>Conectar um aparelho</b><br>
-      4. Aponte a câmera para o QR code abaixo
+      4. Aponte a câmera para o QR abaixo
     </div>
-    <div id="status-badge" class="status-badge status-waiting">⏳ Aguardando QR...</div>
-    <div id="qr-wrap"><canvas id="qr-canvas" width="256" height="256"></canvas></div>
+    <div id="badge" class="badge badge-wait">⏳ Aguardando QR...</div><br>
+    <div id="qr-wrap"><img id="qr-img" src="" width="256" height="256" style="display:none"/></div>
     <div class="timer" id="timer"></div>
   </div>
 
-  <div class="sessions-list" id="sessions-list" style="display:none">
-    <h3>✅ Sessões ativas</h3>
-    <div id="sessions-items"></div>
+  <hr class="divider"/>
+
+  <div class="sessions-title">📱 Dispositivos conectados</div>
+  <div id="sessions-wrap">
+    <div class="no-sessions" id="no-sessions">Nenhum dispositivo conectado</div>
   </div>
 </div>
-<style>
-.btn-disconnect {
-  background: #fff; color: #e53935; border: 1.5px solid #e53935;
-  border-radius: 6px; padding: 4px 12px; font-size: 12px;
-  cursor: pointer; margin-left: auto; font-weight: 600;
-  transition: background .2s, color .2s;
-}
-.btn-disconnect:hover { background: #e53935; color: #fff; }
-.session-item { justify-content: space-between; }
-</style>
 
 <script>
-// QR Code generator embutido (sem dependência externa)
-// Algoritmo de QR code simplificado usando canvas
-var QR = (function() {
-  // Implementação mínima de QR via canvas usando a API nativa do browser
-  // Usa um iframe com data URI para renderizar via qr-server API de forma segura
-  function draw(canvas, text) {
-    var ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#999';
-    ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Carregando QR...', 128, 128);
-  }
-  return { draw: draw };
-})();
-
-var pollInterval = null;
+var pollQRInterval = null;
+var pollSessionsInterval = null;
 var timerInterval = null;
-var countdown = 25;
-var currentPhone = '';
+var countdown = 0;
 var lastQR = '';
+var currentPhone = '';
 
 function startSession() {
-  var phone = document.getElementById('phone').value.trim().replace(/\D/g,'');
-  if (!phone || phone.length < 10) {
-    alert('Digite um número válido (ex: 5519910001772)');
-    return;
-  }
-  currentPhone = phone;
+  var raw = document.getElementById('phone').value.trim().replace(/\D/g,'');
+  if (!raw || raw.length < 10) { alert('Digite um número válido'); return; }
+  currentPhone = raw;
   var btn = document.getElementById('btn-connect');
-  btn.disabled = true;
-  btn.textContent = 'Conectando...';
+  btn.disabled = true; btn.textContent = 'Conectando...';
 
   fetch('/ui/sessions', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({phone: phone})
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({phone: raw})
   })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); resetBtn(); return; }
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { alert(d.error); resetBtn(); return; }
     document.getElementById('qr-section').style.display = 'block';
-    startPolling(phone);
+    startQRPoll(raw);
   })
-  .catch(function(e) { alert('Erro ao conectar: ' + e); resetBtn(); });
+  .catch(function(e){ alert('Erro: '+e); resetBtn(); });
 }
 
 function resetBtn() {
   var btn = document.getElementById('btn-connect');
-  btn.disabled = false;
-  btn.textContent = 'Conectar';
+  btn.disabled = false; btn.textContent = 'Conectar';
 }
 
-function startPolling(phone) {
-  if (pollInterval) clearInterval(pollInterval);
-  pollQR(phone);
-  pollInterval = setInterval(function(){ pollQR(phone); }, 2000);
+function startQRPoll(phone) {
+  if (pollQRInterval) clearInterval(pollQRInterval);
+  doQRPoll(phone);
+  pollQRInterval = setInterval(function(){ doQRPoll(phone); }, 2000);
 }
 
-function pollQR(phone) {
-  fetch('/ui/sessions/' + phone + '/qr')
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.status === 'connected') {
-      onConnected(data.jid);
-    } else if (data.status === 'ready' && data.qr && data.qr !== lastQR) {
-      lastQR = data.qr;
-      showQR(data.qr);
-    } else if (data.status === 'waiting') {
-      setBadge('waiting', '⏳ Aguardando QR...');
+function doQRPoll(phone) {
+  fetch('/ui/sessions/'+phone+'/qr')
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.status === 'connected') {
+      stopQRPoll();
+      showConnectedState();
+      loadSessions();
+    } else if (d.status === 'ready' && d.qr && d.qr !== lastQR) {
+      lastQR = d.qr;
+      renderQR(d.qr);
+    } else if (d.status === 'waiting') {
+      setBadge('wait','⏳ Aguardando QR...');
     }
-  })
-  .catch(function(){});
+  }).catch(function(){});
 }
 
-function showQR(text) {
-  setBadge('ready', '📷 Escaneie o QR code');
-  // Usa img tag apontando para API de QR (sem CDN de JS — apenas requisição de imagem)
-  var wrap = document.getElementById('qr-wrap');
-  var encoded = encodeURIComponent(text);
-  wrap.innerHTML = '<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&ecc=L&data=' + encoded + '" width="256" height="256" style="display:block"/>';
-
+function renderQR(text) {
+  setBadge('ready','📷 Escaneie o QR code');
+  var img = document.getElementById('qr-img');
+  img.style.display = 'block';
+  img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=256x256&ecc=L&data=' + encodeURIComponent(text);
   countdown = 25;
   if (timerInterval) clearInterval(timerInterval);
-  timerInterval = setInterval(function() {
+  timerInterval = setInterval(function(){
     countdown--;
-    document.getElementById('timer').textContent = 'QR expira em ' + countdown + 's';
-    if (countdown <= 0) {
-      clearInterval(timerInterval);
-      document.getElementById('timer').textContent = 'Atualizando QR...';
-    }
+    document.getElementById('timer').textContent = 'QR expira em '+countdown+'s';
+    if (countdown <= 0) { clearInterval(timerInterval); document.getElementById('timer').textContent = 'Atualizando...'; }
   }, 1000);
 }
 
-function onConnected(jid) {
-  clearInterval(pollInterval);
-  clearInterval(timerInterval);
+function showConnectedState() {
+  setBadge('ok','✅ Conectado!');
+  document.getElementById('qr-wrap').innerHTML = '<div style="font-size:52px;padding:16px">✅</div>';
   document.getElementById('timer').textContent = '';
-  setBadge('connected', '✅ WhatsApp conectado!');
-  document.getElementById('qr-wrap').innerHTML = '<div style="font-size:48px;padding:20px">✅</div>';
-  loadSessions();
   resetBtn();
 }
 
+function stopQRPoll() {
+  if (pollQRInterval) { clearInterval(pollQRInterval); pollQRInterval = null; }
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
 function setBadge(type, text) {
-  var el = document.getElementById('status-badge');
-  el.className = 'status-badge status-' + type;
+  var el = document.getElementById('badge');
+  el.className = 'badge badge-'+type;
   el.textContent = text;
 }
 
 function loadSessions() {
   fetch('/ui/sessions')
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    var list = document.getElementById('sessions-list');
-    var items = document.getElementById('sessions-items');
-    if (data.count > 0) {
-      list.style.display = 'block';
-      var html = '';
-      data.sessions.forEach(function(jid) {
-        var jidEnc = encodeURIComponent(jid);
-        html += '<div class="session-item">'
-          + '<div style="display:flex;align-items:center;gap:8px"><div class="dot"></div><span style="word-break:break-all;font-size:12px">' + jid + '</span></div>'
-          + '<button class="btn-disconnect" onclick="disconnectSession(\'' + jidEnc + '\')">Desconectar</button>'
-          + '</div>';
-      });
-      items.innerHTML = html;
-    } else {
-      list.style.display = 'none';
-      items.innerHTML = '';
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    var wrap = document.getElementById('sessions-wrap');
+    var noSess = document.getElementById('no-sessions');
+    if (d.count === 0) {
+      wrap.innerHTML = '<div class="no-sessions" id="no-sessions">Nenhum dispositivo conectado</div>';
+      return;
     }
-  });
+    var html = '';
+    d.sessions.forEach(function(jid){
+      html += '<div class="session-item">'
+        + '<div class="session-info"><div class="dot"></div><span class="jid">'+jid+'</span></div>'
+        + '<button class="btn-red" onclick="doDisconnect(\''+encodeURIComponent(jid)+'\')">Desconectar</button>'
+        + '</div>';
+    });
+    wrap.innerHTML = html;
+  }).catch(function(){});
 }
 
-function disconnectSession(jidEnc) {
+function doDisconnect(jidEnc) {
   var jid = decodeURIComponent(jidEnc);
-  if (!confirm('Desconectar ' + jid + '?')) return;
-  fetch('/ui/sessions/' + jidEnc, { method: 'DELETE' })
-  .then(function(r) { return r.json(); })
-  .then(function() {
+  if (!confirm('Desconectar '+jid+'?')) return;
+  fetch('/ui/sessions/'+jidEnc, {method:'DELETE'})
+  .then(function(r){ return r.json(); })
+  .then(function(){
     loadSessions();
-    // reseta UI se era a sessão atual
+    stopQRPoll();
     document.getElementById('qr-section').style.display = 'none';
-    document.getElementById('qr-wrap').innerHTML = '<canvas id="qr-canvas" width="256" height="256"></canvas>';
-    if (pollInterval) clearInterval(pollInterval);
-    if (timerInterval) clearInterval(timerInterval);
     lastQR = '';
     resetBtn();
   })
-  .catch(function(e) { alert('Erro: ' + e); });
+  .catch(function(e){ alert('Erro: '+e); });
 }
 
-window.onload = function() { loadSessions(); };
+// Polling de sessões a cada 5s para manter lista atualizada
+pollSessionsInterval = setInterval(loadSessions, 5000);
+window.onload = loadSessions;
 </script>
 </body>
 </html>`
