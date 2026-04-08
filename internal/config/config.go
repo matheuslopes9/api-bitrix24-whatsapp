@@ -52,6 +52,7 @@ type BitrixConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURI  string
+	OpenLineID   int
 }
 
 type QueueConfig struct {
@@ -103,6 +104,7 @@ func Load() (*Config, error) {
 			ClientID:     viper.GetString("BITRIX_CLIENT_ID"),
 			ClientSecret: viper.GetString("BITRIX_CLIENT_SECRET"),
 			RedirectURI:  viper.GetString("BITRIX_REDIRECT_URI"),
+			OpenLineID:   getIntWithDefault("BITRIX_OPEN_LINE_ID", 1),
 		},
 		Queue: QueueConfig{
 			Workers:          getIntWithDefault("QUEUE_WORKERS", 20),

@@ -66,11 +66,10 @@ func main() {
 
 	// ─── Bitrix24 ────────────────────────────────────────────────────────
 	bitrixClient := bitrix.NewClient(&cfg.Bitrix, repo, log)
-	// lineID=1 — ajuste para o ID do seu canal Open Lines no Bitrix24
-	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log, 1)
+	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log, cfg.Bitrix.OpenLineID)
 
 	// ─── WhatsApp Manager ────────────────────────────────────────────────
-	msgHandler := buildMessageHandler(ctx, q, metrics, log)
+	msgHandler := buildMessageHandler(ctx, q, repo, metrics, log)
 	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, msgHandler)
 
 	// Carrega todas as sessões salvas no banco
@@ -80,11 +79,11 @@ func main() {
 
 	// ─── Workers inbound: WA → Bitrix ─────────────────────────────────────
 	workers.StartInbound(ctx, func(c context.Context, job *queue.InboundJob) error {
-		metrics.MessagesInbound.Inc()
 		if err := bitrixProcessor.ProcessInbound(c, job); err != nil {
 			metrics.BitrixErrors.Inc()
 			return err
 		}
+		metrics.MessagesInbound.Inc()
 		return nil
 	})
 
@@ -138,6 +137,7 @@ func main() {
 func buildMessageHandler(
 	ctx context.Context,
 	q *queue.Queue,
+	repo *db.Repository,
 	metrics *telemetry.Metrics,
 	log *zap.Logger,
 ) whatsapp.MessageHandler {
@@ -147,10 +147,38 @@ func buildMessageHandler(
 		}
 
 		text := ""
+		msgType := db.MsgTypeText
 		if evt.Message.GetConversation() != "" {
 			text = evt.Message.GetConversation()
 		} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 			text = ext.GetText()
+		} else if evt.Message.GetImageMessage() != nil {
+			msgType = db.MsgTypeImage
+			text = evt.Message.GetImageMessage().GetCaption()
+		} else if evt.Message.GetAudioMessage() != nil {
+			msgType = db.MsgTypeAudio
+		} else if evt.Message.GetDocumentMessage() != nil {
+			msgType = db.MsgTypeDocument
+			text = evt.Message.GetDocumentMessage().GetFileName()
+		} else if evt.Message.GetVideoMessage() != nil {
+			msgType = db.MsgTypeVideo
+			text = evt.Message.GetVideoMessage().GetCaption()
+		}
+
+		// Salva mensagem no banco com status "received"
+		ts := evt.Info.Timestamp
+		msg := &db.Message{
+			ID:          uuid.New(),
+			WAMessageID: evt.Info.ID,
+			SessionID:   &sessionID,
+			Direction:   db.DirInbound,
+			MessageType: msgType,
+			Content:     text,
+			Status:      db.MsgReceived,
+			SentAt:      &ts,
+		}
+		if err := repo.InsertMessage(ctx, msg); err != nil {
+			log.Warn("insert message failed", zap.String("msg_id", evt.Info.ID), zap.Error(err))
 		}
 
 		job := &queue.InboundJob{
@@ -160,16 +188,16 @@ func buildMessageHandler(
 			FromPhone:   evt.Info.Sender.User,
 			FromName:    evt.Info.PushName,
 			MessageID:   evt.Info.ID,
-			MessageType: string(db.MsgTypeText),
+			MessageType: string(msgType),
 			Text:        text,
 		}
 
 		if err := q.PushInbound(ctx, job); err != nil {
 			log.Error("push inbound failed", zap.String("msg_id", evt.Info.ID), zap.Error(err))
+			_ = repo.UpdateMessageStatus(ctx, evt.Info.ID, db.MsgFailed, err.Error())
 			return
 		}
 
-		metrics.MessagesInbound.Inc()
-		log.Debug("message queued", zap.String("from", job.FromPhone), zap.String("text", text))
+		log.Info("message queued", zap.String("from", job.FromPhone), zap.String("type", string(msgType)))
 	}
 }

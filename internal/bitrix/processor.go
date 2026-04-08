@@ -27,19 +27,26 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	// 1. Garante que existe um mapeamento contato ↔ bitrix
 	contact, err := p.ensureContact(ctx, job)
 	if err != nil {
+		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("ensure contact: %w", err)
 	}
 
-	// 2. Envia mensagem para o Open Lines
-	if err := p.client.SendMessage(ctx, contact.BitrixID, job.Text); err != nil {
+	// 2. Envia mensagem para o Open Lines (apenas texto por enquanto)
+	text := job.Text
+	if text == "" {
+		text = "[" + job.MessageType + "]"
+	}
+	if err := p.client.SendMessage(ctx, contact.BitrixID, text); err != nil {
+		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("send to bitrix: %w", err)
 	}
 
-	// 3. Atualiza status no banco
+	// 3. Marca como entregue no banco
 	_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgDelivered, "")
 
 	p.log.Info("inbound delivered to bitrix",
 		zap.String("from", job.FromPhone),
+		zap.String("type", job.MessageType),
 		zap.Int64("bitrix_session", contact.BitrixID))
 	return nil
 }
