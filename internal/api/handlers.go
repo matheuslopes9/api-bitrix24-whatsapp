@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -184,7 +185,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 
 	// Registra e ativa o conector no Contact Center (executa em background para não travar o callback)
 	go func() {
-		ctx := c.Context()
+		ctx := context.Background() // c.Context() é inválido após o handler retornar
 		handlerURL := h.cfg.Bitrix.RedirectURI // reutiliza a URL base do app
 		if err := h.bitrixClient.RegisterConnector(ctx, "whatsapp_uc", "WhatsApp UC", handlerURL); err != nil {
 			h.log.Warn("imconnector.register failed", zap.Error(err))
