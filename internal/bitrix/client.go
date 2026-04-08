@@ -246,10 +246,14 @@ type ConnectorChat struct {
 // RegisterConnector registra este app como conector de canal externo no Bitrix24.
 // Deve ser chamado uma vez durante a instalação do app.
 func (c *Client) RegisterConnector(ctx context.Context, connectorID, name, handlerURL string) error {
+	// Ícone SVG mínimo exigido pelo Bitrix24 (círculo verde com "W")
+	icon := map[string]string{
+		"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48dGV4dCB4PSIyNCIgeT0iMzIiIGZvbnQtc2l6ZT0iMjQiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPtc8L3RleHQ+PC9zdmc+",
+	}
 	_, err := c.call(ctx, "imconnector.register", map[string]interface{}{
 		"ID":                connectorID,
 		"NAME":              name,
-		"ICON":              map[string]string{},
+		"ICON":              icon,
 		"PLACEMENT_HANDLER": handlerURL,
 	})
 	return err
