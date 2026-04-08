@@ -54,19 +54,23 @@ func (m *Manager) GetQR(phone string) string {
 	return m.qrCodes[phone]
 }
 
-// LoadAll carrega todas as sessões ativas do banco e reconecta.
+// LoadAll carrega todas as sessões do banco (ativas e desconectadas) e reconecta.
 func (m *Manager) LoadAll(ctx context.Context) error {
-	sessions, err := m.repo.ListActiveSessions(ctx)
+	sessions, err := m.repo.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
 	}
+	connected := 0
 	for _, s := range sessions {
-		if err := m.connectSession(ctx, s); err != nil {
+		s := s // capture
+		if err := m.connectSession(ctx, &s); err != nil {
 			m.log.Warn("failed to reconnect session", zap.String("jid", s.JID), zap.Error(err))
 			_ = m.repo.UpdateSessionStatus(ctx, s.JID, db.SessionDisconnected)
+		} else {
+			connected++
 		}
 	}
-	m.log.Info("sessions loaded", zap.Int("count", len(sessions)))
+	m.log.Info("sessions loaded", zap.Int("count", connected))
 	return nil
 }
 
@@ -275,6 +279,11 @@ func (m *Manager) ListSessions() []string {
 }
 
 func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) error {
+	// Verifica se o arquivo SQLite existe antes de tentar conectar
+	if _, err := os.Stat(s.SessionFile); os.IsNotExist(err) {
+		return fmt.Errorf("session file not found: %s", s.SessionFile)
+	}
+
 	container, err := sqlstore.New(ctx, "sqlite3", "file:"+s.SessionFile+"?_foreign_keys=on", waLog.Noop)
 	if err != nil {
 		return err
