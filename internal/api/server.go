@@ -51,6 +51,7 @@ func New(
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
 	ui.Get("/sessions", h.uiListSessions)
+	ui.Delete("/sessions/:jid", h.uiDisconnectSession)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))

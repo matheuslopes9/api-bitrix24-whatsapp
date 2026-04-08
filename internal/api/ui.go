@@ -48,6 +48,13 @@ func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
 }
 
+// DELETE /ui/sessions/:jid — desconecta sessão
+func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
+	jid := c.Params("jid")
+	h.waManager.Disconnect(jid)
+	return c.JSON(fiber.Map{"status": "disconnected", "jid": jid})
+}
+
 const connectHTML = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -155,6 +162,16 @@ button:disabled { background: #aaa; cursor: not-allowed; }
     <div id="sessions-items"></div>
   </div>
 </div>
+<style>
+.btn-disconnect {
+  background: #fff; color: #e53935; border: 1.5px solid #e53935;
+  border-radius: 6px; padding: 4px 12px; font-size: 12px;
+  cursor: pointer; margin-left: auto; font-weight: 600;
+  transition: background .2s, color .2s;
+}
+.btn-disconnect:hover { background: #e53935; color: #fff; }
+.session-item { justify-content: space-between; }
+</style>
 
 <script>
 // QR Code generator embutido (sem dependência externa)
@@ -273,15 +290,42 @@ function loadSessions() {
   fetch('/ui/sessions')
   .then(function(r) { return r.json(); })
   .then(function(data) {
+    var list = document.getElementById('sessions-list');
+    var items = document.getElementById('sessions-items');
     if (data.count > 0) {
-      document.getElementById('sessions-list').style.display = 'block';
+      list.style.display = 'block';
       var html = '';
       data.sessions.forEach(function(jid) {
-        html += '<div class="session-item"><div class="dot"></div>' + jid + '</div>';
+        var jidEnc = encodeURIComponent(jid);
+        html += '<div class="session-item">'
+          + '<div style="display:flex;align-items:center;gap:8px"><div class="dot"></div><span style="word-break:break-all;font-size:12px">' + jid + '</span></div>'
+          + '<button class="btn-disconnect" onclick="disconnectSession(\'' + jidEnc + '\')">Desconectar</button>'
+          + '</div>';
       });
-      document.getElementById('sessions-items').innerHTML = html;
+      items.innerHTML = html;
+    } else {
+      list.style.display = 'none';
+      items.innerHTML = '';
     }
   });
+}
+
+function disconnectSession(jidEnc) {
+  var jid = decodeURIComponent(jidEnc);
+  if (!confirm('Desconectar ' + jid + '?')) return;
+  fetch('/ui/sessions/' + jidEnc, { method: 'DELETE' })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    loadSessions();
+    // reseta UI se era a sessão atual
+    document.getElementById('qr-section').style.display = 'none';
+    document.getElementById('qr-wrap').innerHTML = '<canvas id="qr-canvas" width="256" height="256"></canvas>';
+    if (pollInterval) clearInterval(pollInterval);
+    if (timerInterval) clearInterval(timerInterval);
+    lastQR = '';
+    resetBtn();
+  })
+  .catch(function(e) { alert('Erro: ' + e); });
 }
 
 window.onload = function() { loadSessions(); };
