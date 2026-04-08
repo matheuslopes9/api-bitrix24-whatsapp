@@ -150,6 +150,8 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 			jid := evt.ID.String()
 			sessionID := uuid.New()
 			sess := &Session{ID: sessionID, JID: jid, Phone: phone, Client: client, dbPath: dbPath}
+			// Adiciona handler de mensagens imediatamente após o pair
+			client.AddEventHandler(m.buildEventHandler(sess))
 			m.mu.Lock()
 			m.sessions[jid] = sess
 			m.mu.Unlock()
@@ -159,17 +161,9 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 			})
 			m.log.Info("session paired via qr", zap.String("jid", jid), zap.String("phone", phone))
 		case *events.Connected:
+			// Sessão já foi configurada no PairSuccess — apenas atualiza status
 			jid := client.Store.ID.String()
-			sessionID := uuid.New()
-			sess := &Session{ID: sessionID, JID: jid, Phone: phone, Client: client, dbPath: dbPath}
-			client.AddEventHandler(m.buildEventHandler(sess))
-			m.mu.Lock()
-			m.sessions[jid] = sess
-			m.mu.Unlock()
-			_ = m.repo.UpsertSession(context.Background(), &db.WhatsAppSession{
-				ID: sessionID, JID: jid, Phone: phone,
-				Status: db.SessionActive, SessionFile: dbPath,
-			})
+			_ = m.repo.UpdateSessionStatus(context.Background(), jid, db.SessionActive)
 			m.log.Info("session connected after scan", zap.String("jid", jid))
 		}
 	})
@@ -260,8 +254,11 @@ func (m *Manager) Ping(jid string) bool {
 
 // Reconnect tenta reconectar uma sessão que estava desconectada.
 func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
-	// Se já está conectada, não faz nada
-	if m.Ping(s.JID) {
+	// Se já está no mapa (mesmo que ainda conectando), não interfere
+	m.mu.RLock()
+	_, exists := m.sessions[s.JID]
+	m.mu.RUnlock()
+	if exists {
 		return nil
 	}
 	return m.connectSession(ctx, s)
