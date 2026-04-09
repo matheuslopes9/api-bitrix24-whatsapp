@@ -80,8 +80,11 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	}
 
 	// 5. Confirma entrega da mensagem do cliente ao Bitrix (para parar o spinner)
+	p.log.Info("calling set delivery", zap.String("msg_id", job.MessageID), zap.Int("line", p.lineID))
 	if err := p.client.ConnectorSetDelivery(ctx, connectorID, p.lineID, job.MessageID); err != nil {
 		p.log.Warn("set delivery status failed", zap.String("msg_id", job.MessageID), zap.Error(err))
+	} else {
+		p.log.Info("set delivery ok", zap.String("msg_id", job.MessageID))
 	}
 
 	// 6. Marca como entregue no banco
