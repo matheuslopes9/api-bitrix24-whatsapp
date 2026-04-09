@@ -222,19 +222,28 @@ func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte)
 	}
 	c.log.Info("disk.storage.getlist raw", zap.String("raw", string(storagesRaw)))
 
+	// Bitrix retorna IDs como string ("ID":"11"), não int
 	var storages []struct {
-		ID       int64  `json:"ID"`
-		RootID   int64  `json:"ROOT_OBJECT_ID"`
+		ID         string `json:"ID"`
 		EntityType string `json:"ENTITY_TYPE"`
 	}
 	if err := json.Unmarshal(storagesRaw, &storages); err != nil || len(storages) == 0 {
 		return 0, "", fmt.Errorf("no storage found (raw: %s)", string(storagesRaw))
 	}
 
+	// Prefere o Shared drive (ENTITY_TYPE=common), senão usa o primeiro
+	storageID := storages[0].ID
+	for _, s := range storages {
+		if s.EntityType == "common" {
+			storageID = s.ID
+			break
+		}
+	}
+
 	// Usa multipart/form-data — a API do Bitrix não aceita bytes em JSON
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	_ = mw.WriteField("id", fmt.Sprintf("%d", storages[0].ID))
+	_ = mw.WriteField("id", storageID)
 	_ = mw.WriteField("data[NAME]", fileName)
 	fw, err := mw.CreateFormFile("fileContent", fileName)
 	if err != nil {
