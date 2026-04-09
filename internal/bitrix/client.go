@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -205,60 +206,75 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
-// UploadToDisk faz upload de um arquivo para o Bitrix24 via im.disk.file.upload.
-// Esse método funciona com token de app (não precisa de storage de usuário específico).
+// UploadToDisk faz upload de um arquivo para o Bitrix24 via multipart/form-data.
+// Usa disk.storage.getlist para encontrar o storage e disk.folder.uploadfile para enviar.
 // Retorna o ID do arquivo e a DOWNLOAD_URL pública.
 func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte) (int64, string, error) {
-	// im.disk.file.upload — funciona no contexto de app, cria arquivo temporário no IM
-	raw, err := c.call(ctx, "im.disk.file.upload", map[string]interface{}{
-		"filename":    fileName,
-		"fileContent": data,
-	})
-	if err == nil {
-		var file struct {
+	t, err := c.token(ctx)
+	if err != nil {
+		return 0, "", err
+	}
+
+	// Busca qualquer storage disponível (sem filtro — funciona com token de app)
+	storagesRaw, err := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
+	if err != nil {
+		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err)
+	}
+	c.log.Info("disk.storage.getlist raw", zap.String("raw", string(storagesRaw)))
+
+	var storages []struct {
+		ID       int64  `json:"ID"`
+		RootID   int64  `json:"ROOT_OBJECT_ID"`
+		EntityType string `json:"ENTITY_TYPE"`
+	}
+	if err := json.Unmarshal(storagesRaw, &storages); err != nil || len(storages) == 0 {
+		return 0, "", fmt.Errorf("no storage found (raw: %s)", string(storagesRaw))
+	}
+
+	// Usa multipart/form-data — a API do Bitrix não aceita bytes em JSON
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("id", fmt.Sprintf("%d", storages[0].ID))
+	_ = mw.WriteField("data[NAME]", fileName)
+	fw, err := mw.CreateFormFile("fileContent", fileName)
+	if err != nil {
+		return 0, "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := fw.Write(data); err != nil {
+		return 0, "", fmt.Errorf("write file data: %w", err)
+	}
+	mw.Close()
+
+	reqURL := fmt.Sprintf("%s/rest/disk.storage.uploadfile.json?auth=%s", c.cfg.Domain, t.AccessToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
+	if err != nil {
+		return 0, "", err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("upload request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBytes, _ := io.ReadAll(resp.Body)
+	c.log.Info("disk.storage.uploadfile raw", zap.String("raw", string(rawBytes)))
+
+	var envelope struct {
+		Result struct {
 			ID          int64  `json:"ID"`
 			DownloadURL string `json:"DOWNLOAD_URL"`
-			Link        string `json:"LINK"`
-		}
-		if jsonErr := json.Unmarshal(raw, &file); jsonErr == nil && file.ID > 0 {
-			link := file.DownloadURL
-			if link == "" {
-				link = file.Link
-			}
-			return file.ID, link, nil
-		}
+		} `json:"result"`
+		Error string `json:"error"`
 	}
-	c.log.Warn("im.disk.file.upload failed, trying disk.storage", zap.Error(err))
-
-	// Fallback: busca qualquer storage disponível
-	storagesRaw, err2 := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
-	if err2 != nil {
-		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err2)
+	if err := json.Unmarshal(rawBytes, &envelope); err != nil {
+		return 0, "", fmt.Errorf("parse upload response: %w", err)
 	}
-	var storages []struct {
-		ID int64 `json:"ID"`
+	if envelope.Error != "" {
+		return 0, "", fmt.Errorf("bitrix error: %s", envelope.Error)
 	}
-	if err2 := json.Unmarshal(storagesRaw, &storages); err2 != nil || len(storages) == 0 {
-		return 0, "", fmt.Errorf("no storage found")
-	}
-
-	raw2, err2 := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
-		"id":          storages[0].ID,
-		"data":        map[string]string{"NAME": fileName},
-		"fileContent": data,
-	})
-	if err2 != nil {
-		return 0, "", fmt.Errorf("disk.storage.uploadfile: %w", err2)
-	}
-
-	var file2 struct {
-		ID          int64  `json:"ID"`
-		DownloadURL string `json:"DOWNLOAD_URL"`
-	}
-	if err2 := json.Unmarshal(raw2, &file2); err2 != nil {
-		return 0, "", fmt.Errorf("parse upload response: %w", err2)
-	}
-	return file2.ID, file2.DownloadURL, nil
+	return envelope.Result.ID, envelope.Result.DownloadURL, nil
 }
 
 // ─── Im Connector (Open Channel) ─────────────────────────────────────────
