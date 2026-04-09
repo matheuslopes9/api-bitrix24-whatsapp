@@ -69,8 +69,9 @@ func main() {
 	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log, cfg.Bitrix.OpenLineID)
 
 	// ─── WhatsApp Manager ────────────────────────────────────────────────
-	msgHandler := buildMessageHandler(ctx, q, repo, metrics, log)
-	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, msgHandler)
+	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
+	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, nil)
+	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, metrics, log))
 
 	// Carrega todas as sessões salvas no banco
 	if err := waManager.LoadAll(ctx); err != nil {
@@ -138,6 +139,7 @@ func buildMessageHandler(
 	ctx context.Context,
 	q *queue.Queue,
 	repo *db.Repository,
+	waManager *whatsapp.Manager,
 	metrics *telemetry.Metrics,
 	log *zap.Logger,
 ) whatsapp.MessageHandler {
@@ -148,21 +150,58 @@ func buildMessageHandler(
 
 		text := ""
 		msgType := db.MsgTypeText
+		var mediaData []byte
+		var mediaName, mediaMime string
+
 		if evt.Message.GetConversation() != "" {
 			text = evt.Message.GetConversation()
 		} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 			text = ext.GetText()
-		} else if evt.Message.GetImageMessage() != nil {
+		} else if img := evt.Message.GetImageMessage(); img != nil {
 			msgType = db.MsgTypeImage
-			text = evt.Message.GetImageMessage().GetCaption()
-		} else if evt.Message.GetAudioMessage() != nil {
+			text = img.GetCaption()
+			mediaMime = img.GetMimetype()
+			mediaName = "image.jpg"
+			if data, err := waManager.DownloadMedia(sessionJID, img); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download image failed", zap.Error(err))
+			}
+		} else if aud := evt.Message.GetAudioMessage(); aud != nil {
 			msgType = db.MsgTypeAudio
-		} else if evt.Message.GetDocumentMessage() != nil {
+			mediaMime = aud.GetMimetype()
+			mediaName = "audio.ogg"
+			if aud.GetPTT() {
+				mediaName = "voice.ogg"
+			}
+			if data, err := waManager.DownloadMedia(sessionJID, aud); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download audio failed", zap.Error(err))
+			}
+		} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
 			msgType = db.MsgTypeDocument
-			text = evt.Message.GetDocumentMessage().GetFileName()
-		} else if evt.Message.GetVideoMessage() != nil {
+			text = doc.GetFileName()
+			mediaMime = doc.GetMimetype()
+			mediaName = doc.GetFileName()
+			if mediaName == "" {
+				mediaName = "document"
+			}
+			if data, err := waManager.DownloadMedia(sessionJID, doc); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download document failed", zap.Error(err))
+			}
+		} else if vid := evt.Message.GetVideoMessage(); vid != nil {
 			msgType = db.MsgTypeVideo
-			text = evt.Message.GetVideoMessage().GetCaption()
+			text = vid.GetCaption()
+			mediaMime = vid.GetMimetype()
+			mediaName = "video.mp4"
+			if data, err := waManager.DownloadMedia(sessionJID, vid); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download video failed", zap.Error(err))
+			}
 		}
 
 		// Salva mensagem no banco com status "received"
@@ -174,6 +213,7 @@ func buildMessageHandler(
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,
+			MediaMime:   mediaMime,
 			Status:      db.MsgReceived,
 			SentAt:      &ts,
 		}
@@ -190,6 +230,9 @@ func buildMessageHandler(
 			MessageID:   evt.Info.ID,
 			MessageType: string(msgType),
 			Text:        text,
+			MediaData:   mediaData,
+			MediaName:   mediaName,
+			MediaMime:   mediaMime,
 		}
 
 		if err := q.PushInbound(ctx, job); err != nil {

@@ -47,6 +47,23 @@ func NewManager(cfg *config.WhatsAppConfig, repo *db.Repository, log *zap.Logger
 	}
 }
 
+// SetMessageHandler define o handler de mensagens após a criação do Manager.
+func (m *Manager) SetMessageHandler(h MessageHandler) {
+	m.onMsg = h
+}
+
+// DownloadMedia baixa bytes de mídia de uma mensagem WhatsApp.
+// msg deve implementar whatsmeow.DownloadableMessage.
+func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMessage) ([]byte, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionJID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionJID)
+	}
+	return sess.Client.Download(context.Background(), msg)
+}
+
 // GetQR retorna o QR code atual para um telefone (vazio se não disponível).
 func (m *Manager) GetQR(phone string) string {
 	m.mu.RLock()

@@ -235,8 +235,14 @@ type ConnectorUser struct {
 }
 
 type ConnectorMsgBody struct {
-	ID   string `json:"ID"`
-	Text string `json:"TEXT"`
+	ID    string                   `json:"ID"`
+	Text  string                   `json:"TEXT,omitempty"`
+	Files []ConnectorFile          `json:"FILES,omitempty"`
+}
+
+type ConnectorFile struct {
+	Name    string `json:"name"`
+	Content []byte `json:"content"`
 }
 
 type ConnectorChat struct {

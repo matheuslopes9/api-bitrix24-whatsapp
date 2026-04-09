@@ -31,6 +31,8 @@ type InboundJob struct {
 	Text        string    `json:"text,omitempty"`
 	MediaURL    string    `json:"media_url,omitempty"`
 	MediaMime   string    `json:"media_mime,omitempty"`
+	MediaData   []byte    `json:"media_data,omitempty"`  // bytes da mídia já baixada
+	MediaName   string    `json:"media_name,omitempty"` // nome do arquivo para exibição
 	RetryCount  int       `json:"retry_count"`
 	CreatedAt   time.Time `json:"created_at"`
 }

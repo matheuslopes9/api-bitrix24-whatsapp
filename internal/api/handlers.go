@@ -301,17 +301,18 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusOK)
 }
 
-// sanitizeJID converte JIDs do Bitrix ("127586399207476:47@lid") para formato WA ("127586399207476@s.whatsapp.net").
+// sanitizeJID normaliza JIDs do Bitrix para formato aceito pelo whatsmeow.
+// "127586399207476:47@lid" → "127586399207476@lid" (remove device part, mantém @lid)
+// "5511999@s.whatsapp.net" → mantém como está
 func sanitizeJID(jid string) string {
-	// Remove device part (:XX) e sufixo @lid/@c.us/@net, mantém só o número
-	phone := jid
-	if idx := strings.Index(phone, ":"); idx != -1 {
-		phone = phone[:idx]
+	if idx := strings.Index(jid, ":"); idx != -1 {
+		suffix := ""
+		if at := strings.Index(jid, "@"); at != -1 {
+			suffix = jid[at:] // "@lid" ou "@s.whatsapp.net"
+		}
+		return jid[:idx] + suffix
 	}
-	if idx := strings.Index(phone, "@"); idx != -1 {
-		phone = phone[:idx]
-	}
-	return phone + "@s.whatsapp.net"
+	return jid
 }
 
 // stripBBCode remove tags BBCode do Bitrix24 ([b], [/b], [br], etc.).

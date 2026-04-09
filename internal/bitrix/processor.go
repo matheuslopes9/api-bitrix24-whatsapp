@@ -35,8 +35,16 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 
 	// 2. Monta a mensagem para o connector
 	text := job.Text
-	if text == "" {
-		text = "[" + job.MessageType + "]"
+	msgBody := ConnectorMsgBody{ID: job.MessageID, Text: text}
+
+	// Anexa mídia se disponível
+	if len(job.MediaData) > 0 && job.MediaName != "" {
+		msgBody.Files = []ConnectorFile{{Name: job.MediaName, Content: job.MediaData}}
+		if text == "" {
+			msgBody.Text = "" // Bitrix aceita mensagem só com arquivo
+		}
+	} else if text == "" {
+		msgBody.Text = "[" + job.MessageType + "]"
 	}
 
 	msg := ConnectorMessage{
@@ -45,12 +53,9 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 			Name:  job.FromName,
 			Phone: job.FromPhone,
 		},
-		Message: ConnectorMsgBody{
-			ID:   job.MessageID,
-			Text: text,
-		},
+		Message: msgBody,
 		Chat: ConnectorChat{
-			ID: job.FromJID, // usa o JID como ID estável do chat externo
+			ID: job.FromJID,
 		},
 	}
 
