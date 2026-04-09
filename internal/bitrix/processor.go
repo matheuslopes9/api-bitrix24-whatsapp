@@ -37,11 +37,18 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	text := job.Text
 	msgBody := ConnectorMsgBody{ID: job.MessageID, Text: text}
 
-	// Anexa mídia se disponível
+	// Anexa mídia se disponível — faz upload para o Bitrix disk primeiro
 	if len(job.MediaData) > 0 && job.MediaName != "" {
-		msgBody.Files = []ConnectorFile{{Name: job.MediaName, Content: job.MediaData}}
-		if text == "" {
-			msgBody.Text = "" // Bitrix aceita mensagem só com arquivo
+		_, downloadURL, err := p.client.UploadToDisk(ctx, job.MediaName, job.MediaData)
+		if err != nil {
+			p.log.Warn("upload media to disk failed, sending text only",
+				zap.String("file", job.MediaName), zap.Error(err))
+			if text == "" {
+				msgBody.Text = "[" + job.MediaName + "]"
+			}
+		} else {
+			msgBody.Files = []ConnectorFile{{Name: job.MediaName, Link: downloadURL}}
+			p.log.Info("media uploaded to disk", zap.String("file", job.MediaName), zap.String("url", downloadURL))
 		}
 	} else if text == "" {
 		msgBody.Text = "[" + job.MessageType + "]"

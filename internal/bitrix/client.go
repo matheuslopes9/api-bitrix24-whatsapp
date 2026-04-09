@@ -205,18 +205,45 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
-// SendFile envia um arquivo para o chat.
-func (c *Client) SendFile(ctx context.Context, sessionID int64, fileName string, fileData []byte) error {
-	_, err := c.call(ctx, "imopenlines.message.add", map[string]interface{}{
-		"SESSION_ID": sessionID,
-		"FILES": []map[string]interface{}{
-			{
-				"name":    fileName,
-				"content": fileData,
-			},
-		},
+// UploadToDisk faz upload de um arquivo para o disco do Bitrix24 e retorna o ID do arquivo.
+// folderID 0 usa a pasta raiz do usuário atual.
+func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte) (int64, string, error) {
+	// Usa disk.folder.uploadfile com conteúdo base64
+	raw, err := c.call(ctx, "disk.folder.uploadfile", map[string]interface{}{
+		"id":          0, // 0 = pasta raiz (my drive)
+		"data":        map[string]string{"NAME": fileName},
+		"fileContent": data, // Go JSON encoderá como base64
 	})
-	return err
+	if err != nil {
+		// Fallback: disk.storage.uploadfile
+		storagesRaw, err2 := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
+		if err2 != nil {
+			return 0, "", fmt.Errorf("upload disk: %w (storage list: %v)", err, err2)
+		}
+		var storages []struct {
+			ID int64 `json:"ID"`
+		}
+		if err2 := json.Unmarshal(storagesRaw, &storages); err2 != nil || len(storages) == 0 {
+			return 0, "", fmt.Errorf("upload disk: %w", err)
+		}
+		raw, err = c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
+			"id":          storages[0].ID,
+			"data":        map[string]string{"NAME": fileName},
+			"fileContent": data,
+		})
+		if err != nil {
+			return 0, "", fmt.Errorf("upload disk storage: %w", err)
+		}
+	}
+
+	var file struct {
+		ID          int64  `json:"ID"`
+		DownloadURL string `json:"DOWNLOAD_URL"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return 0, "", fmt.Errorf("parse upload response: %w", err)
+	}
+	return file.ID, file.DownloadURL, nil
 }
 
 // ─── Im Connector (Open Channel) ─────────────────────────────────────────
@@ -241,8 +268,8 @@ type ConnectorMsgBody struct {
 }
 
 type ConnectorFile struct {
-	Name    string `json:"name"`
-	Content []byte `json:"content"`
+	Name string `json:"name"`
+	Link string `json:"link,omitempty"` // URL pública ou ID do arquivo no Bitrix disk
 }
 
 type ConnectorChat struct {
@@ -282,49 +309,62 @@ func (c *Client) ActivateConnector(ctx context.Context, connectorID string, line
 // ConnectorSendMessage entrega uma mensagem de cliente ao Contact Center.
 // Retorna o chat_id criado/existente no Bitrix24.
 func (c *Client) ConnectorSendMessage(ctx context.Context, connectorID string, lineID int, msg ConnectorMessage) (string, error) {
-	raw, err := c.call(ctx, "imconnector.send.messages", map[string]interface{}{
-		"CONNECTOR": connectorID,
-		"LINE":      lineID,
-		"MESSAGES":  []ConnectorMessage{msg},
-	})
+	// Usa callRaw para obter a resposta completa (não só o campo "result")
+	t, err := c.token(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	c.log.Info("imconnector.send.messages raw response", zap.String("raw", string(raw)))
-
-	// Tenta array: [{"chat_id": 123, ...}]
-	var arrResult []struct {
-		ChatID interface{} `json:"chat_id"`
+	params := map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"MESSAGES":  []ConnectorMessage{msg},
 	}
-	if err := json.Unmarshal(raw, &arrResult); err == nil && len(arrResult) > 0 {
-		v := fmt.Sprintf("%v", arrResult[0].ChatID)
-		if v != "<nil>" && v != "0" {
-			return v, nil
+	body, _ := json.Marshal(params)
+	reqURL := fmt.Sprintf("%s/rest/imconnector.send.messages.json?auth=%s", c.cfg.Domain, t.AccessToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	rawBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	c.log.Info("imconnector.send.messages raw response", zap.String("raw", string(rawBytes)))
+
+	// Formato real: {"result":{"SUCCESS":true,"DATA":{"RESULT":[{"session":{"CHAT_ID":"6026",...}},...]}}}
+	var envelope struct {
+		Result struct {
+			Success bool `json:"SUCCESS"`
+			Data    struct {
+				Result []struct {
+					Success bool `json:"SUCCESS"`
+					Session struct {
+						ID     string `json:"ID"`
+						ChatID string `json:"CHAT_ID"`
+					} `json:"session"`
+				} `json:"RESULT"`
+			} `json:"DATA"`
+		} `json:"result"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rawBytes, &envelope); err == nil {
+		if envelope.Error != "" {
+			return "", fmt.Errorf("bitrix error: %s", envelope.Error)
 		}
-	}
-
-	// Tenta objeto: {"chat_id": 123}
-	var objResult struct {
-		ChatID interface{} `json:"chat_id"`
-	}
-	if err := json.Unmarshal(raw, &objResult); err == nil {
-		v := fmt.Sprintf("%v", objResult.ChatID)
-		if v != "<nil>" && v != "0" {
-			return v, nil
-		}
-	}
-
-	// Tenta objeto com USER_ID (formato alternativo da API)
-	var altResult struct {
-		UserID  interface{} `json:"user_id"`
-		ChatID  interface{} `json:"chat"`
-		Session interface{} `json:"session"`
-	}
-	if err := json.Unmarshal(raw, &altResult); err == nil && altResult.ChatID != nil {
-		v := fmt.Sprintf("%v", altResult.ChatID)
-		if v != "<nil>" && v != "0" {
-			return v, nil
+		for _, r := range envelope.Result.Data.Result {
+			if r.Session.ChatID != "" && r.Session.ChatID != "0" {
+				return r.Session.ChatID, nil
+			}
 		}
 	}
 
