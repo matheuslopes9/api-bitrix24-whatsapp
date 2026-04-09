@@ -3,12 +3,25 @@ package bitrix
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"go.uber.org/zap"
 )
+
+// normalizeChatID remove o device part do JID para garantir consistência no Bitrix.
+// "127586399207476:47@lid" → "127586399207476@lid"
+// "5511999999999@s.whatsapp.net" → mantém como está
+func normalizeChatID(jid string) string {
+	if idx := strings.Index(jid, ":"); idx != -1 {
+		if at := strings.Index(jid, "@"); at != -1 {
+			return jid[:idx] + jid[at:]
+		}
+	}
+	return jid
+}
 
 const connectorID = "whatsapp_uc"
 
@@ -54,15 +67,20 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		msgBody.Text = "[" + job.MessageType + "]"
 	}
 
+	// Normaliza o chat ID: remove device part (:47) para garantir consistência.
+	// O Bitrix usa chat.ID como chave de conversa — JIDs com e sem device part
+	// criam sessões duplicadas. Usamos sempre "user@domain" sem o device.
+	chatExtID := normalizeChatID(job.FromJID)
+
 	msg := ConnectorMessage{
 		User: ConnectorUser{
-			ID:    job.FromJID,
+			ID:    chatExtID,
 			Name:  job.FromName,
 			Phone: job.FromPhone,
 		},
 		Message: msgBody,
 		Chat: ConnectorChat{
-			ID: job.FromJID,
+			ID: chatExtID,
 		},
 	}
 
