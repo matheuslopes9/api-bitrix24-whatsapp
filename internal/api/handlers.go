@@ -230,7 +230,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	lineStr := c.FormValue("data[LINE]")
 	chatID := c.FormValue("data[MESSAGES][0][chat][id]")   // JID que definimos (FromJID)
 	text := c.FormValue("data[MESSAGES][0][message][text]")
-	msgID := c.FormValue("data[MESSAGES][0][message][id]")
+	msgID := c.FormValue("data[MESSAGES][0][im][message_id]") // campo correto do Bitrix
 	userID := c.FormValue("data[MESSAGES][0][message][user_id]")
 
 	h.log.Info("connector event parsed",
@@ -290,7 +290,15 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	line := 218
 	fmt.Sscanf(lineStr, "%d", &line)
 	go func(conn string, ln int, mID string) {
-		_ = h.bitrixClient.ConnectorSetDelivery(context.Background(), conn, ln, mID)
+		if mID == "" {
+			h.log.Warn("connector event: message_id empty, skipping delivery confirmation")
+			return
+		}
+		if err := h.bitrixClient.ConnectorSetDelivery(context.Background(), conn, ln, mID); err != nil {
+			h.log.Warn("connector event: set delivery failed", zap.String("msg_id", mID), zap.Error(err))
+		} else {
+			h.log.Info("connector event: delivery confirmed", zap.String("msg_id", mID))
+		}
 	}(connector, line, msgID)
 
 	h.log.Info("operator reply queued",
