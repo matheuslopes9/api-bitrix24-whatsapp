@@ -374,9 +374,11 @@ func (c *Client) ConnectorSendMessage(ctx context.Context, connectorID string, l
 // ConnectorSetDelivery confirma entrega de mensagem do operador ao canal externo.
 func (c *Client) ConnectorSetDelivery(ctx context.Context, connectorID string, lineID int, messageID string) error {
 	_, err := c.call(ctx, "imconnector.send.status.delivery", map[string]interface{}{
-		"CONNECTOR":  connectorID,
-		"LINE":       lineID,
-		"MESSAGE_ID": messageID,
+		"CONNECTOR": connectorID,
+		"LINE":      fmt.Sprintf("%d", lineID),
+		"MESSAGES": []map[string]string{
+			{"id": messageID, "status": "delivered"},
+		},
 	})
 	return err
 }
