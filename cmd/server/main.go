@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -91,11 +94,35 @@ func main() {
 	// ─── Workers outbound: Bitrix → WA ───────────────────────────────────
 	workers.StartOutbound(ctx, func(c context.Context, job *queue.OutboundJob) error {
 		metrics.MessagesOutbound.Inc()
-		waID, err := waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
+
+		var waID string
+		var err error
+
+		if job.FileURL != "" {
+			// Baixa o arquivo do Bitrix e envia como documento no WA
+			fileData, dlErr := downloadURL(job.FileURL)
+			if dlErr != nil {
+				metrics.MessagesFailed.Inc()
+				return fmt.Errorf("download file from bitrix: %w", dlErr)
+			}
+			mime := job.FileMime
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			name := job.FileName
+			if name == "" {
+				name = "file"
+			}
+			waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+		} else {
+			waID, err = waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
+		}
+
 		if err != nil {
 			metrics.MessagesFailed.Inc()
 			return err
 		}
+
 		// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
 		if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
 			go func() {
@@ -260,4 +287,17 @@ func buildMessageHandler(
 
 		log.Info("message queued", zap.String("from", job.FromPhone), zap.String("type", string(msgType)))
 	}
+}
+
+// downloadURL faz GET em uma URL e retorna o corpo como bytes.
+func downloadURL(url string) ([]byte, error) {
+	resp, err := http.Get(url) //nolint:gosec
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download %s: status %d", url, resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }

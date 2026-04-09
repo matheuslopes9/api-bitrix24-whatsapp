@@ -47,7 +47,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 				msgBody.Text = "[" + job.MediaName + "]"
 			}
 		} else {
-			msgBody.Files = []ConnectorFile{{Name: job.MediaName, Link: downloadURL}}
+			msgBody.Files = []ConnectorFile{{Name: job.MediaName, URL: downloadURL}}
 			p.log.Info("media uploaded to disk", zap.String("file", job.MediaName), zap.String("url", downloadURL))
 		}
 	} else if text == "" {

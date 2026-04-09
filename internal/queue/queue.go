@@ -55,6 +55,11 @@ type OutboundJob struct {
 	BitrixImChatID   string `json:"bitrix_im_chat_id,omitempty"`
 	BitrixImMsgID    string `json:"bitrix_im_msg_id,omitempty"`
 	BitrixChatExtID  string `json:"bitrix_chat_ext_id,omitempty"` // chat.id do evento
+
+	// Arquivo enviado pelo operador (outbound)
+	FileURL      string `json:"file_url,omitempty"`      // downloadLink do evento
+	FileName     string `json:"file_name,omitempty"`
+	FileMime     string `json:"file_mime,omitempty"`
 }
 
 // Queue gerencia as filas via Redis.

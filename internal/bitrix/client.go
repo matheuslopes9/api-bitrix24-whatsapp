@@ -205,35 +205,30 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
-// UploadToDisk faz upload de um arquivo para o disco do Bitrix24 e retorna o ID do arquivo.
-// folderID 0 usa a pasta raiz do usuário atual.
+// UploadToDisk faz upload de um arquivo para o storage pessoal do usuário no Bitrix24.
+// Retorna o ID do arquivo e a DOWNLOAD_URL pública.
 func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte) (int64, string, error) {
-	// Usa disk.folder.uploadfile com conteúdo base64
-	raw, err := c.call(ctx, "disk.folder.uploadfile", map[string]interface{}{
-		"id":          0, // 0 = pasta raiz (my drive)
-		"data":        map[string]string{"NAME": fileName},
-		"fileContent": data, // Go JSON encoderá como base64
+	// Busca o storage pessoal (type=user) do usuário autenticado
+	storagesRaw, err := c.call(ctx, "disk.storage.getlist", map[string]interface{}{
+		"filter": map[string]string{"ENTITY_TYPE": "user"},
 	})
 	if err != nil {
-		// Fallback: disk.storage.uploadfile
-		storagesRaw, err2 := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
-		if err2 != nil {
-			return 0, "", fmt.Errorf("upload disk: %w (storage list: %v)", err, err2)
-		}
-		var storages []struct {
-			ID int64 `json:"ID"`
-		}
-		if err2 := json.Unmarshal(storagesRaw, &storages); err2 != nil || len(storages) == 0 {
-			return 0, "", fmt.Errorf("upload disk: %w", err)
-		}
-		raw, err = c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
-			"id":          storages[0].ID,
-			"data":        map[string]string{"NAME": fileName},
-			"fileContent": data,
-		})
-		if err != nil {
-			return 0, "", fmt.Errorf("upload disk storage: %w", err)
-		}
+		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err)
+	}
+	var storages []struct {
+		ID int64 `json:"ID"`
+	}
+	if err := json.Unmarshal(storagesRaw, &storages); err != nil || len(storages) == 0 {
+		return 0, "", fmt.Errorf("no user storage found")
+	}
+
+	raw, err := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
+		"id":          storages[0].ID,
+		"data":        map[string]string{"NAME": fileName},
+		"fileContent": data,
+	})
+	if err != nil {
+		return 0, "", fmt.Errorf("disk.storage.uploadfile: %w", err)
 	}
 
 	var file struct {
@@ -269,7 +264,7 @@ type ConnectorMsgBody struct {
 
 type ConnectorFile struct {
 	Name string `json:"name"`
-	Link string `json:"link,omitempty"` // URL pública ou ID do arquivo no Bitrix disk
+	URL  string `json:"url,omitempty"` // URL pública do arquivo (campo correto da API)
 }
 
 type ConnectorChat struct {

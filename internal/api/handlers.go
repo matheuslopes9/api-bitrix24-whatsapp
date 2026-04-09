@@ -241,11 +241,20 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		zap.String("user_id", userID),
 		zap.String("text", text))
 
+	// Arquivo enviado pelo operador (outbound)
+	fileDownloadLink := c.FormValue("data[MESSAGES][0][message][files][0][downloadLink]")
+	fileName := c.FormValue("data[MESSAGES][0][message][files][0][name]")
+	fileMime := c.FormValue("data[MESSAGES][0][message][files][0][mime]")
+
 	// user_id=0 é mensagem automática do sistema (welcome message), ignora
 	if userID == "0" || userID == "" {
 		return c.SendStatus(fiber.StatusOK)
 	}
-	if text == "" || chatID == "" {
+	// Precisa de texto OU arquivo
+	if text == "" && fileDownloadLink == "" {
+		return c.SendStatus(fiber.StatusOK)
+	}
+	if chatID == "" {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
@@ -290,6 +299,9 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		BitrixImChatID:  imChatID,
 		BitrixImMsgID:   imMsgID,
 		BitrixChatExtID: chatID,
+		FileURL:         fileDownloadLink,
+		FileName:        fileName,
+		FileMime:        fileMime,
 	}); err != nil {
 		h.log.Error("connector event: push outbound failed", zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)
