@@ -291,20 +291,44 @@ func (c *Client) ConnectorSendMessage(ctx context.Context, connectorID string, l
 		return "", err
 	}
 
-	// Resposta é array de resultados
-	var results []struct {
+	c.log.Info("imconnector.send.messages raw response", zap.String("raw", string(raw)))
+
+	// Tenta array: [{"chat_id": 123, ...}]
+	var arrResult []struct {
 		ChatID interface{} `json:"chat_id"`
 	}
-	if err := json.Unmarshal(raw, &results); err == nil && len(results) > 0 {
-		return fmt.Sprintf("%v", results[0].ChatID), nil
+	if err := json.Unmarshal(raw, &arrResult); err == nil && len(arrResult) > 0 {
+		v := fmt.Sprintf("%v", arrResult[0].ChatID)
+		if v != "<nil>" && v != "0" {
+			return v, nil
+		}
 	}
 
-	// Fallback: objeto simples
-	var single struct {
+	// Tenta objeto: {"chat_id": 123}
+	var objResult struct {
 		ChatID interface{} `json:"chat_id"`
 	}
-	_ = json.Unmarshal(raw, &single)
-	return fmt.Sprintf("%v", single.ChatID), nil
+	if err := json.Unmarshal(raw, &objResult); err == nil {
+		v := fmt.Sprintf("%v", objResult.ChatID)
+		if v != "<nil>" && v != "0" {
+			return v, nil
+		}
+	}
+
+	// Tenta objeto com USER_ID (formato alternativo da API)
+	var altResult struct {
+		UserID  interface{} `json:"user_id"`
+		ChatID  interface{} `json:"chat"`
+		Session interface{} `json:"session"`
+	}
+	if err := json.Unmarshal(raw, &altResult); err == nil && altResult.ChatID != nil {
+		v := fmt.Sprintf("%v", altResult.ChatID)
+		if v != "<nil>" && v != "0" {
+			return v, nil
+		}
+	}
+
+	return "", nil
 }
 
 // ConnectorSetDelivery confirma entrega de mensagem do operador ao canal externo.
