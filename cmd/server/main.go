@@ -222,6 +222,7 @@ func buildMessageHandler(
 				mediaData = data
 			} else {
 				log.Warn("download audio failed", zap.Error(err))
+				text = "[Áudio]"
 			}
 		} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
 			msgType = db.MsgTypeDocument
@@ -245,6 +246,29 @@ func buildMessageHandler(
 				mediaData = data
 			} else {
 				log.Warn("download video failed", zap.Error(err))
+			}
+		} else if contact := evt.Message.GetContactMessage(); contact != nil {
+			msgType = db.MsgTypeDocument
+			mediaName = contact.GetDisplayName() + ".vcf"
+			if mediaName == ".vcf" {
+				mediaName = "contato.vcf"
+			}
+			mediaMime = "text/vcard"
+			vcard := contact.GetVcard()
+			if vcard != "" {
+				mediaData = []byte(vcard)
+			} else {
+				text = "[Contato: " + contact.GetDisplayName() + "]"
+			}
+		} else if sticker := evt.Message.GetStickerMessage(); sticker != nil {
+			msgType = db.MsgTypeImage
+			mediaMime = sticker.GetMimetype()
+			mediaName = "sticker.webp"
+			if data, err := waManager.DownloadMedia(sessionJID, sticker); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download sticker failed", zap.Error(err))
+				text = "[Sticker]"
 			}
 		}
 
