@@ -117,14 +117,18 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 
 // ensureContact garante que temos um mapeamento para este contato.
 func (p *Processor) ensureContact(ctx context.Context, job *queue.InboundJob) (*db.ContactMapping, error) {
-	existing, err := p.repo.GetContactByJID(ctx, job.FromJID, job.SessionID)
+	// Normaliza o JID antes de buscar/salvar — garante que :47@lid e @lid
+	// sejam tratados como o mesmo contato no banco.
+	normalizedJID := normalizeChatID(job.FromJID)
+
+	existing, err := p.repo.GetContactByJID(ctx, normalizedJID, job.SessionID)
 	if err == nil {
 		return existing, nil
 	}
 
 	contact := &db.ContactMapping{
 		ID:           uuid.New(),
-		WAJID:        job.FromJID,
+		WAJID:        normalizedJID,
 		WAPhone:      job.FromPhone,
 		WAName:       job.FromName,
 		BitrixEntity: "chat",
