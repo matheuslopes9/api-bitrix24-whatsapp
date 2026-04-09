@@ -64,6 +64,27 @@ func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMes
 	return sess.Client.Download(context.Background(), msg)
 }
 
+// DownloadMediaFromMessage baixa mídia usando a mensagem completa (suporta DownloadAny como fallback).
+// Usar quando o tipo de mídia é incerto (ex: áudio com HMAC inválido).
+func (m *Manager) DownloadMediaFromMessage(sessionJID string, fullMsg *waProto.Message, primary whatsmeow.DownloadableMessage) ([]byte, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionJID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionJID)
+	}
+	data, err := sess.Client.Download(context.Background(), primary)
+	if err != nil {
+		// Fallback: DownloadAny tenta todos os tipos de mídia com a mensagem completa
+		data2, err2 := sess.Client.DownloadAny(context.Background(), fullMsg)
+		if err2 == nil {
+			return data2, nil
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
 // GetQR retorna o QR code atual para um telefone (vazio se não disponível).
 func (m *Manager) GetQR(phone string) string {
 	m.mu.RLock()

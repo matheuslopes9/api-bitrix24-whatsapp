@@ -218,7 +218,7 @@ func buildMessageHandler(
 			if aud.GetPTT() {
 				mediaName = "voice.ogg"
 			}
-			if data, err := waManager.DownloadMedia(sessionJID, aud); err == nil {
+			if data, err := waManager.DownloadMediaFromMessage(sessionJID, evt.Message, aud); err == nil {
 				mediaData = data
 			} else {
 				log.Warn("download audio failed", zap.Error(err))
