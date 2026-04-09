@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -206,6 +208,16 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
+// uniqueFileName adiciona timestamp ao nome do arquivo para evitar DISK_OBJ_22000
+// (conflito de nome quando o mesmo arquivo já existe no storage).
+// Ex: "voice.ogg" → "voice_20260409_202313.ogg"
+func uniqueFileName(name string) string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	ts := time.Now().Format("20060102_150405")
+	return fmt.Sprintf("%s_%s%s", base, ts, ext)
+}
+
 // UploadToDisk faz upload de um arquivo para o Bitrix24 Disk.
 // A API disk.storage.uploadfile exige fileContent como [fileName, base64] em JSON.
 // Retorna o ID do arquivo e a DOWNLOAD_URL pública.
@@ -233,14 +245,16 @@ func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte)
 			break
 		}
 	}
-	c.log.Info("uploading to disk storage", zap.String("storage_id", storageID), zap.String("file", fileName))
+	// Garante nome único adicionando timestamp — evita DISK_OBJ_22000 (conflito de nome)
+	uniqueName := uniqueFileName(fileName)
+	c.log.Info("uploading to disk storage", zap.String("storage_id", storageID), zap.String("file", uniqueName))
 
 	// disk.storage.uploadfile exige fileContent = [fileName, base64Content]
 	b64 := base64.StdEncoding.EncodeToString(data)
 	raw, err := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
 		"id":          storageID,
-		"data":        map[string]string{"NAME": fileName},
-		"fileContent": []string{fileName, b64},
+		"data":        map[string]string{"NAME": uniqueName},
+		"fileContent": []string{uniqueName, b64},
 	})
 	c.log.Info("disk.storage.uploadfile raw", zap.String("raw", string(raw)), zap.Error(err))
 	if err != nil {
