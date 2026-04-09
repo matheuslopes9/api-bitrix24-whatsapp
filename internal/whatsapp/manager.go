@@ -64,8 +64,9 @@ func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMes
 	return sess.Client.Download(context.Background(), msg)
 }
 
-// DownloadMediaFromMessage baixa mídia usando a mensagem completa (suporta DownloadAny como fallback).
-// Usar quando o tipo de mídia é incerto (ex: áudio com HMAC inválido).
+// DownloadMediaFromMessage baixa mídia usando a mensagem completa.
+// Para áudio com HMAC inválido, tenta também com MediaDocument como fallback
+// (chave HKDF diferente — às vezes resolve quando a MediaKey está incorreta para audio).
 func (m *Manager) DownloadMediaFromMessage(sessionJID string, fullMsg *waProto.Message, primary whatsmeow.DownloadableMessage) ([]byte, error) {
 	m.mu.RLock()
 	sess, ok := m.sessions[sessionJID]
@@ -74,15 +75,31 @@ func (m *Manager) DownloadMediaFromMessage(sessionJID string, fullMsg *waProto.M
 		return nil, fmt.Errorf("session not found: %s", sessionJID)
 	}
 	data, err := sess.Client.Download(context.Background(), primary)
-	if err != nil {
-		// Fallback: DownloadAny tenta todos os tipos de mídia com a mensagem completa
-		data2, err2 := sess.Client.DownloadAny(context.Background(), fullMsg)
-		if err2 == nil {
-			return data2, nil
-		}
-		return nil, err
+	if err == nil {
+		return data, nil
 	}
-	return data, nil
+	// Fallback 1: tenta DownloadAny (testa todos os tipos de mídia)
+	if data2, err2 := sess.Client.DownloadAny(context.Background(), fullMsg); err2 == nil {
+		return data2, nil
+	}
+	// Fallback 2: tenta baixar diretamente pelo DirectPath com MediaDocument
+	// Útil quando o AudioMessage tem MediaKey derivada com tipo errado
+	if aud := fullMsg.GetAudioMessage(); aud != nil && len(aud.GetDirectPath()) > 0 {
+		data3, err3 := sess.Client.DownloadMediaWithPath(
+			context.Background(),
+			aud.GetDirectPath(),
+			aud.GetFileEncSHA256(),
+			aud.GetFileSHA256(),
+			aud.GetMediaKey(),
+			-1,
+			whatsmeow.MediaDocument,
+			"",
+		)
+		if err3 == nil {
+			return data3, nil
+		}
+	}
+	return nil, err
 }
 
 // GetQR retorna o QR code atual para um telefone (vazio se não disponível).
