@@ -3,10 +3,10 @@ package bitrix
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"time"
@@ -206,21 +206,15 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
-// UploadToDisk faz upload de um arquivo para o Bitrix24 via multipart/form-data.
-// Usa disk.storage.getlist para encontrar o storage e disk.folder.uploadfile para enviar.
+// UploadToDisk faz upload de um arquivo para o Bitrix24 Disk.
+// A API disk.storage.uploadfile exige fileContent como [fileName, base64] em JSON.
 // Retorna o ID do arquivo e a DOWNLOAD_URL pública.
 func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte) (int64, string, error) {
-	t, err := c.token(ctx)
-	if err != nil {
-		return 0, "", err
-	}
-
-	// Busca qualquer storage disponível (sem filtro — funciona com token de app)
+	// Busca qualquer storage disponível
 	storagesRaw, err := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
 	if err != nil {
 		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err)
 	}
-	c.log.Info("disk.storage.getlist raw", zap.String("raw", string(storagesRaw)))
 
 	// Bitrix retorna IDs como string ("ID":"11"), não int
 	var storages []struct {
@@ -239,51 +233,39 @@ func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte)
 			break
 		}
 	}
+	c.log.Info("uploading to disk storage", zap.String("storage_id", storageID), zap.String("file", fileName))
 
-	// Usa multipart/form-data — a API do Bitrix não aceita bytes em JSON
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	_ = mw.WriteField("id", storageID)
-	_ = mw.WriteField("data[NAME]", fileName)
-	fw, err := mw.CreateFormFile("fileContent", fileName)
+	// disk.storage.uploadfile exige fileContent = [fileName, base64Content]
+	b64 := base64.StdEncoding.EncodeToString(data)
+	raw, err := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
+		"id":          storageID,
+		"data":        map[string]string{"NAME": fileName},
+		"fileContent": []string{fileName, b64},
+	})
+	c.log.Info("disk.storage.uploadfile raw", zap.String("raw", string(raw)), zap.Error(err))
 	if err != nil {
-		return 0, "", fmt.Errorf("create form file: %w", err)
+		return 0, "", fmt.Errorf("disk.storage.uploadfile: %w", err)
 	}
-	if _, err := fw.Write(data); err != nil {
-		return 0, "", fmt.Errorf("write file data: %w", err)
-	}
-	mw.Close()
 
-	reqURL := fmt.Sprintf("%s/rest/disk.storage.uploadfile.json?auth=%s", c.cfg.Domain, t.AccessToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, &buf)
-	if err != nil {
-		return 0, "", err
+	var result struct {
+		ID          json.RawMessage `json:"ID"`
+		DownloadURL string          `json:"DOWNLOAD_URL"`
 	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return 0, "", fmt.Errorf("upload request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	rawBytes, _ := io.ReadAll(resp.Body)
-	c.log.Info("disk.storage.uploadfile raw", zap.String("raw", string(rawBytes)))
-
-	var envelope struct {
-		Result struct {
-			ID          int64  `json:"ID"`
-			DownloadURL string `json:"DOWNLOAD_URL"`
-		} `json:"result"`
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(rawBytes, &envelope); err != nil {
+	if err := json.Unmarshal(raw, &result); err != nil {
 		return 0, "", fmt.Errorf("parse upload response: %w", err)
 	}
-	if envelope.Error != "" {
-		return 0, "", fmt.Errorf("bitrix error: %s", envelope.Error)
+
+	// ID pode vir como string ou número
+	var fileID int64
+	if err := json.Unmarshal(result.ID, &fileID); err != nil {
+		// tenta como string
+		var idStr string
+		if err2 := json.Unmarshal(result.ID, &idStr); err2 == nil {
+			fmt.Sscanf(idStr, "%d", &fileID)
+		}
 	}
-	return envelope.Result.ID, envelope.Result.DownloadURL, nil
+
+	return fileID, result.DownloadURL, nil
 }
 
 // ─── Im Connector (Open Channel) ─────────────────────────────────────────
