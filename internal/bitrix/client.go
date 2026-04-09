@@ -205,40 +205,60 @@ func (c *Client) SendMessage(ctx context.Context, sessionID int64, text string) 
 	return err
 }
 
-// UploadToDisk faz upload de um arquivo para o storage pessoal do usuário no Bitrix24.
+// UploadToDisk faz upload de um arquivo para o Bitrix24 via im.disk.file.upload.
+// Esse método funciona com token de app (não precisa de storage de usuário específico).
 // Retorna o ID do arquivo e a DOWNLOAD_URL pública.
 func (c *Client) UploadToDisk(ctx context.Context, fileName string, data []byte) (int64, string, error) {
-	// Busca o storage pessoal (type=user) do usuário autenticado
-	storagesRaw, err := c.call(ctx, "disk.storage.getlist", map[string]interface{}{
-		"filter": map[string]string{"ENTITY_TYPE": "user"},
+	// im.disk.file.upload — funciona no contexto de app, cria arquivo temporário no IM
+	raw, err := c.call(ctx, "im.disk.file.upload", map[string]interface{}{
+		"filename":    fileName,
+		"fileContent": data,
 	})
-	if err != nil {
-		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err)
+	if err == nil {
+		var file struct {
+			ID          int64  `json:"ID"`
+			DownloadURL string `json:"DOWNLOAD_URL"`
+			Link        string `json:"LINK"`
+		}
+		if jsonErr := json.Unmarshal(raw, &file); jsonErr == nil && file.ID > 0 {
+			link := file.DownloadURL
+			if link == "" {
+				link = file.Link
+			}
+			return file.ID, link, nil
+		}
+	}
+	c.log.Warn("im.disk.file.upload failed, trying disk.storage", zap.Error(err))
+
+	// Fallback: busca qualquer storage disponível
+	storagesRaw, err2 := c.call(ctx, "disk.storage.getlist", map[string]interface{}{})
+	if err2 != nil {
+		return 0, "", fmt.Errorf("disk.storage.getlist: %w", err2)
 	}
 	var storages []struct {
 		ID int64 `json:"ID"`
 	}
-	if err := json.Unmarshal(storagesRaw, &storages); err != nil || len(storages) == 0 {
-		return 0, "", fmt.Errorf("no user storage found")
+	if err2 := json.Unmarshal(storagesRaw, &storages); err2 != nil || len(storages) == 0 {
+		return 0, "", fmt.Errorf("no storage found")
 	}
 
-	raw, err := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
+	raw2, err2 := c.call(ctx, "disk.storage.uploadfile", map[string]interface{}{
 		"id":          storages[0].ID,
 		"data":        map[string]string{"NAME": fileName},
 		"fileContent": data,
 	})
-	if err != nil {
-		return 0, "", fmt.Errorf("disk.storage.uploadfile: %w", err)
+	if err2 != nil {
+		return 0, "", fmt.Errorf("disk.storage.uploadfile: %w", err2)
 	}
 
-	var file struct {
+	var file2 struct {
 		ID          int64  `json:"ID"`
 		DownloadURL string `json:"DOWNLOAD_URL"`
 	}
-	if err := json.Unmarshal(raw, &file); err != nil {
-		return 0, "", fmt.Errorf("parse upload response: %w", err)
+	if err2 := json.Unmarshal(raw2, &file2); err2 != nil {
+		return 0, "", fmt.Errorf("parse upload response: %w", err2)
 	}
-	return file.ID, file.DownloadURL, nil
+	return file2.ID, file2.DownloadURL, nil
 }
 
 // ─── Im Connector (Open Channel) ─────────────────────────────────────────
