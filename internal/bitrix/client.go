@@ -371,7 +371,8 @@ func (c *Client) ConnectorSendMessage(ctx context.Context, connectorID string, l
 	return "", nil
 }
 
-// ConnectorSetDelivery confirma entrega de mensagem do operador ao canal externo.
+// ConnectorSetDelivery confirma entrega de mensagem inbound (WA→Bitrix) ao Contact Center.
+// messageID é o ID externo da mensagem enviada via imconnector.send.messages.
 func (c *Client) ConnectorSetDelivery(ctx context.Context, connectorID string, lineID int, messageID string) error {
 	raw, err := c.call(ctx, "imconnector.send.status.delivery", map[string]interface{}{
 		"CONNECTOR": connectorID,
@@ -381,6 +382,36 @@ func (c *Client) ConnectorSetDelivery(ctx context.Context, connectorID string, l
 		},
 	})
 	c.log.Info("imconnector.send.status.delivery raw", zap.String("raw", string(raw)), zap.Error(err))
+	return err
+}
+
+// ConnectorSetOutboundDelivery confirma entrega de mensagem outbound (Bitrix→WA) ao operador.
+// Deve ser chamado após enviar a mensagem ao WhatsApp com sucesso.
+// imChatID e imMsgID vêm do evento ONIMCONNECTORMESSAGEADD (data[MESSAGES][0][im][chat_id/message_id]).
+// waMessageID é o ID da mensagem gerado pelo WhatsApp após o envio.
+// chatExtID é o chat.id externo (JID) do evento.
+func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, connectorID string, lineID int, imChatID, imMsgID, waMessageID, chatExtID string) error {
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	raw, err := c.call(ctx, "imconnector.send.status.delivery", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      fmt.Sprintf("%d", lineID),
+		"MESSAGES": []map[string]interface{}{
+			{
+				"im": map[string]string{
+					"chat_id":    imChatID,
+					"message_id": imMsgID,
+				},
+				"message": map[string]interface{}{
+					"id":   []string{waMessageID},
+					"date": ts,
+				},
+				"chat": map[string]string{
+					"id": chatExtID,
+				},
+			},
+		},
+	})
+	c.log.Info("imconnector.send.status.delivery outbound raw", zap.String("raw", string(raw)), zap.Error(err))
 	return err
 }
 

@@ -228,9 +228,10 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	// Bitrix envia form-encoded
 	connector := c.FormValue("data[CONNECTOR]")
 	lineStr := c.FormValue("data[LINE]")
-	chatID := c.FormValue("data[MESSAGES][0][chat][id]")   // JID que definimos (FromJID)
+	chatID := c.FormValue("data[MESSAGES][0][chat][id]")      // JID externo (ex: "127586399207476:47@lid")
+	imChatID := c.FormValue("data[MESSAGES][0][im][chat_id]") // ID interno do chat no Bitrix (ex: "6026")
+	imMsgID := c.FormValue("data[MESSAGES][0][im][message_id]") // ID interno da msg no Bitrix (ex: "196946")
 	text := c.FormValue("data[MESSAGES][0][message][text]")
-	_ = c.FormValue("data[MESSAGES][0][im][message_id]") // não usado; delivery é confirmado no processor (inbound)
 	userID := c.FormValue("data[MESSAGES][0][message][user_id]")
 
 	h.log.Info("connector event parsed",
@@ -276,11 +277,19 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
+	line := 0
+	fmt.Sscanf(lineStr, "%d", &line)
+
 	// Coloca na fila de saída
 	if err := h.q.PushOutbound(ctx, &queue.OutboundJob{
-		SessionJID: sessionJID,
-		ToJID:      toJID,
-		Text:       cleanText,
+		SessionJID:      sessionJID,
+		ToJID:           toJID,
+		Text:            cleanText,
+		BitrixConnector: connector,
+		BitrixLine:      line,
+		BitrixImChatID:  imChatID,
+		BitrixImMsgID:   imMsgID,
+		BitrixChatExtID: chatID,
 	}); err != nil {
 		h.log.Error("connector event: push outbound failed", zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)

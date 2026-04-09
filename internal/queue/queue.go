@@ -48,6 +48,13 @@ type OutboundJob struct {
 	MediaMime  string    `json:"media_mime,omitempty"`
 	RetryCount int       `json:"retry_count"`
 	CreatedAt  time.Time `json:"created_at"`
+
+	// Campos para confirmar delivery ao Bitrix após envio no WA
+	BitrixConnector  string `json:"bitrix_connector,omitempty"`
+	BitrixLine       int    `json:"bitrix_line,omitempty"`
+	BitrixImChatID   string `json:"bitrix_im_chat_id,omitempty"`
+	BitrixImMsgID    string `json:"bitrix_im_msg_id,omitempty"`
+	BitrixChatExtID  string `json:"bitrix_chat_ext_id,omitempty"` // chat.id do evento
 }
 
 // Queue gerencia as filas via Redis.

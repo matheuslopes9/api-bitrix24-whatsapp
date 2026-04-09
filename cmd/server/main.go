@@ -91,9 +91,26 @@ func main() {
 	// ─── Workers outbound: Bitrix → WA ───────────────────────────────────
 	workers.StartOutbound(ctx, func(c context.Context, job *queue.OutboundJob) error {
 		metrics.MessagesOutbound.Inc()
-		if err := waManager.Send(c, job.SessionJID, job.ToJID, job.Text); err != nil {
+		waID, err := waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
+		if err != nil {
 			metrics.MessagesFailed.Inc()
 			return err
+		}
+		// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
+		if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
+			go func() {
+				if err := bitrixClient.ConnectorSetOutboundDelivery(
+					context.Background(),
+					job.BitrixConnector,
+					job.BitrixLine,
+					job.BitrixImChatID,
+					job.BitrixImMsgID,
+					waID,
+					job.BitrixChatExtID,
+				); err != nil {
+					log.Warn("outbound delivery confirmation failed", zap.Error(err))
+				}
+			}()
 		}
 		return nil
 	})

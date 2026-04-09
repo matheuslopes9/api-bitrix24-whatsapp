@@ -192,24 +192,27 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 }
 
 // Send envia uma mensagem de texto.
-func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) error {
+func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (string, error) {
 	m.mu.RLock()
 	sess, ok := m.sessions[sessionJID]
 	m.mu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("session not found: %s", sessionJID)
+		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
 	recipient, err := types.ParseJID(toJID)
 	if err != nil {
-		return fmt.Errorf("invalid jid: %w", err)
+		return "", fmt.Errorf("invalid jid: %w", err)
 	}
 
-	_, err = sess.Client.SendMessage(ctx, recipient, &waProto.Message{
+	resp, err := sess.Client.SendMessage(ctx, recipient, &waProto.Message{
 		Conversation: &text,
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
 }
 
 // SendMedia envia um arquivo de mídia.
