@@ -98,6 +98,11 @@ func main() {
 		var waID string
 		var err error
 
+		// Mostra "digitando..." no WhatsApp antes de enviar — simula comportamento humano
+		// e evita que o WA interprete envios rápidos como spam.
+		typingDur := waManager.TypingDelay(job.Text)
+		waManager.SendTyping(c, job.SessionJID, job.ToJID, typingDur)
+
 		if job.FileURL != "" {
 			// Baixa o arquivo do Bitrix
 			fileData, dlErr := downloadURL(job.FileURL)

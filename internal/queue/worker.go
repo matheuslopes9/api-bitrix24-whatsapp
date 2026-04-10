@@ -135,18 +135,6 @@ func (wp *WorkerPool) outboundLoop(ctx context.Context, id int, processor Outbou
 		mu := wp.lockForJID(job.ToJID)
 		mu.Lock()
 
-		// Delay que simula digitação humana antes de enviar.
-		delay := typingDelay(job.Text)
-		wp.log.Debug("outbound typing delay",
-			zap.String("to", job.ToJID),
-			zap.Duration("delay", delay))
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			mu.Unlock()
-			return
-		}
-
 		if err := processor(ctx, job); err != nil {
 			wp.log.Warn("outbound processing failed, retrying",
 				zap.String("job_id", job.ID),

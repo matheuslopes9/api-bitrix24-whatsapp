@@ -229,6 +229,54 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 	m.log.Info("whatsapp connect started", zap.String("phone", phone))
 }
 
+// TypingDelay calcula o tempo de digitação simulado com base no texto.
+// Mínimo 1.5s, máximo 4s, com jitter de ±25% para parecer humano.
+func (m *Manager) TypingDelay(text string) time.Duration {
+	chars := len([]rune(text))
+	if chars > 120 {
+		chars = 120
+	}
+	ms := 1500 + chars*20 // ~300 chars/min
+	if ms > 4000 {
+		ms = 4000
+	}
+	// jitter ±25%
+	jitter := int(float64(ms) * 0.25)
+	if jitter > 0 {
+		// determinístico baseado no conteúdo para evitar import de math/rand no manager
+		h := 0
+		for _, c := range text {
+			h = h*31 + int(c)
+		}
+		if h < 0 {
+			h = -h
+		}
+		ms += (h % (2*jitter + 1)) - jitter
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// SendTyping envia o indicador de "digitando..." para o contato e para automaticamente
+// quando a mensagem for enviada. Deve ser chamado logo antes de SendMessage/SendDocument/SendAudio.
+func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, duration time.Duration) {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionJID]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	recipient, err := types.ParseJID(toJID)
+	if err != nil {
+		return
+	}
+	_ = sess.Client.SendChatPresence(ctx, recipient, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+	select {
+	case <-time.After(duration):
+	case <-ctx.Done():
+	}
+	_ = sess.Client.SendChatPresence(ctx, recipient, types.ChatPresencePaused, types.ChatPresenceMediaText)
+}
+
 // Send envia uma mensagem de texto.
 func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (string, error) {
 	m.mu.RLock()
