@@ -114,10 +114,9 @@ func (c *Client) saveTokenResponse(ctx context.Context, r io.Reader) error {
 		return err
 	}
 
-	domain := tr.Domain
-	if domain == "" {
-		domain = c.cfg.Domain
-	}
+	// Sempre usa o domain da config — a resposta do refresh retorna "oauth.bitrix.info"
+	// como domain, o que quebraria a busca por token (GetBitrixToken busca por cfg.Domain).
+	domain := c.cfg.Domain
 
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
