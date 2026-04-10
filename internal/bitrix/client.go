@@ -62,20 +62,29 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) error {
 }
 
 // refreshToken renova o access token usando o refresh token.
+// O endpoint OAuth2 do Bitrix24 é sempre oauth.bitrix.info, nunca o domínio da conta.
 func (c *Client) refreshToken(ctx context.Context, t *db.BitrixToken) error {
-	resp, err := c.http.PostForm(c.cfg.Domain+"/oauth/token/", url.Values{
+	c.log.Info("refreshing bitrix token", zap.String("refresh_token_prefix", t.RefreshToken[:min(8, len(t.RefreshToken))]))
+	resp, err := c.http.PostForm("https://oauth.bitrix.info/oauth/token/", url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {c.cfg.ClientID},
 		"client_secret": {c.cfg.ClientSecret},
 		"refresh_token": {t.RefreshToken},
 	})
 	if err != nil {
+		c.log.Error("token refresh http error", zap.Error(err))
 		return err
 	}
 	defer resp.Body.Close()
 
-	return c.saveTokenResponse(ctx, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	c.log.Info("token refresh response", zap.Int("status", resp.StatusCode), zap.String("body", string(body)))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("token refresh failed: status %d body %s", resp.StatusCode, string(body))
+	}
+	return c.saveTokenResponse(ctx, bytes.NewReader(body))
 }
+
 
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
