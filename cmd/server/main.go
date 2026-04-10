@@ -114,10 +114,20 @@ func main() {
 			if name == "" {
 				name = "file"
 			}
-			// Áudio → envia como AudioMessage (reproduzível inline no WhatsApp)
-			// Qualquer outro tipo → envia como documento
-			if strings.HasPrefix(mime, "audio/") {
-				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, mime, false)
+			// Áudio (incluindo video/webm que é áudio no Bitrix) → AudioMessage inline
+			// video/webm enviado como audio/ogg (WhatsApp aceita melhor)
+			sendMime := mime
+			isAudio := strings.HasPrefix(mime, "audio/") || mime == "video/webm"
+			if mime == "video/webm" {
+				sendMime = "audio/ogg"
+			}
+			log.Info("outbound file", zap.String("name", name), zap.String("mime", mime), zap.Bool("is_audio", isAudio))
+			if isAudio {
+				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, sendMime, false)
+				if err != nil {
+					log.Warn("SendAudio failed, falling back to SendDocument", zap.Error(err))
+					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+				}
 			} else {
 				waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
 			}
