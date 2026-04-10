@@ -520,52 +520,26 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     </div>
 
     <!-- Workers e Filas -->
-    <div class="grid-2" style="margin-bottom:14px;">
-      <div class="card" style="padding:22px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-          <div class="metric-icon" style="background:rgba(192,132,252,.13);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          </div>
-          <div>
-            <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Workers e Filas Redis</div>
-            <div style="font-size:12px;color:#475569;">Configuração do pool de processamento</div>
-          </div>
+    <div class="card" style="padding:22px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+        <div class="metric-icon" style="background:rgba(192,132,252,.13);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </div>
-        <div class="info-row"><span class="info-key">Workers paralelos</span><span class="info-val">20</span></div>
-        <div class="info-row"><span class="info-key">Máximo de tentativas</span><span class="info-val">5</span></div>
-        <div class="info-row"><span class="info-key">Delay base de retry</span><span class="info-val">1 segundo</span></div>
-        <div class="info-row"><span class="info-key">Tipo de backoff</span><span class="info-val">Exponencial</span></div>
-        <div class="info-row" style="border-bottom:none;"><span class="info-key">Máximo de espera</span><span class="info-val">5 minutos</span></div>
+        <div>
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Workers e Filas Redis</div>
+          <div style="font-size:12px;color:#475569;">Configuração do pool de processamento</div>
+        </div>
       </div>
-
-      <!-- Links rápidos -->
-      <div class="card" style="padding:22px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-          <div class="metric-icon" style="background:rgba(245,158,11,.13);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          </div>
-          <div>
-            <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Links Rápidos</div>
-            <div style="font-size:12px;color:#475569;">Acesso direto às ferramentas</div>
-          </div>
+      <div class="grid-2">
+        <div>
+          <div class="info-row"><span class="info-key">Workers paralelos</span><span class="info-val">20</span></div>
+          <div class="info-row"><span class="info-key">Máximo de tentativas</span><span class="info-val">5</span></div>
+          <div class="info-row" style="border-bottom:none;"><span class="info-key">Delay base de retry</span><span class="info-val">1 segundo</span></div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          <a href="/health" target="_blank" class="card-flat" style="display:flex;align-items:center;justify-content:space-between;padding:11px 13px;text-decoration:none;transition:background .15s;cursor:pointer;" onmouseover="this.style.background='rgba(255,255,255,.07)'" onmouseout="this.style.background=''">
-            <span style="font-size:13px;color:#e2e8f0;">Verificação de Saúde</span>
-            <span style="font-size:11px;color:#334155;font-family:monospace;">/health</span>
-          </a>
-          <a href="/metrics" target="_blank" class="card-flat" style="display:flex;align-items:center;justify-content:space-between;padding:11px 13px;text-decoration:none;transition:background .15s;" onmouseover="this.style.background='rgba(255,255,255,.07)'" onmouseout="this.style.background=''">
-            <span style="font-size:13px;color:#e2e8f0;">Métricas Prometheus</span>
-            <span style="font-size:11px;color:#334155;font-family:monospace;">/metrics</span>
-          </a>
-          <a href="/connect" target="_blank" class="card-flat" style="display:flex;align-items:center;justify-content:space-between;padding:11px 13px;text-decoration:none;transition:background .15s;" onmouseover="this.style.background='rgba(255,255,255,.07)'" onmouseout="this.style.background=''">
-            <span style="font-size:13px;color:#e2e8f0;">Conectar WhatsApp (legado)</span>
-            <span style="font-size:11px;color:#334155;font-family:monospace;">/connect</span>
-          </a>
-          <a href="/stats/daily?days=7" target="_blank" class="card-flat" style="display:flex;align-items:center;justify-content:space-between;padding:11px 13px;text-decoration:none;transition:background .15s;" onmouseover="this.style.background='rgba(255,255,255,.07)'" onmouseout="this.style.background=''">
-            <span style="font-size:13px;color:#e2e8f0;">API — Estatísticas Diárias</span>
-            <span style="font-size:11px;color:#334155;font-family:monospace;">/stats/daily</span>
-          </a>
+        <div>
+          <div class="info-row"><span class="info-key">Tipo de backoff</span><span class="info-val">Exponencial</span></div>
+          <div class="info-row"><span class="info-key">Máximo de espera</span><span class="info-val">5 minutos</span></div>
+          <div class="info-row" style="border-bottom:none;"><span class="info-key">Serialização por JID</span><span class="badge badge-green">Habilitado</span></div>
         </div>
       </div>
     </div>

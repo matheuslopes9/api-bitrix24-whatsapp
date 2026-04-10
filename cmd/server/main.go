@@ -140,6 +140,26 @@ func main() {
 			return err
 		}
 
+		// Salva mensagem outbound no banco para contabilizar nas estatísticas
+		msgType := db.MsgTypeText
+		if job.FileURL != "" {
+			msgType = db.MsgTypeDocument
+		}
+		now := time.Now()
+		outMsg := &db.Message{
+			ID:          uuid.New(),
+			WAMessageID: waID,
+			Direction:   db.DirOutbound,
+			MessageType: msgType,
+			Content:     job.Text,
+			MediaMime:   job.FileMime,
+			Status:      db.MsgDelivered,
+			SentAt:      &now,
+		}
+		if err := repo.InsertMessage(c, outMsg); err != nil {
+			log.Warn("insert outbound message failed", zap.String("wa_id", waID), zap.Error(err))
+		}
+
 		// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
 		if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
 			log.Info("outbound delivery: confirming",
