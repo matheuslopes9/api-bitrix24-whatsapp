@@ -44,6 +44,9 @@ func New(
 
 	// ─── Assets estáticos ────────────────────────────────────────────────
 	app.Get("/assets/chart.js", h.serveChartJS)
+	app.Get("/assets/logo.png", h.serveLogo)
+	app.Get("/favicon.ico", h.serveFavicon)
+	app.Get("/favicon.png", h.serveFavicon)
 
 	// ─── Health ──────────────────────────────────────────────────────────
 	app.Get("/health", h.health)
