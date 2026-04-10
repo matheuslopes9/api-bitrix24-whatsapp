@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -99,7 +100,7 @@ func main() {
 		var err error
 
 		if job.FileURL != "" {
-			// Baixa o arquivo do Bitrix e envia como documento no WA
+			// Baixa o arquivo do Bitrix
 			fileData, dlErr := downloadURL(job.FileURL)
 			if dlErr != nil {
 				metrics.MessagesFailed.Inc()
@@ -113,7 +114,13 @@ func main() {
 			if name == "" {
 				name = "file"
 			}
-			waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+			// Áudio → envia como AudioMessage (reproduzível inline no WhatsApp)
+			// Qualquer outro tipo → envia como documento
+			if strings.HasPrefix(mime, "audio/") {
+				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, mime, false)
+			} else {
+				waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+			}
 		} else {
 			waID, err = waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
 		}

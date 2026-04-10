@@ -253,6 +253,49 @@ func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (str
 	return resp.ID, nil
 }
 
+// SendAudio envia um arquivo de áudio no WhatsApp como mensagem de áudio reproduzível inline.
+// ptt=true faz aparecer como voice note com botão de play; ptt=false como áudio normal.
+func (m *Manager) SendAudio(ctx context.Context, sessionJID, toJID string, data []byte, mime string, ptt bool) (string, error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionJID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", sessionJID)
+	}
+
+	recipient, err := types.ParseJID(toJID)
+	if err != nil {
+		return "", fmt.Errorf("invalid jid: %w", err)
+	}
+
+	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaAudio)
+	if err != nil {
+		return "", fmt.Errorf("upload audio: %w", err)
+	}
+
+	seconds := uint32(0) // duração desconhecida
+	msg := &waProto.Message{
+		AudioMessage: &waProto.AudioMessage{
+			Mimetype:      &mime,
+			URL:           &uploaded.URL,
+			DirectPath:    &uploaded.DirectPath,
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    &uploaded.FileLength,
+			Seconds:       &seconds,
+			PTT:           &ptt,
+		},
+	}
+
+	resp, err := sess.Client.SendMessage(ctx, recipient, msg)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 // SendDocument envia um arquivo como documento no WhatsApp e retorna o WA message ID.
 func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, data []byte, mime, fileName string) (string, error) {
 	m.mu.RLock()
