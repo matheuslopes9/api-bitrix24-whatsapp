@@ -299,8 +299,9 @@ function fecharModal() {
   dcCallback = null;
 }
 document.getElementById('dc-modal-ok').addEventListener('click', function() {
+  var cb = dcCallback;
   fecharModal();
-  if (dcCallback) dcCallback();
+  if (cb) cb();
 });
 document.getElementById('dc-modal').addEventListener('click', function(e) {
   if (e.target === this) fecharModal();

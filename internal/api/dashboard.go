@@ -806,8 +806,9 @@ function fecharConfirm() {
   confirmCallback = null;
 }
 document.getElementById('confirm-ok-btn').addEventListener('click', function() {
+  var cb = confirmCallback;
   fecharConfirm();
-  if (confirmCallback) confirmCallback();
+  if (cb) cb();
 });
 document.getElementById('confirm-modal').addEventListener('click', function(e) {
   if (e.target === this) fecharConfirm();
