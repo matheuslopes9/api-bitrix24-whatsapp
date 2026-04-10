@@ -39,7 +39,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>WA Connector — Painel</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/assets/chart.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -75,7 +75,7 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
 .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
 .grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
-.grid-21{display:grid;grid-template-columns:2fr 1fr;gap:14px;}
+.grid-21{display:grid;grid-template-columns:3fr 1.2fr;gap:14px;}
 
 /* ── Métrica ── */
 .metric-val{font-size:1.9rem;font-weight:700;line-height:1;letter-spacing:-.02em;}

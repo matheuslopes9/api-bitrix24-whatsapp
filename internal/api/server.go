@@ -42,6 +42,9 @@ func New(
 
 	h := newHandlers(cfg, repo, waManager, bitrixClient, q, metrics, log)
 
+	// ─── Assets estáticos ────────────────────────────────────────────────
+	app.Get("/assets/chart.js", h.serveChartJS)
+
 	// ─── Health ──────────────────────────────────────────────────────────
 	app.Get("/health", h.health)
 
