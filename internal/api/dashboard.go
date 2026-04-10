@@ -547,6 +547,21 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
 
 </div>
 
+<!-- ══════════════════════ MODAL CONFIRMAÇÃO ══════════════════════ -->
+<div id="confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:60;align-items:center;justify-content:center;backdrop-filter:blur(4px);padding:16px;">
+  <div class="card" style="padding:28px;max-width:360px;width:100%;text-align:center;">
+    <div style="width:48px;height:48px;background:rgba(239,68,68,.12);border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" stroke-linecap="round"/></svg>
+    </div>
+    <div style="font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:8px;">Desconectar número?</div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:24px;" id="confirm-msg">Esta ação irá encerrar a sessão WhatsApp e remover o dispositivo.</div>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="fecharConfirm()">Cancelar</button>
+      <button class="btn" style="flex:1;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.25);" id="confirm-ok-btn">Desconectar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════════════ MODAL QR ══════════════════════ -->
 <div id="qr-modal" onclick="if(event.target===this)fecharModalQR()">
   <div class="card" style="padding:28px;max-width:400px;width:100%;position:relative;max-height:90vh;overflow-y:auto;">
@@ -770,11 +785,33 @@ function carregarSessoes() {
 }
 
 function desconectarSessao(enc) {
-  if (!confirm('Tem certeza que deseja desconectar este número?')) return;
-  fetch('/ui/sessions/remove?jid=' + enc, { method: 'DELETE' })
-  .then(function() { toast('Sessão desconectada com sucesso', 'success'); carregarSessoes(); carregarVisaoGeral(); })
-  .catch(function() { toast('Erro ao desconectar sessão', 'error'); });
+  var telefone = '+' + decodeURIComponent(enc).split(':')[0].split('@')[0];
+  abrirConfirm('Desconectar ' + telefone + '?\nO dispositivo será removido do WhatsApp.', function() {
+    fetch('/ui/sessions/remove?jid=' + enc, { method: 'DELETE' })
+    .then(function() { toast('Sessão desconectada com sucesso', 'success'); carregarSessoes(); carregarVisaoGeral(); })
+    .catch(function() { toast('Erro ao desconectar sessão', 'error'); });
+  });
 }
+
+// ─── Modal de confirmação ─────────────────────────────────────────────────────
+var confirmCallback = null;
+function abrirConfirm(msg, cb) {
+  confirmCallback = cb;
+  document.getElementById('confirm-msg').textContent = msg;
+  var m = document.getElementById('confirm-modal');
+  m.style.display = 'flex';
+}
+function fecharConfirm() {
+  document.getElementById('confirm-modal').style.display = 'none';
+  confirmCallback = null;
+}
+document.getElementById('confirm-ok-btn').addEventListener('click', function() {
+  fecharConfirm();
+  if (confirmCallback) confirmCallback();
+});
+document.getElementById('confirm-modal').addEventListener('click', function(e) {
+  if (e.target === this) fecharConfirm();
+});
 
 // ─── Modal QR ─────────────────────────────────────────────────────────────────
 function abrirModalQR() {
