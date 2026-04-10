@@ -26,7 +26,7 @@ WhatsApp ──► Manager ──► Queue (Redis) ──► Worker Pool ──�
 
 - **Manager**: gerencia múltiplas sessões WhatsApp (`whatsmeow`) em goroutines independentes
 - **Queue**: fila Redis separada para mensagens inbound (WA→Bitrix) e outbound (Bitrix→WA)
-- **Worker Pool**: 20 workers paralelos com retry exponencial (até 5 tentativas)
+- **Worker Pool**: 20 workers paralelos com retry exponencial (até 5 tentativas); mensagens para o mesmo JID são serializadas (mutex por JID)
 - **Watchdog**: verifica saúde das sessões a cada 30s e reconecta automaticamente
 - **Bitrix24**: integração via `imconnector` (Contact Center / Open Lines); mensagens chegam como conversa no operador
 
@@ -63,11 +63,12 @@ Handler extrai texto/arquivo e monta OutboundJob
 Redis Queue (queue:outbound)
       │
       ▼
-Worker Pool
-      │  waManager.Send (texto) ou waManager.SendDocument (arquivo)
+Worker Pool (serializado por JID de destino)
+      │  SendTyping → ChatPresenceComposing ("digitando...") por 1.5–4s
+      │  waManager.Send (texto) ou waManager.SendDocument (arquivo) ou waManager.SendAudio (mp3)
       │  imconnector.send.status.delivery (confirma delivery outbound)
       ▼
-WhatsApp (mensagem entregue ao cliente)
+WhatsApp (mensagem entregue ao cliente com indicador de digitação)
 ```
 
 ## Endpoints
@@ -131,6 +132,34 @@ X-API-Key: <APP_SECRET>
 
 > **Nota sobre áudio:** `invalid media hmac` ocorre quando a MediaKey do áudio não está disponível na sessão atual (áudios de outros dispositivos). É uma limitação criptográfica do WhatsApp — não tem solução.
 
+## Tipos de mídia suportados (Bitrix → WA)
+
+| Tipo MIME | Comportamento |
+|---|---|
+| `audio/mpeg` (mp3) | Enviado como áudio nativo WA (com botão play) |
+| `audio/wav` | Enviado como documento (WA não suporta wav como áudio) |
+| `audio/ogg` | Enviado como documento |
+| `video/webm` | Enviado como documento |
+| Imagens, vídeos, docs | Enviado como documento |
+
+## Indicador de digitação (outbound)
+
+Antes de cada mensagem enviada pelo operador ao cliente WA, o sistema:
+1. Envia `ChatPresenceComposing` ("digitando...") ao destinatário
+2. Aguarda 1.5–4s proporcional ao tamanho do texto (com jitter aleatório)
+3. Envia `ChatPresencePaused`
+4. Envia a mensagem
+
+Mensagens para o mesmo número são serializadas (mutex por JID) — nunca chegam em paralelo.
+
+## Renovação automática de token Bitrix24
+
+O token OAuth2 expira a cada 1 hora. O sistema renova automaticamente:
+- Toda chamada REST verifica se o token expira em menos de 60s
+- Se sim, faz POST para `https://oauth.bitrix.info/oauth/token/` com o `refresh_token`
+- O novo token é salvo no PostgreSQL sob o domain da config
+- Nenhuma intervenção manual é necessária
+
 ## Fluxo de Conexão WhatsApp (via UI)
 
 1. Acessar `https://<dominio>/connect`
@@ -145,7 +174,7 @@ X-API-Key: <APP_SECRET>
 2. Configurar Handler Path: `https://<dominio>/bitrix/callback`
 3. Conceder escopos: `crm`, `imopenlines`, `im`, `imconnector`, `disk`
 4. Ao instalar, o Bitrix24 chama automaticamente `POST /bitrix/callback` com o token
-5. Token salvo no banco — renovação automática via refresh_token
+5. Token salvo no banco — renovação automática via refresh_token (sem reinstalar nunca mais)
 6. O app registra automaticamente: `imconnector.register` + `imconnector.activate` + `event.bind ONIMCONNECTORMESSAGEADD`
 
 ## Deploy no EasyPanel
@@ -244,7 +273,7 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 | `whatsapp_sessions` | Sessões WA ativas (JID, telefone, status) |
 | `contact_mapping` | Mapeamento JID WhatsApp ↔ chat ID Bitrix24 (normalizado sem device part) |
 | `messages` | Log de mensagens trocadas |
-| `bitrix_tokens` | Tokens OAuth2 do Bitrix24 |
+| `bitrix_tokens` | Tokens OAuth2 do Bitrix24 com renovação automática |
 | `event_log` | Log de eventos do sistema |
 
 ## Estrutura do projeto
@@ -262,10 +291,10 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 │   │   └── processor.go # Lógica WA→Bitrix (ensureContact + upload + entrega)
 │   ├── config/          # Configuração via viper/env
 │   ├── db/              # Repositório PostgreSQL
-│   ├── queue/           # Filas Redis + worker pool
+│   ├── queue/           # Filas Redis + worker pool (mutex por JID)
 │   ├── telemetry/       # Métricas Prometheus
 │   ├── watchdog/        # Monitoramento de sessões
-│   └── whatsapp/        # Manager de sessões whatsmeow
+│   └── whatsapp/        # Manager de sessões whatsmeow + typing indicator
 ├── migrations/          # SQL migrations
 ├── Dockerfile
 ├── docker-compose.yml
@@ -286,6 +315,9 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 | `invalid media hmac` no áudio | MediaKey indisponível para áudios de outros dispositivos | Fallback para `[Áudio]` — limitação criptográfica do WA |
 | `ERROR_ARGUMENT` no disk upload | `fileContent` deve ser `[fileName, base64]` em JSON | `UploadToDisk` usa JSON com base64, não multipart |
 | Spinner no Contact Center | `imconnector.send.status.delivery` não era chamado | Chamado após cada envio (inbound e outbound) |
+| Token expirado a cada 1h | Refresh enviava para domain errado + salvava com domain errado | Endpoint fixo `oauth.bitrix.info`; sempre salva com `cfg.Domain` |
+| Mensagens outbound em paralelo | 20 workers disparando para o mesmo JID simultaneamente | Mutex por JID no worker pool |
+| wav/ogg como áudio WA | WA rejeita wav e ogg como AudioMessage | Apenas `audio/mpeg` vai como áudio nativo; demais como documento |
 
 ## Status atual
 
@@ -298,10 +330,13 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 - [x] Watchdog de reconexão automática (intervalo 30s)
 - [x] Métricas Prometheus
 - [x] Autenticação Bitrix24 via app local (token salvo automaticamente no install)
+- [x] Renovação automática de token OAuth2 (refresh sem reinstalar)
 - [x] Fluxo WA → Bitrix24 via Contact Center (imconnector) — texto, imagem, vídeo, doc, vCard, sticker
-- [x] Fluxo Bitrix24 → WA — texto e documentos (download do Bitrix + envio via whatsmeow)
+- [x] Fluxo Bitrix24 → WA — texto, documentos e áudio mp3 nativo
 - [x] Spinner do Contact Center eliminado (delivery confirmation inbound e outbound)
 - [x] Upload de mídia para Bitrix Disk (base64 JSON, nome único, Shared Drive)
 - [x] Normalização de JID para evitar chat duplicado no Bitrix
 - [x] Suporte a vCard (contato) e sticker
+- [x] Indicador de digitação ("digitando...") no WA antes de cada mensagem outbound
+- [x] Serialização por JID — mensagens para o mesmo número nunca chegam em paralelo
 - [ ] Testes end-to-end automatizados
