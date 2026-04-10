@@ -384,15 +384,41 @@ func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, da
 	return resp.ID, nil
 }
 
-// Disconnect desconecta e remove uma sessão.
+// Disconnect faz logout completo: revoga o dispositivo no WhatsApp,
+// remove do banco de dados e apaga o arquivo SQLite da sessão.
 func (m *Manager) Disconnect(jid string) {
 	m.mu.Lock()
 	sess, ok := m.sessions[jid]
 	if ok {
-		sess.Client.Disconnect()
 		delete(m.sessions, jid)
 	}
 	m.mu.Unlock()
+
+	if !ok {
+		return
+	}
+
+	ctx := context.Background()
+
+	// Logout revoga o dispositivo no app do celular
+	if err := sess.Client.Logout(ctx); err != nil {
+		m.log.Warn("logout error (ignoring)", zap.String("jid", jid), zap.Error(err))
+	}
+	sess.Client.Disconnect()
+
+	// Remove do banco de dados
+	if err := m.repo.DeleteSession(ctx, jid); err != nil {
+		m.log.Warn("delete session from db failed", zap.String("jid", jid), zap.Error(err))
+	}
+
+	// Remove o arquivo SQLite da sessão
+	if sess.dbPath != "" {
+		if err := os.Remove(sess.dbPath); err != nil && !os.IsNotExist(err) {
+			m.log.Warn("remove session sqlite failed", zap.String("path", sess.dbPath), zap.Error(err))
+		}
+	}
+
+	m.log.Info("session disconnected and removed", zap.String("jid", jid))
 }
 
 // Ping verifica se a conexão está ativa.

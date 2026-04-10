@@ -93,6 +93,11 @@ func (r *Repository) UpdateSessionStatus(ctx context.Context, jid string, status
 	return err
 }
 
+func (r *Repository) DeleteSession(ctx context.Context, jid string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM whatsapp_sessions WHERE jid = $1`, jid)
+	return err
+}
+
 // ─── Contact Mapping ───────────────────────────────────────────────────────
 
 func (r *Repository) UpsertContact(ctx context.Context, c *ContactMapping) error {
