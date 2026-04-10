@@ -47,11 +47,13 @@ func New(
 
 	// ─── UI de conexão WhatsApp (sem auth — seguro pois usa proxy interno) ─
 	app.Get("/connect", h.connectPage)
+	app.Get("/dashboard", h.dashboardPage)
 	ui := app.Group("/ui")
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
 	ui.Get("/sessions", h.uiListSessions)
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)
+	ui.Get("/overview", h.uiOverview)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
