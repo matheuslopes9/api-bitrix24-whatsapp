@@ -137,6 +137,10 @@ func main() {
 
 		// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
 		if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
+			log.Info("outbound delivery: confirming",
+				zap.String("connector", job.BitrixConnector),
+				zap.String("im_msg_id", job.BitrixImMsgID),
+				zap.String("wa_id", waID))
 			go func() {
 				if err := bitrixClient.ConnectorSetOutboundDelivery(
 					context.Background(),
@@ -150,6 +154,10 @@ func main() {
 					log.Warn("outbound delivery confirmation failed", zap.Error(err))
 				}
 			}()
+		} else {
+			log.Warn("outbound delivery: skipped (missing connector or msg_id)",
+				zap.String("connector", job.BitrixConnector),
+				zap.String("im_msg_id", job.BitrixImMsgID))
 		}
 		return nil
 	})
