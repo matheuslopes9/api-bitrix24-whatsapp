@@ -58,7 +58,8 @@ func New(
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
 	ui.Get("/sessions", h.uiListSessions)
-	ui.Delete("/sessions/:jid", h.uiDisconnectSession)
+	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid= (evita problema com @ no path)
+	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
 	ui.Get("/overview", h.uiOverview)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────

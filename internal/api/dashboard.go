@@ -771,7 +771,7 @@ function carregarSessoes() {
 
 function desconectarSessao(enc) {
   if (!confirm('Tem certeza que deseja desconectar este número?')) return;
-  fetch('/ui/sessions/' + enc, { method: 'DELETE' })
+  fetch('/ui/sessions/remove?jid=' + enc, { method: 'DELETE' })
   .then(function() { toast('Sessão desconectada com sucesso', 'success'); carregarSessoes(); carregarVisaoGeral(); })
   .catch(function() { toast('Erro ao desconectar sessão', 'error'); });
 }

@@ -49,8 +49,17 @@ func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 }
 
 // DELETE /ui/sessions/:jid
+// O JID pode conter '@' e ':' — lê também via query param ?jid= como fallback seguro.
 func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
-	jid := c.Params("jid")
+	// Tenta query param primeiro (mais seguro para JIDs com @)
+	jid := c.Query("jid")
+	if jid == "" {
+		// Fallback: path param (funciona apenas quando JID não contém @)
+		jid = c.Params("jid")
+	}
+	if jid == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "jid required"})
+	}
 	h.waManager.Disconnect(jid)
 	return c.JSON(fiber.Map{"status": "disconnected", "jid": jid})
 }
@@ -243,7 +252,7 @@ function loadSessions() {
 function doDisconnect(jidEnc) {
   var jid = decodeURIComponent(jidEnc);
   if (!confirm('Desconectar '+jid+'?')) return;
-  fetch('/ui/sessions/'+jidEnc, {method:'DELETE'})
+  fetch('/ui/sessions/remove?jid='+jidEnc, {method:'DELETE'})
   .then(function(r){ return r.json(); })
   .then(function(){
     loadSessions();
