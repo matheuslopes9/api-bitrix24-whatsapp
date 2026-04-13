@@ -272,10 +272,15 @@ func (r *Repository) UpsertBitrixAccount(ctx context.Context, a *BitrixAccount) 
 }
 
 func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID string) (*BitrixAccount, error) {
+	// Match pelo número de telefone (parte antes de ':'), ignorando o device suffix que muda a cada reconexão.
+	// Ex: "5519910001772:19@s.whatsapp.net" bate em "5519910001772:18@s.whatsapp.net" salvo no banco.
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
 		       connector_id, redirect_uri, status, created_at, updated_at
-		FROM bitrix_accounts WHERE session_jid = $1`, sessionJID)
+		FROM bitrix_accounts
+		WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)
+		ORDER BY updated_at DESC
+		LIMIT 1`, sessionJID)
 
 	var a BitrixAccount
 	err := row.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
@@ -310,12 +315,15 @@ func (r *Repository) ListBitrixAccounts(ctx context.Context) ([]*BitrixAccount, 
 
 func (r *Repository) UpdateBitrixAccountStatus(ctx context.Context, sessionJID string, status BitrixAccountStatus) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW() WHERE session_jid = $2`,
+		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW()
+		 WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($2, ':', 1)`,
 		status, sessionJID)
 	return err
 }
 
 func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM bitrix_accounts WHERE session_jid = $1`, sessionJID)
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM bitrix_accounts WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)`,
+		sessionJID)
 	return err
 }
