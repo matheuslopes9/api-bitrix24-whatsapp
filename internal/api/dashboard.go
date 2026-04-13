@@ -195,6 +195,41 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
   .metric-val{font-size:1.4rem;}
   .page{padding:12px 12px 60px;}
 }
+
+/* ════════════════════════ TEMA CLARO ════════════════════════ */
+body.tema-claro{background:#f1f5f9;color:#0f172a;}
+body.tema-claro .blob{opacity:.06;}
+body.tema-claro .card{background:rgba(255,255,255,.85);border-color:rgba(0,0,0,.08);}
+body.tema-claro .card:hover{background:rgba(255,255,255,.95);border-color:rgba(0,0,0,.12);}
+body.tema-claro .card-flat{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.07);}
+body.tema-claro #sidebar{background:rgba(241,245,249,.97);border-color:rgba(0,0,0,.08);}
+body.tema-claro #topbar{background:rgba(241,245,249,.97);border-color:rgba(0,0,0,.08);}
+body.tema-claro .nav-item{color:#64748b;}
+body.tema-claro .nav-item:hover{background:rgba(0,0,0,.05);color:#1e293b;}
+body.tema-claro .nav-item.active{background:rgba(37,211,102,.12);color:#16a34a;border-color:rgba(37,211,102,.25);}
+body.tema-claro .metric-val{color:#0f172a;}
+body.tema-claro .metric-lbl{color:#64748b;}
+body.tema-claro .section-title{color:#0f172a;}
+body.tema-claro .section-sub{color:#64748b;}
+body.tema-claro .card-title{color:#64748b;}
+body.tema-claro .info-key{color:#64748b;}
+body.tema-claro .info-val{color:#0f172a;}
+body.tema-claro .info-row{border-color:rgba(0,0,0,.06);}
+body.tema-claro .inp{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.12);color:#0f172a;}
+body.tema-claro .inp:focus{border-color:rgba(37,211,102,.5);background:#fff;}
+body.tema-claro .inp::placeholder{color:#94a3b8;}
+body.tema-claro .btn-ghost{background:rgba(0,0,0,.05);color:#475569;border-color:rgba(0,0,0,.1);}
+body.tema-claro .btn-ghost:hover{background:rgba(0,0,0,.09);color:#0f172a;}
+body.tema-claro .tbl th{color:#64748b;border-color:rgba(0,0,0,.08);}
+body.tema-claro .tbl td{color:#475569;border-color:rgba(0,0,0,.05);}
+body.tema-claro .tbl tr:hover td{background:rgba(0,0,0,.02);}
+body.tema-claro .divider{background:rgba(0,0,0,.07);}
+body.tema-claro #sidebar .card-flat{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.07);}
+body.tema-claro #sidebar #sb-status{color:#0f172a;}
+body.tema-claro #sidebar #sb-sessoes{color:#64748b;}
+body.tema-claro #btn-tema{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.08);color:#475569;}
+body.tema-claro #btn-tema:hover{background:rgba(0,0,0,.08) !important;color:#0f172a !important;}
+body.tema-claro ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.12);}
 </style>
 </head>
 <body>
@@ -232,13 +267,13 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18" stroke-linecap="round"/></svg>
     Sessões WhatsApp
   </div>
-  <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-    Relatórios
-  </div>
   <div class="nav-item" id="nav-integracoes" onclick="showPage('integracoes')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
     Integrações Bitrix
+  </div>
+  <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Relatórios
   </div>
 
   <div style="flex:1;"></div>
@@ -252,6 +287,14 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     </div>
     <div style="font-size:11.5px;color:#334155;" id="sb-sessoes">-- sessão(ões) ativa(s)</div>
   </div>
+
+  <!-- Toggle tema -->
+  <button id="btn-tema" onclick="toggleTema()" style="margin-top:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:9px;padding:10px 13px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#64748b;transition:background .15s,color .15s;" onmouseover="this.style.background='rgba(255,255,255,.08)';this.style.color='#cbd5e1'" onmouseout="this.style.background='rgba(255,255,255,.04)';this.style.color='#64748b'">
+    <span id="tema-icone" style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;">
+      <!-- ícone preenchido pelo JS -->
+    </span>
+    <span id="tema-label">Modo Claro</span>
+  </button>
 </nav>
 
 <!-- Topbar mobile -->
@@ -1214,6 +1257,40 @@ function refreshAll() {
   if (paginaAtual === 'integracoes') carregarIntegracoes();
   toast('Dados atualizados', 'success');
 }
+
+// ─── Tema claro/escuro ────────────────────────────────────────────────────────
+var SOL_CLARO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="16" height="16"><path fill="currentColor" d="M320 32C328.4 32 336.3 36.4 340.6 43.7L396.1 136.3L500.9 110C509.1 108 517.8 110.4 523.7 116.3C529.6 122.2 532 131 530 139.1L503.7 243.8L596.4 299.3C603.6 303.6 608.1 311.5 608.1 319.9C608.1 328.3 603.7 336.2 596.4 340.5L503.7 396.1L530 500.8C532 509 529.6 517.7 523.7 523.6C517.8 529.5 509 532 500.9 530L396.2 503.7L340.7 596.4C336.4 603.6 328.5 608.1 320.1 608.1C311.7 608.1 303.8 603.7 299.5 596.4L243.9 503.7L139.2 530C131 532 122.4 529.6 116.4 523.7C110.4 517.8 108 509 110 500.8L136.2 396.1L43.6 340.6C36.4 336.2 32 328.4 32 320C32 311.6 36.4 303.7 43.7 299.4L136.3 243.9L110 139.1C108 130.9 110.3 122.3 116.3 116.3C122.3 110.3 131 108 139.2 110L243.9 136.2L299.4 43.6L301.2 41C305.7 35.3 312.6 31.9 320 31.9zM320 176C240.5 176 176 240.5 176 320C176 399.5 240.5 464 320 464C399.5 464 464 399.5 464 320C464 240.5 399.5 176 320 176zM320 416C267 416 224 373 224 320C224 267 267 224 320 224C373 224 416 267 416 320C416 373 373 416 320 416z"/></svg>';
+var LUA_CLARA = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="16" height="16"><path fill="currentColor" d="M320 64C178.6 64 64 178.6 64 320C64 461.4 178.6 576 320 576C388.8 576 451.3 548.8 497.3 504.6C504.6 497.6 506.7 486.7 502.6 477.5C498.5 468.3 488.9 462.6 478.8 463.4C473.9 463.8 469 464 464 464C362.4 464 280 381.6 280 280C280 207.9 321.5 145.4 382.1 115.2C391.2 110.7 396.4 100.9 395.2 90.8C394 80.7 386.6 72.5 376.7 70.3C358.4 66.2 339.4 64 320 64z"/></svg>';
+
+function _aplicarTema(claro) {
+  var btn = document.getElementById('btn-tema');
+  var icone = document.getElementById('tema-icone');
+  var label = document.getElementById('tema-label');
+  if (claro) {
+    document.body.classList.add('tema-claro');
+    icone.innerHTML = LUA_CLARA;
+    label.textContent = 'Modo Escuro';
+    if (btn) { btn.style.background = 'rgba(0,0,0,.04)'; btn.style.borderColor = 'rgba(0,0,0,.08)'; btn.style.color = '#475569'; }
+  } else {
+    document.body.classList.remove('tema-claro');
+    icone.innerHTML = SOL_CLARO;
+    label.textContent = 'Modo Claro';
+    if (btn) { btn.style.background = 'rgba(255,255,255,.04)'; btn.style.borderColor = 'rgba(255,255,255,.08)'; btn.style.color = '#64748b'; }
+  }
+}
+
+function toggleTema() {
+  var claro = !document.body.classList.contains('tema-claro');
+  _aplicarTema(claro);
+  try { localStorage.setItem('tema', claro ? 'claro' : 'escuro'); } catch(e) {}
+}
+
+// Aplica tema salvo ao carregar
+(function() {
+  var saved = '';
+  try { saved = localStorage.getItem('tema') || ''; } catch(e) {}
+  _aplicarTema(saved === 'claro');
+})();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 carregarVisaoGeral();
