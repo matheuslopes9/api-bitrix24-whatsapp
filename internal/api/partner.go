@@ -235,14 +235,154 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Também persiste em bitrix_tokens para que o bitrixClient.call() encontre o token
+	// Persiste em bitrix_tokens para que o bitrixClient.call() encontre o token
 	creds := h.portalToCreds(existing)
 	if err := h.bitrixClient.SaveToken(c.Context(), creds, body.AccessToken, existing.RefreshToken, expiresIn); err != nil {
 		h.log.Warn("partner auth: save token failed", zap.String("domain", domain), zap.Error(err))
 	}
 
+	// Garante que existe um bitrix_account vinculando cada sessão WA ativa a este portal.
+	// O ProcessInbound usa bitrix_accounts para saber para qual Bitrix enviar mensagens.
+	// Para o Partner App, as credenciais OAuth são as globais do app (client_id/secret da config).
+	activeSessions := h.waManager.ListSessions()
+	for _, jid := range activeSessions {
+		// Verifica se já existe account para este JID
+		if _, err := h.repo.GetBitrixAccountByJID(c.Context(), jid); err == nil {
+			continue // já existe, não sobrescreve
+		}
+		lineID := existing.OpenLineID
+		if lineID == 0 {
+			lineID = 1
+		}
+		acct := &db.BitrixAccount{
+			ID:           generateUUID(),
+			SessionJID:   jid,
+			Domain:       "https://" + domain,
+			ClientID:     h.cfg.Bitrix.ClientID,
+			ClientSecret: h.cfg.Bitrix.ClientSecret,
+			OpenLineID:   lineID,
+			ConnectorID:  existing.ConnectorID,
+			RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
+			Status:       db.BitrixAccountActive,
+		}
+		if err := h.repo.UpsertBitrixAccount(c.Context(), acct); err != nil {
+			h.log.Warn("partner auth: auto-create bitrix_account failed",
+				zap.String("jid", jid), zap.String("domain", domain), zap.Error(err))
+		} else {
+			h.log.Info("partner auth: bitrix_account auto-created",
+				zap.String("jid", jid), zap.String("domain", domain))
+		}
+	}
+
 	h.log.Info("partner auth: token updated", zap.String("domain", domain))
-	return c.JSON(fiber.Map{"status": "ok"})
+	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "sessions": len(activeSessions)})
+}
+
+// ─── POST /bitrix/partner/link ───────────────────────────────────────────────
+//
+// Chamado pelo JS da página /bitrix-connect quando o QR é escaneado.
+// Vincula a sessão WA recém-conectada ao portal Bitrix do cliente,
+// criando (ou atualizando) um bitrix_account — que é o que o ProcessInbound usa.
+// Body JSON: { "domain": "empresa.bitrix24.com", "access_token": "...", "phone": "5519..." }
+func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
+	var body struct {
+		Domain      string `json:"domain"`
+		AccessToken string `json:"access_token"`
+		Phone       string `json:"phone"` // número ou JID parcial
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.Phone == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e phone são obrigatórios"})
+	}
+
+	domain := normalizePortalDomain(body.Domain)
+
+	// Busca o portal para obter connector_id e open_line_id
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		h.log.Warn("partner link: portal not found", zap.String("domain", domain), zap.Error(err))
+		// Cria portal mínimo para não bloquear
+		portal = &db.BitrixPortal{
+			Domain:      domain,
+			ConnectorID: "whatsapp_uc",
+			OpenLineID:  1,
+		}
+	}
+
+	lineID := portal.OpenLineID
+	if lineID == 0 {
+		lineID = 1
+	}
+
+	// Encontra o JID completo da sessão WA pelo prefixo do número
+	phone := strings.TrimPrefix(body.Phone, "+")
+	phone = strings.ReplaceAll(phone, " ", "")
+	// Remove sufixo @... se vier como JID completo
+	if idx := strings.Index(phone, "@"); idx != -1 {
+		phone = phone[:idx]
+	}
+	// Remove device part :XX se vier
+	if idx := strings.Index(phone, ":"); idx != -1 {
+		phone = phone[:idx]
+	}
+
+	sessionJID := ""
+	for _, jid := range h.waManager.ListSessions() {
+		if strings.HasPrefix(jid, phone) {
+			sessionJID = jid
+			break
+		}
+	}
+	if sessionJID == "" {
+		h.log.Warn("partner link: active session not found for phone", zap.String("phone", phone))
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "sessão WA não encontrada para " + phone})
+	}
+
+	acct := &db.BitrixAccount{
+		ID:           generateUUID(),
+		SessionJID:   sessionJID,
+		Domain:       "https://" + domain,
+		ClientID:     h.cfg.Bitrix.ClientID,
+		ClientSecret: h.cfg.Bitrix.ClientSecret,
+		OpenLineID:   lineID,
+		ConnectorID:  portal.ConnectorID,
+		RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
+		Status:       db.BitrixAccountActive,
+	}
+
+	if err := h.repo.UpsertBitrixAccount(c.Context(), acct); err != nil {
+		h.log.Error("partner link: upsert bitrix_account failed", zap.String("jid", sessionJID), zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Salva o token em bitrix_tokens para que o bitrixClient.call() funcione
+	if body.AccessToken != "" {
+		creds := h.portalToCreds(portal)
+		if err := h.bitrixClient.SaveToken(c.Context(), creds, body.AccessToken, portal.RefreshToken, 3600); err != nil {
+			h.log.Warn("partner link: save token failed", zap.Error(err))
+		}
+	}
+
+	// Registra/ativa o connector em background para garantir que está ativo
+	go func() {
+		ctx := context.Background()
+		creds := h.portalToCreds(portal)
+		appBase := h.cfg.App.BaseURL()
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+			h.log.Warn("partner link: register connector failed", zap.Error(err))
+		}
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
+			h.log.Warn("partner link: activate connector failed", zap.Error(err))
+		}
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+			h.log.Warn("partner link: bind event failed", zap.Error(err))
+		}
+		h.log.Info("partner link: connector activated",
+			zap.String("jid", sessionJID), zap.String("domain", domain))
+	}()
+
+	h.log.Info("partner link: session linked to portal",
+		zap.String("jid", sessionJID), zap.String("domain", domain))
+	return c.JSON(fiber.Map{"status": "linked", "jid": sessionJID, "domain": domain})
 }
 
 // ─── GET /bitrix-connect ─────────────────────────────────────────────────────
@@ -547,11 +687,14 @@ function fazerQRPoll(phone) {
   .then(function(d) {
     if (d.status === 'connected') {
       pararQRPoll();
-      setStatus('connected', 'dot-green', 'Conectado com sucesso!');
-      hideAll();
-      document.getElementById('connected-info').textContent =
-        'WhatsApp vinculado e pronto para uso no Bitrix24.';
-      document.getElementById('connected-section').style.display = 'block';
+      // Vincula a sessão WA ao portal Bitrix atual
+      vincularSessaoAoPortal(d.jid || phone, function() {
+        setStatus('connected', 'dot-green', 'Conectado com sucesso!');
+        hideAll();
+        document.getElementById('connected-info').textContent =
+          'WhatsApp vinculado e pronto para uso no Bitrix24.';
+        document.getElementById('connected-section').style.display = 'block';
+      });
     } else if (d.status === 'ready' && d.qr && d.qr !== lastQR) {
       lastQR = d.qr;
       exibirQR(d.qr);
@@ -585,6 +728,34 @@ function exibirQR(text) {
 function pararQRPoll() {
   if (qrPollInterval)  { clearInterval(qrPollInterval);  qrPollInterval  = null; }
   if (qrTimerInterval) { clearInterval(qrTimerInterval); qrTimerInterval = null; }
+}
+
+// ─── Vincula sessão WA ao portal Bitrix ──────────────────────────────────
+// Chamado quando o QR é escaneado com sucesso.
+// Envia o JID da sessão + domain do portal ao backend para criar o bitrix_account.
+function vincularSessaoAoPortal(phoneOrJID, callback) {
+  if (!portalDomain || !portalAccessToken) {
+    if (callback) callback();
+    return;
+  }
+  fetch('/bitrix/partner/link', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      domain:       portalDomain,
+      access_token: portalAccessToken,
+      phone:        phoneOrJID
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    console.log('vincularSessaoAoPortal:', d);
+    if (callback) callback();
+  })
+  .catch(function(e) {
+    console.warn('vincularSessaoAoPortal error:', e);
+    if (callback) callback(); // continua mesmo com erro
+  });
 }
 
 // ─── Utilitários de UI ────────────────────────────────────────────────────
