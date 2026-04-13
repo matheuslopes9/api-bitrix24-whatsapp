@@ -187,7 +187,8 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			h.log.Warn("partner install via callback: upsert portal failed", zap.Error(err))
 			// Não retorna erro — não pode bloquear o install do Bitrix
 		}
-		return c.SendStatus(fiber.StatusOK)
+		// Redireciona para /bitrix-connect — o Bitrix exibe essa página ao cliente após o install
+		return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect", fiber.StatusFound)
 	}
 
 	// Fallback: tenta JSON

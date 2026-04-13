@@ -161,7 +161,9 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		h.log.Info("partner install: connector activated", zap.String("domain", domain))
 	}()
 
-	return c.JSON(fiber.Map{"status": "installed"})
+	// Redireciona para /bitrix-connect — o Bitrix exibe essa página dentro do iframe
+	// imediatamente após a instalação, mostrando ao cliente o fluxo de conexão do WhatsApp.
+	return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect", fiber.StatusFound)
 }
 
 // ─── POST /bitrix/auth ───────────────────────────────────────────────────────
