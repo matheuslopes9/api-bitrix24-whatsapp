@@ -88,3 +88,26 @@ type BitrixToken struct {
 	CreatedAt    time.Time `db:"created_at"`
 	UpdatedAt    time.Time `db:"updated_at"`
 }
+
+type BitrixAccountStatus string
+
+const (
+	BitrixAccountPending BitrixAccountStatus = "pending"
+	BitrixAccountActive  BitrixAccountStatus = "active"
+)
+
+// BitrixAccount vincula uma sessão WhatsApp a uma conta Bitrix24 específica.
+// Permite multi-tenancy: cada número WA tem seu próprio portal Bitrix.
+type BitrixAccount struct {
+	ID           uuid.UUID           `db:"id"`
+	SessionJID   string              `db:"session_jid"`
+	Domain       string              `db:"domain"`
+	ClientID     string              `db:"client_id"`
+	ClientSecret string              `db:"client_secret"`
+	OpenLineID   int                 `db:"open_line_id"`
+	ConnectorID  string              `db:"connector_id"`
+	RedirectURI  string              `db:"redirect_uri"`
+	Status       BitrixAccountStatus `db:"status"`
+	CreatedAt    time.Time           `db:"created_at"`
+	UpdatedAt    time.Time           `db:"updated_at"`
+}

@@ -249,3 +249,73 @@ func (r *Repository) GetBitrixToken(ctx context.Context, domain string) (*Bitrix
 	}
 	return &t, nil
 }
+
+// ─── Bitrix Accounts ──────────────────────────────────────────────────────
+
+func (r *Repository) UpsertBitrixAccount(ctx context.Context, a *BitrixAccount) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO bitrix_accounts
+			(id, session_jid, domain, client_id, client_secret, open_line_id, connector_id, redirect_uri, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (session_jid) DO UPDATE SET
+			domain        = EXCLUDED.domain,
+			client_id     = EXCLUDED.client_id,
+			client_secret = EXCLUDED.client_secret,
+			open_line_id  = EXCLUDED.open_line_id,
+			connector_id  = EXCLUDED.connector_id,
+			redirect_uri  = EXCLUDED.redirect_uri,
+			status        = EXCLUDED.status,
+			updated_at    = NOW()
+	`, a.ID, a.SessionJID, a.Domain, a.ClientID, a.ClientSecret,
+		a.OpenLineID, a.ConnectorID, a.RedirectURI, a.Status)
+	return err
+}
+
+func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID string) (*BitrixAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+		       connector_id, redirect_uri, status, created_at, updated_at
+		FROM bitrix_accounts WHERE session_jid = $1`, sessionJID)
+
+	var a BitrixAccount
+	err := row.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+		&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status, &a.CreatedAt, &a.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+func (r *Repository) ListBitrixAccounts(ctx context.Context) ([]*BitrixAccount, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+		       connector_id, redirect_uri, status, created_at, updated_at
+		FROM bitrix_accounts ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []*BitrixAccount
+	for rows.Next() {
+		var a BitrixAccount
+		if err := rows.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+			&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, &a)
+	}
+	return accounts, nil
+}
+
+func (r *Repository) UpdateBitrixAccountStatus(ctx context.Context, sessionJID string, status BitrixAccountStatus) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW() WHERE session_jid = $2`,
+		status, sessionJID)
+	return err
+}
+
+func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM bitrix_accounts WHERE session_jid = $1`, sessionJID)
+	return err
+}

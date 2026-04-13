@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
@@ -15,6 +16,8 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.uber.org/zap"
 )
+
+func generateUUID() uuid.UUID { return uuid.New() }
 
 type handlers struct {
 	cfg          *config.Config
@@ -123,14 +126,18 @@ func (h *handlers) sendMessage(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "queued"})
 }
 
-// GET|POST /bitrix/callback — handler de instalação do app local Bitrix24
-// O Bitrix24 chama este endpoint com event=ONAPPINSTALL e auth[access_token]
+// GET|POST /bitrix/callback?session_jid=<jid> — handler de instalação do app local Bitrix24
+// O Bitrix24 chama este endpoint com event=ONAPPINSTALL e auth[access_token].
+// O session_jid identifica qual conta BitrixAccount (já criada via UI) recebe o token.
 func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	h.log.Info("bitrix callback received",
 		zap.String("method", c.Method()),
 		zap.String("raw_body", string(c.Body())),
 		zap.String("content_type", c.Get("Content-Type")),
 	)
+
+	// session_jid vem como query param na URL de instalação configurada no Bitrix
+	sessionJID := c.Query("session_jid")
 
 	// App local envia form-encoded
 	event := c.FormValue("event")
@@ -165,14 +172,11 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	h.log.Info("bitrix install event",
 		zap.String("event", event),
 		zap.String("domain", domain),
+		zap.String("session_jid", sessionJID),
 		zap.String("token_preview", preview))
 
 	if accessToken == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "access_token missing")
-	}
-
-	if domain == "" {
-		domain = h.cfg.Bitrix.Domain
 	}
 
 	exp := 3600
@@ -180,43 +184,174 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		fmt.Sscanf(expiresIn, "%d", &exp)
 	}
 
-	if err := h.bitrixClient.SaveToken(c.Context(), domain, accessToken, refreshToken, exp); err != nil {
+	// Se temos session_jid, busca a conta cadastrada na UI e salva token/ativa
+	if sessionJID != "" {
+		acct, err := h.repo.GetBitrixAccountByJID(c.Context(), sessionJID)
+		if err != nil {
+			h.log.Warn("bitrix callback: account not found for jid, saving with domain from response",
+				zap.String("session_jid", sessionJID), zap.Error(err))
+		} else {
+			creds := bitrix.TenantCreds{
+				Domain:       acct.Domain,
+				ClientID:     acct.ClientID,
+				ClientSecret: acct.ClientSecret,
+				RedirectURI:  acct.RedirectURI,
+			}
+			if err := h.bitrixClient.SaveToken(c.Context(), creds, accessToken, refreshToken, exp); err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+			}
+			_ = h.repo.UpdateBitrixAccountStatus(c.Context(), sessionJID, db.BitrixAccountActive)
+
+			eventURL := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
+			go func() {
+				ctx := context.Background()
+				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", acct.RedirectURI); err != nil {
+					h.log.Warn("imconnector.register failed", zap.Error(err))
+				}
+				if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
+					h.log.Warn("imconnector.activate failed", zap.Error(err))
+				}
+				if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+					h.log.Warn("event.bind failed", zap.Error(err))
+				}
+				h.log.Info("bitrix account activated", zap.String("domain", acct.Domain), zap.String("jid", sessionJID))
+			}()
+			return c.SendStatus(fiber.StatusOK)
+		}
+	}
+
+	// Fallback sem session_jid: usa domain vindo da resposta do Bitrix
+	if domain == "" {
+		domain = h.cfg.Bitrix.Domain
+	}
+	fallbackCreds := bitrix.TenantCreds{
+		Domain:       domain,
+		ClientID:     h.cfg.Bitrix.ClientID,
+		ClientSecret: h.cfg.Bitrix.ClientSecret,
+		RedirectURI:  h.cfg.Bitrix.RedirectURI,
+	}
+	if err := h.bitrixClient.SaveToken(c.Context(), fallbackCreds, accessToken, refreshToken, exp); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// Registra conector, ativa na Open Line e vincula evento de reply (background)
-	eventURL := h.cfg.Bitrix.RedirectURI // base: https://<dominio>/bitrix/callback
-	// Deriva a URL do evento trocando o sufixo
-	eventURL = strings.TrimSuffix(eventURL, "/bitrix/callback") + "/bitrix/connector/event"
+	eventURL := strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
 	go func() {
 		ctx := context.Background()
-		handlerURL := h.cfg.Bitrix.RedirectURI
-		if err := h.bitrixClient.RegisterConnector(ctx, "whatsapp_uc", "WhatsApp UC", handlerURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", h.cfg.Bitrix.RedirectURI); err != nil {
 			h.log.Warn("imconnector.register failed", zap.Error(err))
-		} else {
-			h.log.Info("imconnector registered")
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, "whatsapp_uc", h.cfg.Bitrix.OpenLineID, true); err != nil {
+		if err := h.bitrixClient.ActivateConnector(ctx, fallbackCreds, "whatsapp_uc", h.cfg.Bitrix.OpenLineID, true); err != nil {
 			h.log.Warn("imconnector.activate failed", zap.Error(err))
-		} else {
-			h.log.Info("imconnector activated", zap.Int("line_id", h.cfg.Bitrix.OpenLineID))
 		}
-		// Registra o webhook de reply do operador via event.bind
-		if err := h.bitrixClient.BindEvent(ctx, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("event.bind ONIMCONNECTORMESSAGEADD failed", zap.Error(err))
-		} else {
-			h.log.Info("event.bind ONIMCONNECTORMESSAGEADD ok", zap.String("url", eventURL))
+		if err := h.bitrixClient.BindEvent(ctx, fallbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("event.bind failed", zap.Error(err))
 		}
 	}()
 
 	return c.SendStatus(fiber.StatusOK)
 }
 
-// GET /bitrix/oauth/start — não usado em app local, mantido por compatibilidade
+// GET /bitrix/oauth/start
 func (h *handlers) bitrixOAuthStart(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
-		"info": "App local Bitrix24 — autorização via installation handler em POST /bitrix/callback",
+		"info": "App local Bitrix24 — autorização via installation handler em POST /bitrix/callback?session_jid=<jid>",
 	})
+}
+
+// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────────────
+
+// POST /ui/bitrix/accounts
+// Body: { session_jid, domain, client_id, client_secret, open_line_id, connector_id }
+func (h *handlers) uiCreateBitrixAccount(c *fiber.Ctx) error {
+	var body struct {
+		SessionJID   string `json:"session_jid"`
+		Domain       string `json:"domain"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		OpenLineID   int    `json:"open_line_id"`
+		ConnectorID  string `json:"connector_id"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "json inválido"})
+	}
+	if body.SessionJID == "" || body.Domain == "" || body.ClientID == "" || body.ClientSecret == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "session_jid, domain, client_id e client_secret são obrigatórios"})
+	}
+	if body.OpenLineID == 0 {
+		body.OpenLineID = 1
+	}
+	if body.ConnectorID == "" {
+		body.ConnectorID = "whatsapp_uc"
+	}
+
+	// Gera redirect_uri automaticamente baseado no host da request
+	scheme := "https"
+	host := c.Hostname()
+	redirectURI := fmt.Sprintf("%s://%s/bitrix/callback?session_jid=%s", scheme, host, body.SessionJID)
+
+	acct := &db.BitrixAccount{
+		ID:           generateUUID(),
+		SessionJID:   body.SessionJID,
+		Domain:       body.Domain,
+		ClientID:     body.ClientID,
+		ClientSecret: body.ClientSecret,
+		OpenLineID:   body.OpenLineID,
+		ConnectorID:  body.ConnectorID,
+		RedirectURI:  redirectURI,
+		Status:       db.BitrixAccountPending,
+	}
+
+	if err := h.repo.UpsertBitrixAccount(c.Context(), acct); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":       "created",
+		"redirect_uri": redirectURI,
+		"install_url":  fmt.Sprintf("https://%s/bitrix/callback?session_jid=%s", host, body.SessionJID),
+		"account":      acct,
+	})
+}
+
+// GET /ui/bitrix/accounts
+func (h *handlers) uiListBitrixAccounts(c *fiber.Ctx) error {
+	accounts, err := h.repo.ListBitrixAccounts(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// Oculta client_secret na listagem
+	type safeAccount struct {
+		ID          interface{} `json:"id"`
+		SessionJID  string      `json:"session_jid"`
+		Domain      string      `json:"domain"`
+		ClientID    string      `json:"client_id"`
+		OpenLineID  int         `json:"open_line_id"`
+		ConnectorID string      `json:"connector_id"`
+		RedirectURI string      `json:"redirect_uri"`
+		Status      string      `json:"status"`
+	}
+	var safe []safeAccount
+	for _, a := range accounts {
+		safe = append(safe, safeAccount{
+			ID: a.ID, SessionJID: a.SessionJID, Domain: a.Domain,
+			ClientID: a.ClientID, OpenLineID: a.OpenLineID,
+			ConnectorID: a.ConnectorID, RedirectURI: a.RedirectURI,
+			Status: string(a.Status),
+		})
+	}
+	return c.JSON(fiber.Map{"accounts": safe})
+}
+
+// DELETE /ui/bitrix/accounts?jid=<session_jid>
+func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
+	jid := c.Query("jid")
+	if jid == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "jid required"})
+	}
+	if err := h.repo.DeleteBitrixAccount(c.Context(), jid); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"status": "deleted", "jid": jid})
 }
 
 

@@ -58,9 +58,13 @@ func New(
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
 	ui.Get("/sessions", h.uiListSessions)
-	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid= (evita problema com @ no path)
+	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid=
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
 	ui.Get("/overview", h.uiOverview)
+	// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────
+	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
+	ui.Get("/bitrix/accounts", h.uiListBitrixAccounts)
+	ui.Delete("/bitrix/accounts", h.uiDeleteBitrixAccount)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))

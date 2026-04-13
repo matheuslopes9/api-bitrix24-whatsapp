@@ -67,9 +67,11 @@ func main() {
 	q := queue.New(rdb, &cfg.Queue, log)
 	workers := queue.NewWorkerPool(q, cfg.Queue.Workers, log)
 
-	// ─── Bitrix24 ────────────────────────────────────────────────────────
-	bitrixClient := bitrix.NewClient(&cfg.Bitrix, repo, log)
-	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log, cfg.Bitrix.OpenLineID)
+	// ─── Bitrix24 (multi-tenant) ──────────────────────────────────────────
+	// Client é stateless em relação a tenants — recebe TenantCreds por chamada.
+	// A conta de cada sessão WA é buscada em bitrix_accounts pelo sessionJID.
+	bitrixClient := bitrix.NewClient(repo, log)
+	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log)
 
 	// ─── WhatsApp Manager ────────────────────────────────────────────────
 	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
@@ -167,8 +169,21 @@ func main() {
 				zap.String("im_msg_id", job.BitrixImMsgID),
 				zap.String("wa_id", waID))
 			go func() {
+				bgCtx := context.Background()
+				acct, err := repo.GetBitrixAccountByJID(bgCtx, job.SessionJID)
+				if err != nil {
+					log.Warn("outbound delivery: bitrix account not found", zap.String("session", job.SessionJID), zap.Error(err))
+					return
+				}
+				creds := bitrix.TenantCreds{
+					Domain:       acct.Domain,
+					ClientID:     acct.ClientID,
+					ClientSecret: acct.ClientSecret,
+					RedirectURI:  acct.RedirectURI,
+				}
 				if err := bitrixClient.ConnectorSetOutboundDelivery(
-					context.Background(),
+					bgCtx,
+					creds,
 					job.BitrixConnector,
 					job.BitrixLine,
 					job.BitrixImChatID,

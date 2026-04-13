@@ -236,6 +236,10 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
   </div>
+  <div class="nav-item" id="nav-integracoes" onclick="showPage('integracoes')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+    Integrações Bitrix
+  </div>
   <div class="nav-item" id="nav-configuracoes" onclick="showPage('configuracoes')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M20 12h2M2 12h2M17.66 17.66l-1.41-1.41M6.34 17.66l1.41-1.41"/></svg>
     Configurações
@@ -545,6 +549,80 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     </div>
   </div>
 
+
+  <!-- ══════════════════════ INTEGRAÇÕES ══════════════════════ -->
+  <div id="page-integracoes" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Integrações Bitrix24</div>
+        <div class="section-sub">Vincule cada número WhatsApp a um portal Bitrix24</div>
+      </div>
+      <button class="btn btn-primary" onclick="abrirFormIntegracao()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Nova Integração
+      </button>
+    </div>
+
+    <!-- Formulário (oculto por padrão) -->
+    <div id="form-integracao" class="card" style="padding:24px;margin-bottom:18px;display:none;">
+      <div style="font-size:15px;font-weight:600;color:#f1f5f9;margin-bottom:18px;">Configurar integração</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;" id="form-int-grid">
+        <div class="inp-group">
+          <label class="inp-label">Número WhatsApp (sessão)</label>
+          <select class="inp" id="int-jid">
+            <option value="">Selecione o número conectado...</option>
+          </select>
+        </div>
+        <div class="inp-group">
+          <label class="inp-label">Domínio Bitrix24</label>
+          <input class="inp" id="int-domain" placeholder="https://empresa.bitrix24.com.br"/>
+        </div>
+        <div class="inp-group">
+          <label class="inp-label">Client ID do App</label>
+          <input class="inp" id="int-client-id" placeholder="local.XXXXXXXXXX.XXXXXXXXXX"/>
+        </div>
+        <div class="inp-group">
+          <label class="inp-label">Client Secret do App</label>
+          <input class="inp" id="int-client-secret" type="password" placeholder="••••••••••••••••"/>
+        </div>
+        <div class="inp-group">
+          <label class="inp-label">ID da Open Line</label>
+          <input class="inp" id="int-openline" type="number" placeholder="1" value="1"/>
+        </div>
+        <div class="inp-group">
+          <label class="inp-label">ID do Conector</label>
+          <input class="inp" id="int-connector" placeholder="whatsapp_uc" value="whatsapp_uc"/>
+        </div>
+      </div>
+      <div style="margin-top:18px;display:flex;gap:10px;justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="fecharFormIntegracao()">Cancelar</button>
+        <button class="btn btn-primary" onclick="salvarIntegracao()">Salvar e Gerar Link</button>
+      </div>
+    </div>
+
+    <!-- Resultado: link de instalação -->
+    <div id="int-resultado" class="card" style="padding:20px;margin-bottom:18px;display:none;border:1px solid rgba(37,211,102,.2);background:rgba(37,211,102,.05);">
+      <div style="font-size:13px;font-weight:600;color:#25D366;margin-bottom:10px;">Integração salva! Agora instale o app no Bitrix24:</div>
+      <div style="font-size:12px;color:#64748b;margin-bottom:8px;">Cole esta URL como <strong style="color:#94a3b8;">URL do Handler de Instalação</strong> nas configurações do seu app local no Bitrix24:</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="inp" id="int-install-url" readonly style="font-family:monospace;font-size:12px;flex:1;"/>
+        <button class="btn btn-ghost btn-sm" onclick="copiarURL()">Copiar</button>
+      </div>
+      <div style="margin-top:12px;font-size:12px;color:#475569;line-height:1.8;">
+        <strong style="color:#94a3b8;">Passos:</strong><br>
+        1. No Bitrix24, vá em <strong style="color:#94a3b8;">Aplicativos → Desenvolver → Seu App</strong><br>
+        2. Cole a URL acima em <strong style="color:#94a3b8;">"URL do handler"</strong><br>
+        3. Salve e clique em <strong style="color:#94a3b8;">"Instalar"</strong><br>
+        4. O status mudará para <strong style="color:#25D366;">Ativo</strong> automaticamente
+      </div>
+    </div>
+
+    <!-- Lista de integrações -->
+    <div id="lista-integracoes">
+      <div style="text-align:center;padding:40px;color:#334155;font-size:13px;">Carregando...</div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ══════════════════════ MODAL CONFIRMAÇÃO ══════════════════════ -->
@@ -607,7 +685,7 @@ var qrTimer = null;
 var qrCountdown = 0;
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', relatorios: 'Relatórios', configuracoes: 'Configurações' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix', configuracoes: 'Configurações' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -621,6 +699,7 @@ function showPage(nome) {
   if (nome === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (nome === 'sessoes') carregarSessoes();
   if (nome === 'configuracoes') carregarConfigInfo();
+  if (nome === 'integracoes') carregarIntegracoes();
 }
 
 function openSidebar() {
@@ -1003,6 +1082,151 @@ function recarregarConfig() {
   toast('Campos restaurados para os valores atuais', 'success');
 }
 
+// ─── Integrações Bitrix24 ────────────────────────────────────────────────────
+function carregarIntegracoes() {
+  fetch('/ui/bitrix/accounts')
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var wrap = document.getElementById('lista-integracoes');
+    if (!Array.isArray(data) || data.length === 0) {
+      wrap.innerHTML = '<div class="card" style="padding:40px;text-align:center;">'
+        + '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#1e293b" stroke-width="1.5" style="margin:0 auto 14px;display:block;"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>'
+        + '<p style="color:#334155;font-size:14px;margin-bottom:16px;">Nenhuma integração configurada ainda</p>'
+        + '<button class="btn btn-primary" onclick="abrirFormIntegracao()">Configurar primeira integração</button>'
+        + '</div>';
+      return;
+    }
+    var html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    data.forEach(function(acct) {
+      var statusBadge = acct.status === 'active'
+        ? '<span class="badge badge-green">Ativo</span>'
+        : '<span class="badge badge-yellow">Pendente</span>';
+      var telefone = '+' + acct.session_jid.split(':')[0].split('@')[0];
+      var enc = encodeURIComponent(acct.session_jid);
+      html += '<div class="card" style="padding:18px;">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+        + '<div style="display:flex;align-items:center;gap:13px;">'
+        + '<div class="metric-icon" style="background:rgba(59,130,246,.12);">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>'
+        + '</div>'
+        + '<div>'
+        + '<div style="font-size:14px;font-weight:600;color:#e2e8f0;">' + telefone + ' → ' + (acct.domain || '') + '</div>'
+        + '<div style="font-size:11.5px;color:#334155;margin-top:2px;">Conector: ' + (acct.connector_id || '') + ' | Open Line: ' + (acct.open_line_id || '') + '</div>'
+        + '</div></div>'
+        + '<div style="display:flex;align-items:center;gap:10px;">'
+        + statusBadge
+        + '<button class="btn btn-danger btn-sm" onclick="excluirIntegracao(\'' + enc + '\')">Remover</button>'
+        + '</div></div>'
+        + '</div>';
+    });
+    html += '</div>';
+    wrap.innerHTML = html;
+  }).catch(function() {
+    document.getElementById('lista-integracoes').innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;font-size:13px;">Erro ao carregar integrações</div>';
+  });
+}
+
+function abrirFormIntegracao() {
+  var form = document.getElementById('form-integracao');
+  form.style.display = 'block';
+  document.getElementById('int-resultado').style.display = 'none';
+  // Popula select de sessões
+  fetch('/ui/sessions')
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var sel = document.getElementById('int-jid');
+    sel.innerHTML = '<option value="">Selecione o número conectado...</option>';
+    if (d.sessions) {
+      d.sessions.forEach(function(jid) {
+        var telefone = '+' + jid.split(':')[0].split('@')[0];
+        var opt = document.createElement('option');
+        opt.value = jid;
+        opt.textContent = telefone + ' (' + jid + ')';
+        sel.appendChild(opt);
+      });
+    }
+  }).catch(function() {});
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function fecharFormIntegracao() {
+  document.getElementById('form-integracao').style.display = 'none';
+  document.getElementById('int-resultado').style.display = 'none';
+  document.getElementById('int-jid').value = '';
+  document.getElementById('int-domain').value = '';
+  document.getElementById('int-client-id').value = '';
+  document.getElementById('int-client-secret').value = '';
+  document.getElementById('int-openline').value = '1';
+  document.getElementById('int-connector').value = 'whatsapp_uc';
+}
+
+function salvarIntegracao() {
+  var jid = document.getElementById('int-jid').value.trim();
+  var domain = document.getElementById('int-domain').value.trim();
+  var clientId = document.getElementById('int-client-id').value.trim();
+  var clientSecret = document.getElementById('int-client-secret').value.trim();
+  var openLine = parseInt(document.getElementById('int-openline').value) || 1;
+  var connectorId = document.getElementById('int-connector').value.trim() || 'whatsapp_uc';
+
+  if (!jid) { toast('Selecione um número WhatsApp', 'error'); return; }
+  if (!domain) { toast('Preencha o domínio Bitrix24', 'error'); return; }
+  if (!clientId) { toast('Preencha o Client ID', 'error'); return; }
+  if (!clientSecret) { toast('Preencha o Client Secret', 'error'); return; }
+
+  fetch('/ui/bitrix/accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_jid: jid,
+      domain: domain,
+      client_id: clientId,
+      client_secret: clientSecret,
+      open_line_id: openLine,
+      connector_id: connectorId
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.error) { toast(d.error, 'error'); return; }
+    var url = d.install_url || '';
+    document.getElementById('int-install-url').value = url;
+    document.getElementById('int-resultado').style.display = 'block';
+    document.getElementById('int-resultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast('Integração salva! Copie a URL e instale o app no Bitrix24.', 'success');
+    carregarIntegracoes();
+  })
+  .catch(function() { toast('Erro ao salvar integração', 'error'); });
+}
+
+function copiarURL() {
+  var input = document.getElementById('int-install-url');
+  input.select();
+  try {
+    navigator.clipboard.writeText(input.value).then(function() {
+      toast('URL copiada para a área de transferência', 'success');
+    }).catch(function() {
+      document.execCommand('copy');
+      toast('URL copiada', 'success');
+    });
+  } catch(e) {
+    document.execCommand('copy');
+    toast('URL copiada', 'success');
+  }
+}
+
+function excluirIntegracao(enc) {
+  var jid = decodeURIComponent(enc);
+  var telefone = '+' + jid.split(':')[0].split('@')[0];
+  abrirConfirm('Remover integração de ' + telefone + '?\nO vínculo com o Bitrix24 será desfeito.', function() {
+    fetch('/ui/bitrix/accounts?jid=' + enc, { method: 'DELETE' })
+    .then(function(r) {
+      if (r.ok) { toast('Integração removida', 'success'); carregarIntegracoes(); }
+      else { toast('Erro ao remover integração', 'error'); }
+    })
+    .catch(function() { toast('Erro ao remover integração', 'error'); });
+  });
+}
+
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function toast(msg, tipo) {
   var container = document.getElementById('toast');
@@ -1024,6 +1248,7 @@ function refreshAll() {
   if (paginaAtual === 'sessoes') carregarSessoes();
   if (paginaAtual === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (paginaAtual === 'configuracoes') carregarConfigInfo();
+  if (paginaAtual === 'integracoes') carregarIntegracoes();
   toast('Dados atualizados', 'success');
 }
 
