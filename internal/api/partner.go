@@ -387,15 +387,50 @@ var qrTimerInterval = null;
 var qrCountdown = 0;
 var lastQR = '';
 
-// ─── Inicialização via BX24.js ────────────────────────────────────────────
-// BX24.init() garante que o SDK está carregado antes de chamar qualquer método.
-BX24.init(function() {
-  var auth = BX24.getAuth();
-  portalDomain   = auth.domain   || '';
-  portalAccessToken = auth.access_token || '';
+// ─── Fallback: lê parâmetros da query string (PLACEMENT_OPTIONS do Bitrix) ──
+// Quando o Bitrix abre a página pelo placement, pode passar DOMAIN, AUTH_ID na URL.
+function getQueryParam(name) {
+  var params = new URLSearchParams(window.location.search);
+  return params.get(name) || '';
+}
+
+// ─── Inicialização ────────────────────────────────────────────────────────
+// Tenta BX24.js primeiro. Se não estiver disponível (fora do iframe), usa
+// query string como fallback para testes diretos.
+function inicializar() {
+  // Timeout de segurança: se BX24.init não disparar em 4s, mostra erro útil
+  var initTimeout = setTimeout(function() {
+    // Tenta query string antes de desistir
+    var qsDomain = getQueryParam('DOMAIN') || getQueryParam('domain');
+    var qsToken  = getQueryParam('AUTH_ID') || getQueryParam('access_token');
+    if (qsDomain && qsToken) {
+      var fakeAuth = {domain: qsDomain, access_token: qsToken, refresh_token: getQueryParam('REFRESH_ID'), expires_in: 3600, member_id: getQueryParam('member_id')};
+      onAuthReady(fakeAuth);
+      return;
+    }
+    setStatus('error', 'dot-red', 'Não foi possível conectar ao Bitrix24. Abra pelo menu do app.');
+    document.getElementById('status-bar').title = 'BX24.init() timeout — verifique se a página está no iframe do Bitrix';
+  }, 4000);
+
+  if (typeof BX24 === 'undefined') {
+    clearTimeout(initTimeout);
+    setStatus('error', 'dot-red', 'SDK Bitrix24 não encontrado. Abra pelo menu do app.');
+    return;
+  }
+
+  BX24.init(function() {
+    clearTimeout(initTimeout);
+    var auth = BX24.getAuth();
+    onAuthReady(auth);
+  });
+}
+
+function onAuthReady(auth) {
+  portalDomain      = (auth.domain        || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  portalAccessToken = auth.access_token   || '';
 
   if (!portalDomain || !portalAccessToken) {
-    setStatus('error', 'dot-red', 'Erro: não foi possível obter credenciais do Bitrix24.');
+    setStatus('error', 'dot-red', 'Credenciais não encontradas. Reinstale o app.');
     return;
   }
 
@@ -407,7 +442,14 @@ BX24.init(function() {
   salvarToken(auth, function() {
     verificarStatus();
   });
-});
+}
+
+// Inicia quando o DOM estiver pronto
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', inicializar);
+} else {
+  inicializar();
+}
 
 // ─── Salva token no backend ───────────────────────────────────────────────
 function salvarToken(auth, callback) {
