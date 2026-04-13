@@ -247,8 +247,8 @@ body.tema-claro ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.12);}
 <!-- Sidebar -->
 <nav id="sidebar">
   <!-- Logo -->
-  <div style="padding:6px 10px;margin-bottom:20px;">
-    <img src="/assets/logo.png" alt="UC Technology" style="max-width:80px;height:auto;display:block;"/>
+  <div style="padding:6px 10px;margin-bottom:20px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+    <img src="/assets/logo.png" alt="UC Technology" style="max-width:100px;height:auto;display:block;"/>
     <div style="margin-top:7px;">
       <div style="font-size:13px;font-weight:700;color:#f1f5f9;">WA Connector</div>
       <div style="font-size:11px;color:#334155;">UC Technology</div>
