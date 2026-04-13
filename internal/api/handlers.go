@@ -139,12 +139,26 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	// session_jid vem como query param na URL de instalação configurada no Bitrix
 	sessionJID := c.Query("session_jid")
 
-	// App local envia form-encoded
+	// App local envia form-encoded com auth[access_token]
 	event := c.FormValue("event")
 	accessToken := c.FormValue("auth[access_token]")
 	refreshToken := c.FormValue("auth[refresh_token]")
 	domain := c.FormValue("auth[domain]")
 	expiresIn := c.FormValue("auth[expires_in]")
+
+	// Partner App (Marketplace) envia: AUTH_ID, REFRESH_ID, AUTH_EXPIRES, member_id, SERVER_ENDPOINT
+	// Não envia domain — será extraído de SERVER_ENDPOINT ou cfg.Bitrix.Domain
+	if accessToken == "" {
+		accessToken = c.FormValue("AUTH_ID")
+		refreshToken = c.FormValue("REFRESH_ID")
+		expiresIn = c.FormValue("AUTH_EXPIRES")
+		// Extrai domain de SERVER_ENDPOINT (ex: https://oauth.bitrix.info/rest/ → não é o domain)
+		// O domain real vem do APPLICATION_TOKEN ou member_id — usamos cfg.Bitrix.Domain como fallback
+		// e deixamos o /bitrix/install registrar o portal completo depois.
+		if domain == "" {
+			domain = h.cfg.Bitrix.Domain
+		}
+	}
 
 	// Fallback: tenta JSON
 	if accessToken == "" {

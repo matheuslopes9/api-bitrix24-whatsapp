@@ -31,20 +31,39 @@ import (
 // Payload form-encoded com: event, auth[access_token], auth[refresh_token],
 // auth[domain], auth[expires_in], auth[member_id].
 func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
+	// Loga tudo para diagnóstico — body bruto, headers, query string
 	h.log.Info("partner install received",
 		zap.String("method", c.Method()),
 		zap.String("content_type", c.Get("Content-Type")),
+		zap.String("query", string(c.Request().URI().QueryString())),
+		zap.String("raw_body", string(c.Body())),
 	)
 
-	// Bitrix envia form-encoded na instalação via Marketplace
-	event := c.FormValue("event")
-	accessToken := c.FormValue("auth[access_token]")
-	refreshToken := c.FormValue("auth[refresh_token]")
-	domain := c.FormValue("auth[domain]")
-	memberID := c.FormValue("auth[member_id]")
-	expiresInStr := c.FormValue("auth[expires_in]")
+	// O Bitrix Partner App (Marketplace) envia no INSTALL:
+	//   AUTH_ID, REFRESH_ID, AUTH_EXPIRES, member_id, SERVER_ENDPOINT, APPLICATION_TOKEN
+	// App local envia: auth[access_token], auth[refresh_token], auth[domain], auth[expires_in]
+	// Suportamos ambos os formatos.
 
-	// Fallback JSON (alguns cenários de app local enviam JSON)
+	event := c.FormValue("event")
+
+	// Formato Partner App (Marketplace) — tem precedência
+	accessToken := c.FormValue("AUTH_ID")
+	refreshToken := c.FormValue("REFRESH_ID")
+	expiresInStr := c.FormValue("AUTH_EXPIRES")
+	memberID := c.FormValue("member_id")
+	serverEndpoint := c.FormValue("SERVER_ENDPOINT") // ex: https://oauth.bitrix.info/rest/
+	applicationToken := c.FormValue("APPLICATION_TOKEN")
+	domain := c.FormValue("DOMAIN") // geralmente vazio no Marketplace
+
+	// Formato app local — fallback
+	if accessToken == "" {
+		accessToken = c.FormValue("auth[access_token]")
+		refreshToken = c.FormValue("auth[refresh_token]")
+		expiresInStr = c.FormValue("auth[expires_in]")
+		domain = c.FormValue("auth[domain]")
+		memberID = c.FormValue("auth[member_id]")
+	}
+	// Fallback JSON
 	if accessToken == "" {
 		var body struct {
 			Event string `json:"event"`
@@ -66,14 +85,34 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		}
 	}
 
+	// Quando o Bitrix Marketplace não envia domain, usamos o member_id como chave única
+	// e o domain configurado como fallback. O domain real será registrado via /bitrix/auth.
+	if domain == "" && serverEndpoint != "" {
+		// SERVER_ENDPOINT é sempre oauth.bitrix.info — não é o domain do portal
+		_ = serverEndpoint
+	}
+	if domain == "" {
+		domain = h.cfg.Bitrix.Domain
+	}
+	_ = applicationToken // guardado nos logs; poderá ser usado para validação futura
+
 	h.log.Info("partner install parsed",
 		zap.String("event", event),
 		zap.String("domain", domain),
 		zap.String("member_id", memberID),
+		zap.String("access_token_prefix", func() string {
+			if len(accessToken) > 8 { return accessToken[:8] + "..." }
+			return accessToken
+		}()),
 	)
 
+	// Se ainda não temos token, o Bitrix provavelmente chamou o installer antes
+	// do OAuth2 ser concluído (fluxo de teste). Retorna 200 sem erro para
+	// não bloquear a instalação — o token chegará via /bitrix/auth pelo BX24.js.
 	if accessToken == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "access_token missing"})
+		h.log.Warn("partner install: access_token missing — responding 200 to unblock Bitrix install flow",
+			zap.String("domain", domain))
+		return c.JSON(fiber.Map{"status": "pending_auth"})
 	}
 
 	// Normaliza domain: remove https:// e trailing slash para chave consistente
