@@ -240,10 +240,6 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
     Integrações Bitrix
   </div>
-  <div class="nav-item" id="nav-configuracoes" onclick="showPage('configuracoes')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M12 2v2M12 20v2M20 12h2M2 12h2M17.66 17.66l-1.41-1.41M6.34 17.66l1.41-1.41"/></svg>
-    Configurações
-  </div>
 
   <div style="flex:1;"></div>
 
@@ -365,7 +361,7 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
     </div>
 
     <!-- Dispositivos -->
-    <div class="card" style="padding:18px;">
+    <div class="card" style="padding:18px;margin-bottom:14px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
         <div class="card-title" style="margin-bottom:0;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/></svg>
@@ -374,6 +370,34 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
         <button class="btn btn-primary btn-sm" onclick="showPage('sessoes')">Gerenciar</button>
       </div>
       <div id="painel-dispositivos"><div style="text-align:center;padding:20px;color:#334155;font-size:13px;">Carregando...</div></div>
+    </div>
+
+    <!-- Sistema e Workers -->
+    <div class="grid-2">
+      <!-- WhatsApp info -->
+      <div class="card" style="padding:20px;">
+        <div class="card-title">
+          <svg width="13" height="13" fill="#25D366" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+          WhatsApp
+        </div>
+        <div class="info-row"><span class="info-key">Sessões ativas</span><span class="info-val" id="cfg-sess-count">--</span></div>
+        <div class="info-row"><span class="info-key">Watchdog</span><span class="badge badge-green">Ativo — 30s</span></div>
+        <div class="info-row"><span class="info-key">Indicador de digitação</span><span class="info-val">1.5 – 4 s</span></div>
+        <div class="info-row"><span class="info-key">Serialização por JID</span><span class="badge badge-green">Habilitado</span></div>
+        <div class="info-row" style="border-bottom:none;"><span class="info-key">Novo número</span><button class="btn btn-primary btn-sm" onclick="showPage('sessoes');abrirModalQR()">Conectar</button></div>
+      </div>
+      <!-- Workers e Filas -->
+      <div class="card" style="padding:20px;">
+        <div class="card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Workers e Filas Redis
+        </div>
+        <div class="info-row"><span class="info-key">Workers paralelos</span><span class="info-val">20</span></div>
+        <div class="info-row"><span class="info-key">Máximo de tentativas</span><span class="info-val">5</span></div>
+        <div class="info-row"><span class="info-key">Tipo de backoff</span><span class="info-val">Exponencial</span></div>
+        <div class="info-row"><span class="info-key">Máximo de espera</span><span class="info-val">5 minutos</span></div>
+        <div class="info-row" style="border-bottom:none;"><span class="info-key">Serialização por JID</span><span class="badge badge-green">Habilitado</span></div>
+      </div>
     </div>
   </div>
 
@@ -445,81 +469,6 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
       </div>
     </div>
   </div>
-
-  <!-- ══════════════════════ CONFIGURAÇÕES ══════════════════════ -->
-  <div id="page-configuracoes" class="page">
-    <div class="section-hdr">
-      <div>
-        <div class="section-title">Configurações</div>
-        <div class="section-sub">Parâmetros gerais do sistema</div>
-      </div>
-    </div>
-
-    <!-- WhatsApp -->
-    <div class="card" style="padding:22px;margin-bottom:14px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-        <div class="metric-icon" style="background:rgba(37,211,102,.13);">
-          <svg width="16" height="16" fill="#25D366" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-        </div>
-        <div>
-          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">WhatsApp</div>
-          <div style="font-size:12px;color:#475569;">Sessões e configurações de conexão</div>
-        </div>
-      </div>
-      <div class="grid-2">
-        <div>
-          <div class="info-row"><span class="info-key">Sessões ativas</span><span class="info-val" id="cfg-sess-count">--</span></div>
-          <div class="info-row"><span class="info-key">Diretório de sessões</span><span class="info-val" style="font-family:monospace;font-size:12px;">./sessions</span></div>
-          <div class="info-row" style="border-bottom:none;"><span class="info-key">Watchdog</span><span class="badge badge-green">Ativo — 30s</span></div>
-        </div>
-        <div>
-          <div class="info-row"><span class="info-key">Indicador de digitação</span><span class="info-val">1.5 – 4 s</span></div>
-          <div class="info-row"><span class="info-key">Serialização por JID</span><span class="badge badge-green">Habilitado</span></div>
-          <div class="info-row" style="border-bottom:none;"><span class="info-key">Novo número</span><button class="btn btn-primary btn-sm" onclick="showPage('sessoes');abrirModalQR()">Conectar</button></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Workers e Filas -->
-    <div class="card" style="padding:22px;margin-bottom:14px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
-        <div class="metric-icon" style="background:rgba(192,132,252,.13);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        </div>
-        <div>
-          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Workers e Filas Redis</div>
-          <div style="font-size:12px;color:#475569;">Configuração do pool de processamento</div>
-        </div>
-      </div>
-      <div class="grid-2">
-        <div>
-          <div class="info-row"><span class="info-key">Workers paralelos</span><span class="info-val">20</span></div>
-          <div class="info-row"><span class="info-key">Máximo de tentativas</span><span class="info-val">5</span></div>
-          <div class="info-row" style="border-bottom:none;"><span class="info-key">Delay base de retry</span><span class="info-val">1 segundo</span></div>
-        </div>
-        <div>
-          <div class="info-row"><span class="info-key">Tipo de backoff</span><span class="info-val">Exponencial</span></div>
-          <div class="info-row"><span class="info-key">Máximo de espera</span><span class="info-val">5 minutos</span></div>
-          <div class="info-row" style="border-bottom:none;"><span class="info-key">Serialização por JID</span><span class="badge badge-green">Habilitado</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Atalho para Integrações -->
-    <div class="card" style="padding:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;">
-      <div style="display:flex;align-items:center;gap:12px;">
-        <div class="metric-icon" style="background:rgba(59,130,246,.13);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        </div>
-        <div>
-          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Integrações Bitrix24</div>
-          <div style="font-size:12px;color:#475569;">Vincule números WhatsApp a portais Bitrix24</div>
-        </div>
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="showPage('integracoes')">Gerenciar</button>
-    </div>
-  </div>
-
 
   <!-- ══════════════════════ INTEGRAÇÕES ══════════════════════ -->
   <div id="page-integracoes" class="page">
@@ -667,7 +616,7 @@ var qrTimer = null;
 var qrCountdown = 0;
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix', configuracoes: 'Configurações' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -680,7 +629,6 @@ function showPage(nome) {
   closeSidebar();
   if (nome === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (nome === 'sessoes') carregarSessoes();
-  if (nome === 'configuracoes') carregarConfigInfo();
   if (nome === 'integracoes') carregarIntegracoes();
 }
 
@@ -1040,14 +988,6 @@ function carregarRelatorios(dias) {
   }).catch(function() {});
 }
 
-// ─── Configurações ────────────────────────────────────────────────────────────
-function carregarConfigInfo() {
-  fetch('/ui/overview')
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    setText('cfg-sess-count', d.active_sessions + ' sessão(ões) ativa(s)');
-  }).catch(function() {});
-}
 
 
 // ─── Integrações Bitrix24 ────────────────────────────────────────────────────
@@ -1057,7 +997,8 @@ var intEditJID = '';
 function carregarIntegracoes() {
   fetch('/ui/bitrix/accounts')
   .then(function(r) { return r.json(); })
-  .then(function(data) {
+  .then(function(resp) {
+    var data = resp.accounts || [];
     var wrap = document.getElementById('lista-integracoes');
     if (!Array.isArray(data) || data.length === 0) {
       wrap.innerHTML = '<div class="card" style="padding:48px;text-align:center;">'
@@ -1270,7 +1211,6 @@ function refreshAll() {
   carregarVisaoGeral();
   if (paginaAtual === 'sessoes') carregarSessoes();
   if (paginaAtual === 'relatorios') carregarRelatorios(periodoRelatorio);
-  if (paginaAtual === 'configuracoes') carregarConfigInfo();
   if (paginaAtual === 'integracoes') carregarIntegracoes();
   toast('Dados atualizados', 'success');
 }
