@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -146,18 +147,47 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	domain := c.FormValue("auth[domain]")
 	expiresIn := c.FormValue("auth[expires_in]")
 
-	// Partner App (Marketplace) envia: AUTH_ID, REFRESH_ID, AUTH_EXPIRES, member_id, SERVER_ENDPOINT
-	// Não envia domain — será extraído de SERVER_ENDPOINT ou cfg.Bitrix.Domain
-	if accessToken == "" {
-		accessToken = c.FormValue("AUTH_ID")
-		refreshToken = c.FormValue("REFRESH_ID")
-		expiresIn = c.FormValue("AUTH_EXPIRES")
-		// Extrai domain de SERVER_ENDPOINT (ex: https://oauth.bitrix.info/rest/ → não é o domain)
-		// O domain real vem do APPLICATION_TOKEN ou member_id — usamos cfg.Bitrix.Domain como fallback
-		// e deixamos o /bitrix/install registrar o portal completo depois.
-		if domain == "" {
-			domain = h.cfg.Bitrix.Domain
+	// ── Detecta fluxo Partner App (Marketplace) ──────────────────────────────
+	// Envia: AUTH_ID, REFRESH_ID, AUTH_EXPIRES, member_id — sem domain.
+	// Não tem session_jid. Salva em bitrix_portals pelo member_id e retorna 200.
+	// O domain real chega depois via BX24.getAuth() no /bitrix/auth.
+	isPartnerApp := c.FormValue("AUTH_ID") != "" || c.FormValue("member_id") != ""
+	if isPartnerApp && sessionJID == "" {
+		partnerToken := c.FormValue("AUTH_ID")
+		partnerRefresh := c.FormValue("REFRESH_ID")
+		partnerExpires := c.FormValue("AUTH_EXPIRES")
+		partnerMemberID := c.FormValue("member_id")
+
+		exp := 3600
+		if partnerExpires != "" {
+			fmt.Sscanf(partnerExpires, "%d", &exp)
 		}
+
+		h.log.Info("partner app install via /bitrix/callback",
+			zap.String("member_id", partnerMemberID),
+			zap.String("token_prefix", func() string {
+				if len(partnerToken) > 8 { return partnerToken[:8] + "..." }
+				return partnerToken
+			}()),
+		)
+
+		// Salva em bitrix_portals com member_id como identificador.
+		// Domain será "" por ora — preenchido em /bitrix/auth via BX24.js.
+		portal := &db.BitrixPortal{
+			ID:           generateUUID(),
+			Domain:       partnerMemberID, // placeholder até BX24.js enviar o domain real
+			AccessToken:  partnerToken,
+			RefreshToken: partnerRefresh,
+			ExpiresAt:    time.Now().Add(time.Duration(exp) * time.Second),
+			MemberID:     partnerMemberID,
+			ConnectorID:  "whatsapp_uc",
+			OpenLineID:   0,
+		}
+		if err := h.repo.UpsertBitrixPortal(c.Context(), portal); err != nil {
+			h.log.Warn("partner install via callback: upsert portal failed", zap.Error(err))
+			// Não retorna erro — não pode bloquear o install do Bitrix
+		}
+		return c.SendStatus(fiber.StatusOK)
 	}
 
 	// Fallback: tenta JSON
