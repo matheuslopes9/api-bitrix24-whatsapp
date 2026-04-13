@@ -795,6 +795,17 @@ function renderizarDispositivos(sessoes) {
   wrap.innerHTML = html;
 }
 
+// ─── Helpers de cor para gráficos (adapta ao tema) ───────────────────────────
+function chartGridColor() {
+  return document.body.classList.contains('tema-claro') ? 'rgba(0,0,0,.08)' : 'rgba(255,255,255,.06)';
+}
+function chartTickColor() {
+  return document.body.classList.contains('tema-claro') ? '#64748b' : '#475569';
+}
+function chartLegendColor() {
+  return document.body.classList.contains('tema-claro') ? '#475569' : '#64748b';
+}
+
 // ─── Gráfico atividade 24h ────────────────────────────────────────────────────
 function atualizarGraficoAtividade(total_in, total_out) {
   var ctx = document.getElementById('chart-atividade');
@@ -817,10 +828,10 @@ function atualizarGraficoAtividade(total_in, total_out) {
     },
     options: {
       responsive: true, maintainAspectRatio: true,
-      plugins: { legend: { labels: { color: '#64748b', font: { size: 11 }, boxWidth: 10 } } },
+      plugins: { legend: { labels: { color: chartLegendColor(), font: { size: 11 }, boxWidth: 10 } } },
       scales: {
-        x: { grid: { color: 'rgba(255,255,255,.04)' }, ticks: { color: '#475569', font: { size: 10 }, maxTicksLimit: 8 } },
-        y: { grid: { color: 'rgba(255,255,255,.04)' }, ticks: { color: '#475569', font: { size: 10 } }, beginAtZero: true }
+        x: { grid: { color: chartGridColor() }, ticks: { color: chartTickColor(), font: { size: 10 }, maxTicksLimit: 8 } },
+        y: { grid: { color: chartGridColor() }, ticks: { color: chartTickColor(), font: { size: 10 } }, beginAtZero: true }
       }
     }
   });
@@ -1040,10 +1051,10 @@ function carregarRelatorios(dias) {
       },
       options: {
         responsive: true, maintainAspectRatio: true,
-        plugins: { legend: { labels: { color: '#64748b', font: { size: 11 }, boxWidth: 10 } } },
+        plugins: { legend: { labels: { color: chartLegendColor(), font: { size: 11 }, boxWidth: 10 } } },
         scales: {
-          x: { grid: { display: false }, ticks: { color: '#475569', font: { size: 10 }, maxTicksLimit: 10 } },
-          y: { grid: { color: 'rgba(255,255,255,.04)' }, ticks: { color: '#475569', font: { size: 10 } }, beginAtZero: true }
+          x: { grid: { display: false }, ticks: { color: chartTickColor(), font: { size: 10 }, maxTicksLimit: 10 } },
+          y: { grid: { color: chartGridColor() }, ticks: { color: chartTickColor(), font: { size: 10 } }, beginAtZero: true }
         }
       }
     });
@@ -1058,7 +1069,7 @@ function carregarRelatorios(dias) {
       },
       options: {
         responsive: true, maintainAspectRatio: true, cutout: '65%',
-        plugins: { legend: { position: 'bottom', labels: { color: '#64748b', font: { size: 11 }, boxWidth: 10, padding: 14 } } }
+        plugins: { legend: { position: 'bottom', labels: { color: chartLegendColor(), font: { size: 11 }, boxWidth: 10, padding: 14 } } }
       }
     });
   }).catch(function() {});
@@ -1316,6 +1327,9 @@ function toggleTema() {
   var claro = !document.body.classList.contains('tema-claro');
   _aplicarTema(claro);
   try { localStorage.setItem('tema', claro ? 'claro' : 'escuro'); } catch(e) {}
+  // Recria gráficos com as novas cores
+  carregarVisaoGeral();
+  if (paginaAtual === 'relatorios') carregarRelatorios(periodoRelatorio);
 }
 
 // Aplica tema salvo ao carregar
