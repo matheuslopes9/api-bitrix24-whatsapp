@@ -348,6 +348,33 @@ func (r *Repository) UpsertBitrixPortal(ctx context.Context, p *BitrixPortal) er
 	return err
 }
 
+// GetBitrixPortalByMemberID retorna o portal pelo member_id único do Bitrix.
+// Usado para migrar o registro placeholder criado no install (quando domain ainda não era conhecido).
+func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID string) (*BitrixPortal, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
+		       connector_id, open_line_id, installed_at, updated_at
+		FROM bitrix_portals WHERE member_id = $1
+		ORDER BY installed_at DESC LIMIT 1`, memberID)
+
+	var p BitrixPortal
+	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
+		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// UpdateBitrixPortalDomain atualiza o domain de um portal identificado pelo member_id.
+// Usado quando o domain real chega via BX24.getAuth() após o install.
+func (r *Repository) UpdateBitrixPortalDomain(ctx context.Context, memberID, newDomain string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bitrix_portals SET domain = $1, updated_at = NOW() WHERE member_id = $2`,
+		newDomain, memberID)
+	return err
+}
+
 // GetBitrixPortalByDomain retorna o portal pelo domain (sem https://).
 func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string) (*BitrixPortal, error) {
 	row := r.pool.QueryRow(ctx, `

@@ -187,10 +187,30 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		expiresIn = 3600
 	}
 
-	// Tenta atualizar portal existente; se não existir, cria registro mínimo
+	// Tenta encontrar registro existente:
+	// 1. Por domain (caso já tenha sido migrado antes)
+	// 2. Por member_id (caso o install tenha criado o placeholder com member_id como domain)
+	// 3. Cria novo registro mínimo se não existir
 	existing, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil && body.MemberID != "" {
+		// Pode ser o placeholder criado no install onde domain = member_id
+		existing, err = h.repo.GetBitrixPortalByMemberID(c.Context(), body.MemberID)
+		if err == nil && existing.Domain != domain {
+			// Migra o placeholder: atualiza o domain para o valor real
+			h.log.Info("partner auth: migrating portal domain from placeholder",
+				zap.String("old_domain", existing.Domain),
+				zap.String("new_domain", domain),
+				zap.String("member_id", body.MemberID),
+			)
+			if migrateErr := h.repo.UpdateBitrixPortalDomain(c.Context(), body.MemberID, domain); migrateErr != nil {
+				h.log.Warn("partner auth: migrate domain failed", zap.Error(migrateErr))
+			} else {
+				existing.Domain = domain
+			}
+		}
+	}
 	if err != nil {
-		// Porta ainda não registrada (ex: instalação sem install handler)
+		// Nenhum registro encontrado — cria novo
 		existing = &db.BitrixPortal{
 			ID:          uuid.New(),
 			Domain:      domain,
@@ -198,6 +218,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 			OpenLineID:  0,
 		}
 	}
+
 	existing.AccessToken = body.AccessToken
 	if body.RefreshToken != "" {
 		existing.RefreshToken = body.RefreshToken
