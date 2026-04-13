@@ -230,6 +230,41 @@ body.tema-claro #sidebar #sb-sessoes{color:#64748b;}
 body.tema-claro #btn-tema{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.08);color:#475569;}
 body.tema-claro #btn-tema:hover{background:rgba(0,0,0,.08) !important;color:#0f172a !important;}
 body.tema-claro ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.12);}
+
+/* Textos inline hardcoded — forçar cor no tema claro */
+/* Cards de sessão: número e JID */
+body.tema-claro #lista-sessoes .card [style*="color:#e2e8f0"],
+body.tema-claro #lista-sessoes .card [style*="color: #e2e8f0"]{color:#0f172a !important;}
+body.tema-claro #lista-sessoes .card [style*="color:#334155"],
+body.tema-claro #lista-sessoes .card [style*="color: #334155"]{color:#64748b !important;}
+/* Painel: dispositivos conectados */
+body.tema-claro #painel-dispositivos [style*="color:#e2e8f0"]{color:#0f172a !important;}
+body.tema-claro #painel-dispositivos [style*="color:#334155"]{color:#64748b !important;}
+/* Integrações: textos dos cards */
+body.tema-claro #lista-integracoes [style*="color:#f1f5f9"],
+body.tema-claro #lista-integracoes [style*="color:#e2e8f0"]{color:#0f172a !important;}
+body.tema-claro #lista-integracoes [style*="color:#475569"]{color:#475569 !important;}
+body.tema-claro #lista-integracoes [style*="color:#334155"]{color:#64748b !important;}
+body.tema-claro #lista-integracoes [style*="color:#94a3b8"]{color:#475569 !important;}
+body.tema-claro #lista-integracoes [style*="background:rgba(255,255,255,.03)"]{background:rgba(0,0,0,.04) !important;}
+/* Títulos de seção inline */
+body.tema-claro [style*="color:#f1f5f9"]{color:#0f172a !important;}
+body.tema-claro [style*="color:#e2e8f0"]{color:#1e293b !important;}
+body.tema-claro [style*="color:#334155"]{color:#64748b !important;}
+body.tema-claro [style*="color:#94a3b8"]{color:#475569 !important;}
+body.tema-claro [style*="color:#64748b"]{color:#64748b !important;}
+body.tema-claro [style*="color:#475569"]{color:#475569 !important;}
+/* Fundos de chip/detalhe inline */
+body.tema-claro [style*="background:rgba(255,255,255,.03)"],
+body.tema-claro [style*="background:rgba(255,255,255,.04)"],
+body.tema-claro [style*="background:rgba(255,255,255,.05)"]{background:rgba(0,0,0,.04) !important;}
+body.tema-claro [style*="border-bottom:1px solid rgba(255,255,255,.05)"],
+body.tema-claro [style*="border-bottom:1px solid rgba(255,255,255,.06)"]{border-bottom-color:rgba(0,0,0,.07) !important;}
+body.tema-claro [style*="border-top:1px solid rgba(255,255,255,.06)"]{border-top-color:rgba(0,0,0,.07) !important;}
+/* Card "Nenhum dispositivo/sessão" empty state */
+body.tema-claro #painel-dispositivos [style*="color:#334155"],
+body.tema-claro #lista-sessoes [style*="color:#334155"]{color:#64748b !important;}
+body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]{background:rgba(0,0,0,.03) !important;}
 </style>
 </head>
 <body>
