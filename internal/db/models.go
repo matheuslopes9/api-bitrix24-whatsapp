@@ -111,3 +111,19 @@ type BitrixAccount struct {
 	CreatedAt    time.Time           `db:"created_at"`
 	UpdatedAt    time.Time           `db:"updated_at"`
 }
+
+// BitrixPortal representa um portal Bitrix24 que instalou o app via Marketplace.
+// Preenchido automaticamente pelo installation handler (POST /bitrix/install).
+// Independente de BitrixAccount — não requer configuração manual pelo admin.
+type BitrixPortal struct {
+	ID           uuid.UUID `db:"id"`
+	Domain       string    `db:"domain"`       // ex: "empresa.bitrix24.com.br"
+	AccessToken  string    `db:"access_token"`
+	RefreshToken string    `db:"refresh_token"`
+	ExpiresAt    time.Time `db:"expires_at"`
+	MemberID     string    `db:"member_id"`    // identificador único do portal
+	ConnectorID  string    `db:"connector_id"`
+	OpenLineID   int       `db:"open_line_id"` // 0 = não configurado
+	InstalledAt  time.Time `db:"installed_at"`
+	UpdatedAt    time.Time `db:"updated_at"`
+}

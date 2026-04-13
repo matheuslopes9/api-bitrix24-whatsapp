@@ -79,8 +79,14 @@ func New(
 	bx.Get("/oauth/start", h.bitrixOAuthStart)
 	bx.Get("/callback", h.bitrixOAuthCallback)
 	bx.Post("/callback", h.bitrixOAuthCallback)   // Bitrix local app envia POST no install
-	bx.Post("/webhook", h.bitrixWebhook)              // Recebe eventos do Bitrix (legado)
+	bx.Post("/webhook", h.bitrixWebhook)                // Recebe eventos do Bitrix (legado)
 	bx.Post("/connector/event", h.bitrixConnectorEvent) // ONIMCONNECTORMESSAGEADD — reply do operador
+
+	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
+	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
+	bx.Post("/install", h.bitrixInstall)          // Application Installer URL (ONAPPINSTALL)
+	bx.Post("/auth", h.bitrixPartnerAuth)         // Token do BX24.js enviado pela página /bitrix-connect
+	app.Get("/bitrix-connect", h.bitrixConnectPage) // Application URL (abre em iframe no Bitrix24)
 
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))

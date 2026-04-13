@@ -71,6 +71,37 @@ Worker Pool (serializado por JID de destino)
 WhatsApp (mensagem entregue ao cliente com indicador de digitação)
 ```
 
+## Dashboard
+
+O sistema inclui uma interface web acessível em `/dashboard` com as seguintes seções:
+
+### Painel
+- Visão geral de sessões ativas, mensagens nas filas e taxa de erro
+- Cards de sessões WhatsApp conectadas
+- Cards de Workers e Redis (status de filas em tempo real)
+- Gráfico de mensagens dos últimos 7 dias
+
+### Sessões WhatsApp
+- Lista de dispositivos conectados com status em tempo real
+- Botão de desconexão com confirmação via modal
+- Atualização automática a cada 10s
+
+### Integrações Bitrix24
+- Cards com detalhes de cada conta Bitrix24 vinculada a uma sessão WA
+- Botão **Editar** — abre modal com dados pré-preenchidos para alterar configurações
+- Botão **Excluir** — confirmação via modal antes de remover
+- Botão **Adicionar Integração** — modal para criar nova vinculação sessão WA ↔ Bitrix24
+- Formulário com campos: sessão WA, domain, Client ID, Client Secret, Redirect URI, Open Line ID, Connector ID
+
+### Relatórios
+- Gráficos de volume diário (inbound vs outbound)
+- Tabela de estatísticas dos últimos 7/30 dias
+
+### Tema claro/escuro
+- Alternância via ícone de sol/lua no menu lateral
+- Persistido em `localStorage` — mantido entre sessões do navegador
+- Todos os gráficos se adaptam automaticamente às cores do tema ativo
+
 ## Endpoints
 
 ### UI (sem autenticação)
@@ -78,10 +109,15 @@ WhatsApp (mensagem entregue ao cliente com indicador de digitação)
 | Método | Rota | Descrição |
 |---|---|---|
 | `GET` | `/connect` | Página de conexão WhatsApp (QR scan) |
+| `GET` | `/dashboard` | Dashboard principal |
 | `POST` | `/ui/sessions` | Inicia nova sessão |
 | `GET` | `/ui/sessions/:phone/qr` | Polling do QR code |
 | `GET` | `/ui/sessions` | Lista sessões ativas |
-| `DELETE` | `/ui/sessions/:jid` | Desconecta sessão |
+| `DELETE` | `/ui/sessions/remove?jid=` | Desconecta sessão (via query param) |
+| `GET` | `/ui/overview` | Visão geral de sessões e filas |
+| `POST` | `/ui/bitrix/accounts` | Cria/atualiza conta Bitrix24 |
+| `GET` | `/ui/bitrix/accounts` | Lista contas Bitrix24 cadastradas |
+| `DELETE` | `/ui/bitrix/accounts` | Remove conta Bitrix24 |
 
 ### WhatsApp (requer `X-API-Key`)
 
@@ -116,6 +152,15 @@ Rotas `/wa/*` e `/stats/*` exigem header:
 ```
 X-API-Key: <APP_SECRET>
 ```
+
+## Multi-tenant (múltiplas contas Bitrix24)
+
+O sistema suporta múltiplas sessões WhatsApp, cada uma vinculada a uma conta Bitrix24 diferente:
+
+- Tabela `bitrix_accounts` mapeia `session_jid` → credenciais Bitrix24 (domain, client_id, client_secret, open_line_id, connector_id)
+- O `bitrix.Client` é stateless — recebe `TenantCreds` por chamada
+- Matching por prefixo de telefone via `SPLIT_PART(session_jid, ':', 1)`, ignorando o device suffix (`:18`, `:19`) que muda a cada reconexão
+- Gerenciado pela UI no menu **Integrações Bitrix24**
 
 ## Tipos de mídia suportados (WA → Bitrix)
 
@@ -177,6 +222,15 @@ O token OAuth2 expira a cada 1 hora. O sistema renova automaticamente:
 5. Token salvo no banco — renovação automática via refresh_token (sem reinstalar nunca mais)
 6. O app registra automaticamente: `imconnector.register` + `imconnector.activate` + `event.bind ONIMCONNECTORMESSAGEADD`
 
+## Fluxo de Vinculação Bitrix24 ↔ WhatsApp (via Dashboard)
+
+1. Acessar `/dashboard` → menu **Integrações Bitrix24**
+2. Clicar em **Adicionar Integração**
+3. Preencher: sessão WA, domain Bitrix24, Client ID, Client Secret, Redirect URI, Open Line ID, Connector ID
+4. Clicar em **Salvar** — aparece card com as informações da integração
+5. Para editar: clicar em **Editar** no card → modal com dados pré-preenchidos
+6. Para remover: clicar em **Excluir** → confirmação via modal
+
 ## Deploy no EasyPanel
 
 ### Pré-requisitos
@@ -197,7 +251,8 @@ O token OAuth2 expira a cada 1 hora. O sistema renova automaticamente:
    ```
    Colar o conteúdo de `migrations/001_init.sql`
 5. Acessar `https://<dominio>/connect` para conectar o WhatsApp
-6. Instalar o app local no Bitrix24 — token e connector são configurados automaticamente via `/bitrix/callback`
+6. Acessar `https://<dominio>/dashboard` → **Integrações Bitrix24** para vincular a conta
+7. Instalar o app local no Bitrix24 — token e connector são configurados automaticamente via `/bitrix/callback`
 
 ### Variáveis de ambiente
 
@@ -226,18 +281,14 @@ WA_SESSIONS_DIR=./sessions
 WA_MEDIA_DIR=./media
 WA_LOG_LEVEL=INFO
 
-BITRIX_DOMAIN=https://suaempresa.bitrix24.com
-BITRIX_CLIENT_ID=<client-id>
-BITRIX_CLIENT_SECRET=<client-secret>
-BITRIX_REDIRECT_URI=https://<dominio-easypanel>/bitrix/callback
-BITRIX_OPEN_LINE_ID=218
-
 QUEUE_WORKERS=20
 QUEUE_MAX_RETRY=5
 QUEUE_RETRY_BASE_DELAY_MS=1000
 
 WATCHDOG_PING_INTERVAL_SECS=30
 ```
+
+> **Nota:** As credenciais Bitrix24 (domain, client_id, client_secret, open_line_id, connector_id) são configuradas diretamente pela UI em `/dashboard` → **Integrações Bitrix24**, não por variáveis de ambiente.
 
 ## Desenvolvimento local
 
@@ -274,6 +325,7 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 | `contact_mapping` | Mapeamento JID WhatsApp ↔ chat ID Bitrix24 (normalizado sem device part) |
 | `messages` | Log de mensagens trocadas |
 | `bitrix_tokens` | Tokens OAuth2 do Bitrix24 com renovação automática |
+| `bitrix_accounts` | Contas Bitrix24 vinculadas a cada sessão WA (multi-tenant) |
 | `event_log` | Log de eventos do sistema |
 
 ## Estrutura do projeto
@@ -284,7 +336,10 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 ├── internal/
 │   ├── api/             # HTTP handlers + rotas (Fiber)
 │   │   ├── server.go    # Setup do app Fiber e rotas
-│   │   ├── ui.go        # Handlers da UI /connect
+│   │   ├── dashboard.go # Dashboard UI (HTML/CSS/JS inline)
+│   │   ├── assets.go    # Servir assets estáticos embarcados
+│   │   ├── assets/      # chart.js, logo.png, logo_uc.png
+│   │   ├── ui.go        # Handlers da UI /connect e /ui/*
 │   │   └── handlers.go  # Handlers da API /wa/* e /bitrix/*
 │   ├── bitrix/          # Cliente Bitrix24 + processador de mensagens
 │   │   ├── client.go    # Chamadas REST ao Bitrix24 (OAuth2 + disk + imconnector)
@@ -318,6 +373,11 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 | Token expirado a cada 1h | Refresh enviava para domain errado + salvava com domain errado | Endpoint fixo `oauth.bitrix.info`; sempre salva com `cfg.Domain` |
 | Mensagens outbound em paralelo | 20 workers disparando para o mesmo JID simultaneamente | Mutex por JID no worker pool |
 | wav/ogg como áudio WA | WA rejeita wav e ogg como AudioMessage | Apenas `audio/mpeg` vai como áudio nativo; demais como documento |
+| Inbound não chega ao Bitrix após reconexão | JID device suffix muda a cada reconexão (`:18`→`:19`), causando falha no match exato | `SPLIT_PART(session_jid, ':', 1)` em todas as queries de `bitrix_accounts` |
+| Botão Editar do card não abre modal | `JSON.stringify` dentro de `onclick=""` gera aspas duplas que quebram o atributo HTML | `data-acct='...'` + `JSON.parse(this.dataset.acct)` no handler JS |
+| `@` no JID truncado no path routing | Fiber trata `@` como separador em parâmetros de rota | Desconexão usa query param `?jid=encodeURIComponent(jid)` em vez de path param |
+| Tema claro: texto invisível nos cards | Estilos inline com cores hardcoded não são sobrescritos por classes CSS | Seletores CSS `[style*="color:#e2e8f0"]` com `!important` |
+| Tema claro: linhas do gráfico invisíveis | Cor de grid hardcoded como `rgba(255,255,255,.04)` (branco sobre branco) | Funções `chartGridColor()`, `chartTickColor()`, `chartLegendColor()` com valores por tema |
 
 ## Status atual
 
@@ -325,6 +385,7 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 - [x] PostgreSQL e Redis conectados
 - [x] Gerenciamento de sessões WhatsApp (async QR via goroutine)
 - [x] UI `/connect` com QR scan, lista de dispositivos e botão desconectar
+- [x] Dashboard completo em `/dashboard` com Painel, Sessões, Integrações e Relatórios
 - [x] WhatsApp conectado via QR scan em produção
 - [x] Fila Redis com worker pool (20 workers, retry exponencial)
 - [x] Watchdog de reconexão automática (intervalo 30s)
@@ -339,4 +400,9 @@ Tabelas criadas pela migration `migrations/001_init.sql`:
 - [x] Suporte a vCard (contato) e sticker
 - [x] Indicador de digitação ("digitando...") no WA antes de cada mensagem outbound
 - [x] Serialização por JID — mensagens para o mesmo número nunca chegam em paralelo
+- [x] Multi-tenant — múltiplas sessões WA com contas Bitrix24 independentes
+- [x] Gerenciamento de integrações Bitrix24 via UI (criar/editar/excluir com cards e modais)
+- [x] Matching de JID por prefixo de telefone (imune a mudança de device suffix na reconexão)
+- [x] Tema claro/escuro com persistência em localStorage
+- [x] Assets estáticos embarcados no binário (logo, favicon, chart.js)
 - [ ] Testes end-to-end automatizados

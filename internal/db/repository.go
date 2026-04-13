@@ -327,3 +327,62 @@ func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string)
 		sessionJID)
 	return err
 }
+
+// ─── Bitrix Portals (Partner App) ─────────────────────────────────────────
+
+// UpsertBitrixPortal salva ou atualiza os dados de um portal instalado via Marketplace.
+func (r *Repository) UpsertBitrixPortal(ctx context.Context, p *BitrixPortal) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO bitrix_portals
+			(id, domain, access_token, refresh_token, expires_at, member_id, connector_id, open_line_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (domain) DO UPDATE SET
+			access_token  = EXCLUDED.access_token,
+			refresh_token = EXCLUDED.refresh_token,
+			expires_at    = EXCLUDED.expires_at,
+			member_id     = EXCLUDED.member_id,
+			connector_id  = COALESCE(NULLIF(EXCLUDED.connector_id,''), bitrix_portals.connector_id),
+			open_line_id  = CASE WHEN EXCLUDED.open_line_id > 0 THEN EXCLUDED.open_line_id ELSE bitrix_portals.open_line_id END,
+			updated_at    = NOW()
+	`, p.ID, p.Domain, p.AccessToken, p.RefreshToken, p.ExpiresAt, p.MemberID, p.ConnectorID, p.OpenLineID)
+	return err
+}
+
+// GetBitrixPortalByDomain retorna o portal pelo domain (sem https://).
+func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string) (*BitrixPortal, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
+		       connector_id, open_line_id, installed_at, updated_at
+		FROM bitrix_portals WHERE domain = $1`, domain)
+
+	var p BitrixPortal
+	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
+		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// ListBitrixPortals retorna todos os portais instalados.
+func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
+		       connector_id, open_line_id, installed_at, updated_at
+		FROM bitrix_portals ORDER BY installed_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var portals []*BitrixPortal
+	for rows.Next() {
+		var p BitrixPortal
+		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
+			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		portals = append(portals, &p)
+	}
+	return portals, nil
+}

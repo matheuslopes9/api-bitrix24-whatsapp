@@ -18,9 +18,10 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port   string
-	Env    string
-	Secret string
+	Port      string
+	Env       string
+	Secret    string
+	PublicURL string // APP_BASE_URL — URL pública do servidor (ex: https://meuapp.easypanel.host)
 }
 
 type PostgresConfig struct {
@@ -74,9 +75,10 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Port:   viper.GetString("APP_PORT"),
-			Env:    viper.GetString("APP_ENV"),
-			Secret: viper.GetString("APP_SECRET"),
+			Port:      viper.GetString("APP_PORT"),
+			Env:       viper.GetString("APP_ENV"),
+			Secret:    viper.GetString("APP_SECRET"),
+			PublicURL: viper.GetString("APP_BASE_URL"),
 		},
 		Postgres: PostgresConfig{
 			Host:         viper.GetString("POSTGRES_HOST"),
@@ -118,6 +120,17 @@ func Load() (*Config, error) {
 
 	setDefaults(cfg)
 	return cfg, nil
+}
+
+// BaseURL retorna a URL pública do servidor sem trailing slash.
+// Usada como base para construir redirect URIs e event handler URLs.
+// Se APP_BASE_URL não estiver configurado, usa http://localhost:<port> como fallback.
+func (c *AppConfig) BaseURL() string {
+	u := strings.TrimRight(c.PublicURL, "/")
+	if u == "" {
+		u = "http://localhost:" + c.Port
+	}
+	return u
 }
 
 func (c *PostgresConfig) DSN() string {
