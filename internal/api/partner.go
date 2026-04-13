@@ -388,8 +388,9 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 // ─── GET /bitrix-connect ─────────────────────────────────────────────────────
 //
 // Application URL configurado no vendors.bitrix24.com.
-// Abre dentro do iframe do Bitrix24 quando o usuário clica em "Conectar WhatsApp".
-// Usa BX24.js para obter access_token + domain sem depender de query strings.
+// Abre dentro do iframe do Bitrix24 quando o usuário clica no app.
+// Salva o token do portal via BX24.js e redireciona para o dashboard completo.
+// O dashboard tem: sessões WA, integrações Bitrix24, relatórios e vinculação de canais.
 func (h *handlers) bitrixConnectPage(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	// X-Frame-Options não pode ser DENY/SAMEORIGIN — o Bitrix embute em iframe de outro domain
@@ -420,358 +421,87 @@ func (h *handlers) portalToCreds(p *db.BitrixPortal) bitrix.TenantCreds {
 }
 
 // ─── HTML da página /bitrix-connect ──────────────────────────────────────────
+// Página mínima de transição: captura o token do BX24.js, salva no backend
+// e redireciona para o dashboard completo. O usuário vê apenas um loading breve.
 
 const bitrixConnectHTML = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Conectar WhatsApp</title>
-<!-- SDK oficial do Bitrix24 — obrigatório para BX24.init() e BX24.getAuth() -->
+<title>WhatsApp Connector</title>
 <script src="//api.bitrix24.com/api/v1/"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:36px 40px;max-width:480px;width:100%;text-align:center}
-.wa-icon{width:64px;height:64px;background:#25D366;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 18px}
-.wa-icon svg{width:34px;height:34px;fill:#fff}
-h1{font-size:22px;font-weight:700;color:#111;margin-bottom:6px}
-.subtitle{font-size:14px;color:#666;margin-bottom:28px}
-.status-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 18px;border-radius:10px;font-size:14px;font-weight:600;margin-bottom:22px}
-.status-bar.loading{background:#f3f4f6;color:#555}
-.status-bar.connected{background:#d4edda;color:#155724}
-.status-bar.disconnected{background:#fff3cd;color:#856404}
-.status-bar.error{background:#f8d7da;color:#721c24}
-.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
-.dot-green{background:#25D366}
-.dot-yellow{background:#ffc107}
-.dot-gray{background:#aaa}
-.dot-red{background:#dc3545}
-#qr-section{display:none;margin-bottom:20px}
-.qr-instructions{background:#f8f9fa;border-radius:10px;padding:14px 18px;text-align:left;margin-bottom:16px;font-size:13px;color:#555;line-height:1.8}
-.qr-instructions b{color:#333}
-#qr-wrap{display:inline-block;padding:12px;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;margin-bottom:8px}
-#qr-wrap img{display:block}
-.qr-timer{font-size:12px;color:#888;margin-top:6px;min-height:16px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;background:#25D366;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:background .2s;text-decoration:none}
-.btn:hover{background:#1ebe5d}
-.btn:disabled{background:#aaa;cursor:not-allowed}
-.btn-outline{background:#fff;color:#25D366;border:2px solid #25D366}
-.btn-outline:hover{background:#f0fff4}
-.divider{border:none;border-top:1px solid #eee;margin:22px 0}
-.phone-label{font-size:12px;color:#888;margin-bottom:4px;text-align:left}
-.phone-input-row{display:flex;gap:10px;margin-bottom:20px}
-input[type=text]{flex:1;padding:11px 14px;border:1.5px solid #ddd;border-radius:8px;font-size:15px;outline:none;transition:border-color .2s}
-input[type=text]:focus{border-color:#25D366}
-.info-msg{font-size:13px;color:#555;line-height:1.6;margin-bottom:16px}
-.domain-badge{display:inline-block;background:#e8f5e9;color:#2e7d32;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;margin-bottom:16px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;
+     min-height:100vh;display:flex;align-items:center;justify-content:center}
+.wrap{text-align:center;padding:32px}
+.spinner{width:44px;height:44px;border:4px solid #e2e8f0;border-top-color:#25D366;
+         border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 18px}
+@keyframes spin{to{transform:rotate(360deg)}}
+p{font-size:14px;color:#555}
+.err{color:#e53935;font-size:13px;margin-top:12px;display:none}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="wa-icon">
-    <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-  </div>
-  <h1>Conectar WhatsApp ao Bitrix24</h1>
-  <p class="subtitle">Escaneie o QR Code para vincular seu número WhatsApp</p>
-
-  <!-- Badge do portal atual -->
-  <div class="domain-badge" id="portal-badge" style="display:none"></div>
-
-  <!-- Barra de status da conexão -->
-  <div class="status-bar loading" id="status-bar">
-    <div class="dot dot-gray" id="status-dot"></div>
-    <span id="status-text">Inicializando...</span>
-  </div>
-
-  <!-- Seção QR Code (exibida quando não há sessão ativa) -->
-  <div id="qr-section">
-    <div class="qr-instructions">
-      <b>Como escanear:</b><br>
-      1. Abra o WhatsApp no celular<br>
-      2. Toque em <b>⋮ → Aparelhos conectados</b><br>
-      3. Toque em <b>Conectar um aparelho</b><br>
-      4. Aponte a câmera para o QR Code abaixo
-    </div>
-    <div id="qr-wrap">
-      <img id="qr-img" src="" width="240" height="240" style="display:none"/>
-      <div id="qr-placeholder" style="width:240px;height:240px;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:13px">
-        Aguardando QR...
-      </div>
-    </div>
-    <div class="qr-timer" id="qr-timer"></div>
-  </div>
-
-  <!-- Formulário para iniciar nova sessão (exibido quando não há sessão nem QR em andamento) -->
-  <div id="new-session-section" style="display:none">
-    <p class="info-msg">Nenhum número WhatsApp vinculado a este portal.<br>Informe o número para iniciar a conexão:</p>
-    <div class="phone-label">Número com DDD (somente dígitos)</div>
-    <div class="phone-input-row">
-      <input type="text" id="phone-input" placeholder="5519910001772" maxlength="20"/>
-      <button class="btn" id="btn-start" onclick="iniciarSessao()">Conectar</button>
-    </div>
-  </div>
-
-  <!-- Estado conectado -->
-  <div id="connected-section" style="display:none">
-    <p class="info-msg" id="connected-info">WhatsApp conectado com sucesso!</p>
-    <button class="btn btn-outline" onclick="verificarStatus()">Atualizar status</button>
-  </div>
+<div class="wrap">
+  <div class="spinner"></div>
+  <p id="msg">Conectando ao Bitrix24...</p>
+  <p class="err" id="err"></p>
 </div>
-
 <script>
-// ─── Estado global ────────────────────────────────────────────────────────
-var portalDomain = '';
-var portalAccessToken = '';
-var currentPhone = '';
-var qrPollInterval = null;
-var qrTimerInterval = null;
-var qrCountdown = 0;
-var lastQR = '';
+function getQueryParam(n){return new URLSearchParams(window.location.search).get(n)||'';}
 
-// ─── Fallback: lê parâmetros da query string (PLACEMENT_OPTIONS do Bitrix) ──
-// Quando o Bitrix abre a página pelo placement, pode passar DOMAIN, AUTH_ID na URL.
-function getQueryParam(name) {
-  var params = new URLSearchParams(window.location.search);
-  return params.get(name) || '';
-}
+function salvarERedirecionarAdmin(auth) {
+  var domain       = (auth.domain        || '').replace(/^https?:\/\//,'').replace(/\/$/,'');
+  var accessToken  = auth.access_token   || '';
+  var refreshToken = auth.refresh_token  || '';
+  var expiresIn    = auth.expires_in     || 3600;
+  var memberID     = auth.member_id      || '';
 
-// ─── Inicialização ────────────────────────────────────────────────────────
-// Tenta BX24.js primeiro. Se não estiver disponível (fora do iframe), usa
-// query string como fallback para testes diretos.
-function inicializar() {
-  // Timeout de segurança: se BX24.init não disparar em 4s, mostra erro útil
-  var initTimeout = setTimeout(function() {
-    // Tenta query string antes de desistir
-    var qsDomain = getQueryParam('DOMAIN') || getQueryParam('domain');
-    var qsToken  = getQueryParam('AUTH_ID') || getQueryParam('access_token');
-    if (qsDomain && qsToken) {
-      var fakeAuth = {domain: qsDomain, access_token: qsToken, refresh_token: getQueryParam('REFRESH_ID'), expires_in: 3600, member_id: getQueryParam('member_id')};
-      onAuthReady(fakeAuth);
-      return;
-    }
-    setStatus('error', 'dot-red', 'Não foi possível conectar ao Bitrix24. Abra pelo menu do app.');
-    document.getElementById('status-bar').title = 'BX24.init() timeout — verifique se a página está no iframe do Bitrix';
-  }, 4000);
-
-  if (typeof BX24 === 'undefined') {
-    clearTimeout(initTimeout);
-    setStatus('error', 'dot-red', 'SDK Bitrix24 não encontrado. Abra pelo menu do app.');
+  if (!domain || !accessToken) {
+    document.getElementById('msg').textContent = 'Redirecionando para o painel...';
+    window.location.href = '/dashboard';
     return;
   }
 
-  BX24.init(function() {
-    clearTimeout(initTimeout);
-    var auth = BX24.getAuth();
-    onAuthReady(auth);
-  });
-}
+  document.getElementById('msg').textContent = 'Autenticando portal ' + domain + '...';
 
-function onAuthReady(auth) {
-  portalDomain      = (auth.domain        || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
-  portalAccessToken = auth.access_token   || '';
-
-  if (!portalDomain || !portalAccessToken) {
-    setStatus('error', 'dot-red', 'Credenciais não encontradas. Reinstale o app.');
-    return;
-  }
-
-  // Exibe o portal detectado
-  document.getElementById('portal-badge').textContent = '🌐 ' + portalDomain;
-  document.getElementById('portal-badge').style.display = 'inline-block';
-
-  // Salva o token no backend e depois verifica o status da sessão WA
-  salvarToken(auth, function() {
-    verificarStatus();
-  });
-}
-
-// Inicia quando o DOM estiver pronto
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', inicializar);
-} else {
-  inicializar();
-}
-
-// ─── Salva token no backend ───────────────────────────────────────────────
-function salvarToken(auth, callback) {
   fetch('/bitrix/auth', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      domain:        auth.domain        || portalDomain,
-      access_token:  auth.access_token  || portalAccessToken,
-      refresh_token: auth.refresh_token || '',
-      expires_in:    auth.expires_in    || 3600,
-      member_id:     auth.member_id     || ''
-    })
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({domain:domain, access_token:accessToken,
+                          refresh_token:refreshToken, expires_in:expiresIn, member_id:memberID})
   })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.status === 'ok' && callback) callback();
+  .then(function(r){return r.json();})
+  .then(function(){
+    document.getElementById('msg').textContent = 'Abrindo painel...';
+    window.location.href = '/dashboard';
   })
-  .catch(function(e) {
-    console.warn('salvarToken error:', e);
-    // Continua mesmo com erro — o token pode já estar salvo de uma sessão anterior
-    if (callback) callback();
+  .catch(function(){
+    // mesmo com erro, redireciona — o token pode já estar salvo
+    window.location.href = '/dashboard';
   });
 }
 
-// ─── Verifica status da sessão WA associada ao portal ────────────────────
-function verificarStatus() {
-  setStatus('loading', 'dot-gray', 'Verificando conexão WhatsApp...');
-  hideAll();
-
-  fetch('/ui/sessions')
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.count > 0) {
-      // Há sessão ativa — mostra como conectado
-      var jid = d.sessions[0];
-      var tel = jid.split(':')[0].replace('@s.whatsapp.net','').replace('@lid','');
-      setStatus('connected', 'dot-green', 'Conectado: +' + tel);
-      document.getElementById('connected-info').textContent =
-        'WhatsApp +' + tel + ' vinculado e pronto para uso no Bitrix24.';
-      document.getElementById('connected-section').style.display = 'block';
-    } else {
-      // Sem sessão ativa — oferece opção de conectar
-      setStatus('disconnected', 'dot-yellow', 'Nenhum WhatsApp conectado');
-      document.getElementById('new-session-section').style.display = 'block';
-    }
-  })
-  .catch(function(e) {
-    setStatus('error', 'dot-red', 'Erro ao verificar sessão.');
-    console.error(e);
-  });
-}
-
-// ─── Inicia nova sessão WA ────────────────────────────────────────────────
-function iniciarSessao() {
-  var raw = document.getElementById('phone-input').value.trim().replace(/\D/g, '');
-  if (!raw || raw.length < 10) {
-    alert('Digite um número válido com DDD. Ex: 5519910001772');
+// Timeout: se BX24.init não disparar em 3s, redireciona direto
+var t = setTimeout(function(){
+  var qsDomain = getQueryParam('DOMAIN') || getQueryParam('domain');
+  var qsToken  = getQueryParam('AUTH_ID') || getQueryParam('access_token');
+  if (qsDomain && qsToken) {
+    salvarERedirecionarAdmin({domain:qsDomain, access_token:qsToken,
+      refresh_token:getQueryParam('REFRESH_ID'), member_id:getQueryParam('member_id')});
     return;
   }
-  currentPhone = raw;
-  var btn = document.getElementById('btn-start');
-  btn.disabled = true;
-  btn.textContent = 'Conectando...';
+  // Sem credenciais — vai para o dashboard mesmo assim
+  window.location.href = '/dashboard';
+}, 3000);
 
-  fetch('/ui/sessions', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({phone: raw})
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.error) { alert(d.error); btn.disabled = false; btn.textContent = 'Conectar'; return; }
-    // Sessão iniciada — começa polling do QR
-    hideAll();
-    setStatus('loading', 'dot-gray', 'Aguardando QR Code...');
-    document.getElementById('qr-section').style.display = 'block';
-    iniciarQRPoll(raw);
-  })
-  .catch(function(e) { alert('Erro: ' + e); btn.disabled = false; btn.textContent = 'Conectar'; });
-}
-
-// ─── Polling do QR Code ───────────────────────────────────────────────────
-function iniciarQRPoll(phone) {
-  if (qrPollInterval) clearInterval(qrPollInterval);
-  fazerQRPoll(phone);
-  qrPollInterval = setInterval(function() { fazerQRPoll(phone); }, 2500);
-}
-
-function fazerQRPoll(phone) {
-  fetch('/ui/sessions/' + phone + '/qr')
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.status === 'connected') {
-      pararQRPoll();
-      // Vincula a sessão WA ao portal Bitrix atual
-      vincularSessaoAoPortal(d.jid || phone, function() {
-        setStatus('connected', 'dot-green', 'Conectado com sucesso!');
-        hideAll();
-        document.getElementById('connected-info').textContent =
-          'WhatsApp vinculado e pronto para uso no Bitrix24.';
-        document.getElementById('connected-section').style.display = 'block';
-      });
-    } else if (d.status === 'ready' && d.qr && d.qr !== lastQR) {
-      lastQR = d.qr;
-      exibirQR(d.qr);
-      setStatus('loading', 'dot-gray', 'Escaneie o QR Code com o WhatsApp');
-    } else if (d.status === 'waiting') {
-      setStatus('loading', 'dot-gray', 'Aguardando QR Code...');
-    }
-  }).catch(function() {});
-}
-
-function exibirQR(text) {
-  var img = document.getElementById('qr-img');
-  img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&ecc=L&data=' + encodeURIComponent(text);
-  img.style.display = 'block';
-  document.getElementById('qr-placeholder').style.display = 'none';
-
-  qrCountdown = 25;
-  if (qrTimerInterval) clearInterval(qrTimerInterval);
-  qrTimerInterval = setInterval(function() {
-    qrCountdown--;
-    var timerEl = document.getElementById('qr-timer');
-    if (qrCountdown > 0) {
-      timerEl.textContent = 'QR expira em ' + qrCountdown + 's';
-    } else {
-      clearInterval(qrTimerInterval);
-      timerEl.textContent = 'Atualizando QR...';
-    }
-  }, 1000);
-}
-
-function pararQRPoll() {
-  if (qrPollInterval)  { clearInterval(qrPollInterval);  qrPollInterval  = null; }
-  if (qrTimerInterval) { clearInterval(qrTimerInterval); qrTimerInterval = null; }
-}
-
-// ─── Vincula sessão WA ao portal Bitrix ──────────────────────────────────
-// Chamado quando o QR é escaneado com sucesso.
-// Envia o JID da sessão + domain do portal ao backend para criar o bitrix_account.
-function vincularSessaoAoPortal(phoneOrJID, callback) {
-  if (!portalDomain || !portalAccessToken) {
-    if (callback) callback();
-    return;
-  }
-  fetch('/bitrix/partner/link', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      domain:       portalDomain,
-      access_token: portalAccessToken,
-      phone:        phoneOrJID
-    })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    console.log('vincularSessaoAoPortal:', d);
-    if (callback) callback();
-  })
-  .catch(function(e) {
-    console.warn('vincularSessaoAoPortal error:', e);
-    if (callback) callback(); // continua mesmo com erro
+if (typeof BX24 !== 'undefined') {
+  BX24.init(function(){
+    clearTimeout(t);
+    salvarERedirecionarAdmin(BX24.getAuth());
   });
-}
-
-// ─── Utilitários de UI ────────────────────────────────────────────────────
-function setStatus(type, dotClass, text) {
-  var bar  = document.getElementById('status-bar');
-  var dot  = document.getElementById('status-dot');
-  var span = document.getElementById('status-text');
-  bar.className  = 'status-bar ' + type;
-  dot.className  = 'dot ' + dotClass;
-  span.textContent = text;
-}
-
-function hideAll() {
-  document.getElementById('qr-section').style.display          = 'none';
-  document.getElementById('new-session-section').style.display = 'none';
-  document.getElementById('connected-section').style.display   = 'none';
 }
 </script>
 </body>
