@@ -609,6 +609,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 
 	creds := h.portalToCreds(portal)
 	appBase := h.cfg.App.BaseURL()
+	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/connector/event"))
 	steps := map[string]string{}
 
 	// Salva token primeiro
