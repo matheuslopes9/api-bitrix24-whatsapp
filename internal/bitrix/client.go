@@ -322,15 +322,21 @@ type ConnectorChat struct {
 }
 
 // RegisterConnector registra este app como conector de canal externo no Bitrix24.
+// handlerURL é a base pública do servidor (ex: https://app.easypanel.host).
+// O MESSAGES_HANDLER recebe os eventos ONIMCONNECTORMESSAGEADD (operador → WA).
 func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, connectorID, name, handlerURL string) error {
 	icon := map[string]string{
 		"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48dGV4dCB4PSIyNCIgeT0iMzIiIGZvbnQtc2l6ZT0iMjQiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPtc8L3RleHQ+PC9zdmc+",
 	}
+	connectorEventURL := handlerURL + "/bitrix/connector/event"
 	_, err := c.call(ctx, creds, "imconnector.register", map[string]interface{}{
 		"ID":                connectorID,
 		"NAME":              name,
 		"ICON":              icon,
 		"PLACEMENT_HANDLER": handlerURL,
+		"LINES": map[string]interface{}{
+			"MESSAGES_HANDLER": connectorEventURL,
+		},
 	})
 	return err
 }
