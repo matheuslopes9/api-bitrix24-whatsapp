@@ -568,11 +568,11 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div class="section-hdr">
       <div>
         <div class="section-title">Filas Bitrix</div>
-        <div class="section-sub">Conecte cada portal do Contact Center a uma fila (Open Line)</div>
+        <div class="section-sub">Vincule cada número WhatsApp a uma fila do Contact Center</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="carregarFilas()">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15"/></svg>
-        Atualizar
+      <button class="btn btn-primary" onclick="abrirModalFila()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Novo Vínculo
       </button>
     </div>
 
@@ -580,9 +580,9 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
       <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
-        <strong style="color:#94a3b8;">O que é uma Fila?</strong> No Bitrix24 Contact Center, cada <em>Open Line</em> é uma fila de atendimento.
-        Configure aqui qual fila (ID) receberá as mensagens WhatsApp de cada portal instalado.
-        O ID correto está em <strong style="color:#94a3b8;">Bitrix24 → Contact Center → Open Lines</strong> — coluna ID.
+        <strong style="color:#94a3b8;">Como funciona:</strong> Cada vínculo define que mensagens recebidas em um número WhatsApp serão entregues
+        a uma fila específica (Open Line ID) do portal Bitrix24. Você pode ter vários vínculos por portal.
+        O ID da fila está em <strong style="color:#94a3b8;">Bitrix24 → Contact Center → Open Lines</strong>.
       </div>
     </div>
 
@@ -610,6 +610,42 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+</div>
+
+<!-- ══════════════════════ MODAL FILA ══════════════════════ -->
+<div id="fila-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:60;align-items:center;justify-content:center;backdrop-filter:blur(4px);padding:16px;" onclick="if(event.target===this)fecharModalFila()">
+  <div class="card" style="padding:28px;max-width:500px;width:100%;position:relative;">
+    <button onclick="fecharModalFila()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:#475569;cursor:pointer;padding:4px;border-radius:6px;" onmouseover="this.style.color='#e2e8f0'" onmouseout="this.style.color='#475569'">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div style="font-size:17px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Novo Vínculo de Fila</div>
+    <div style="font-size:13px;color:#475569;margin-bottom:22px;">Vincule um número WhatsApp a uma fila do Contact Center Bitrix24</div>
+
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="inp-group">
+        <label class="inp-label">Portal Bitrix24</label>
+        <select class="inp" id="fila-portal">
+          <option value="">Selecione o portal...</option>
+        </select>
+      </div>
+      <div class="inp-group">
+        <label class="inp-label">Número WhatsApp</label>
+        <select class="inp" id="fila-sessao">
+          <option value="">Selecione o número conectado...</option>
+        </select>
+      </div>
+      <div class="inp-group">
+        <label class="inp-label">Open Line ID (Fila de Atendimento)</label>
+        <input class="inp" id="fila-openline" type="number" min="1" placeholder="218" />
+        <span style="font-size:11px;color:#475569;margin-top:2px;">Encontre em Bitrix24 → Contact Center → Open Lines → coluna ID</span>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px;">
+      <button class="btn btn-ghost" onclick="fecharModalFila()">Cancelar</button>
+      <button class="btn btn-primary" id="fila-modal-save-btn" onclick="salvarVinculoFila()">Criar Vínculo e Ativar</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════════════════ MODAL CONFIRMAÇÃO ══════════════════════ -->
@@ -1358,13 +1394,21 @@ function excluirIntegracao(enc) {
 }
 
 // ─── Filas Bitrix ─────────────────────────────────────────────────────────────
+var _portaisCache = []; // cache dos portais para o modal
+
 function carregarFilas() {
   var wrap = document.getElementById('lista-filas');
-  fetch(apiUrl('/ui/bitrix/queues'))
-  .then(function(r) { return r.json(); })
-  .then(function(resp) {
-    var data = resp.queues || [];
-    if (!Array.isArray(data) || data.length === 0) {
+  // Busca portais e contas em paralelo
+  Promise.all([
+    fetch(apiUrl('/ui/bitrix/queues')).then(function(r){return r.json();}),
+    fetch(apiUrl('/ui/bitrix/accounts')).then(function(r){return r.json();})
+  ])
+  .then(function(results) {
+    var portais = results[0].queues || [];
+    var contas  = results[1].accounts || [];
+    _portaisCache = portais;
+
+    if (portais.length === 0) {
       wrap.innerHTML = '<div class="card" style="padding:48px;text-align:center;">'
         + '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#1e293b" stroke-width="1.3" style="margin:0 auto 16px;display:block;"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>'
         + '<p style="color:#475569;font-size:14px;margin-bottom:8px;">Nenhum portal instalado via Marketplace</p>'
@@ -1372,48 +1416,75 @@ function carregarFilas() {
         + '</div>';
       return;
     }
-    var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
-    data.forEach(function(q) {
-      var sessHtml = '';
-      if (q.linked_sessions && q.linked_sessions.length > 0) {
-        sessHtml = q.linked_sessions.map(function(jid) {
-          var tel = '+' + jid.split(':')[0].split('@')[0];
-          return '<span class="badge badge-green" style="margin-right:4px;">' + tel + '</span>';
-        }).join('');
-      } else {
-        sessHtml = '<span style="font-size:12px;color:#475569;">Nenhuma sessão vinculada</span>';
-      }
+
+    var html = '<div style="display:flex;flex-direction:column;gap:16px;">';
+
+    // Agrupa contas por portal
+    portais.forEach(function(q) {
+      var vinculos = contas.filter(function(a) {
+        var d = (a.domain||'').replace(/^https?:\/\//,'').replace(/\/$/,'').toLowerCase();
+        return d === q.domain;
+      });
+
       var instaladoEm = q.installed_at ? new Date(q.installed_at).toLocaleDateString('pt-BR') : '—';
-      html += '<div class="card" style="padding:20px;">'
-        // Cabeçalho
-        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">'
-        + '<div style="display:flex;align-items:center;gap:14px;">'
+      var domEnc = encodeURIComponent(q.domain);
+
+      html += '<div class="card" style="padding:20px;">';
+
+      // Cabeçalho do portal
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px;">'
+        + '<div style="display:flex;align-items:center;gap:13px;">'
         + '<div class="metric-icon" style="background:rgba(192,132,252,.12);width:44px;height:44px;">'
         + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>'
         + '</div>'
         + '<div>'
         + '<div style="font-size:15px;font-weight:700;color:#f1f5f9;">' + q.domain + '</div>'
-        + '<div style="font-size:11.5px;color:#475569;margin-top:2px;">Instalado em ' + instaladoEm + '</div>'
+        + '<div style="font-size:11.5px;color:#475569;margin-top:2px;">Instalado em ' + instaladoEm + ' · conector: <span style="font-family:monospace;">' + (q.connector_id||'whatsapp_uc') + '</span></div>'
         + '</div></div>'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
         + '<span class="badge badge-purple">Marketplace</span>'
-        + '</div>'
-        // Sessões vinculadas
-        + '<div style="margin-bottom:14px;">'
-        + '<div style="font-size:10.5px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px;">Sessões WhatsApp vinculadas</div>'
-        + sessHtml
-        + '</div>'
-        // Editor de Open Line
-        + '<div style="padding-top:14px;border-top:1px solid rgba(255,255,255,.06);">'
-        + '<div style="font-size:10.5px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Fila de Atendimento (Open Line ID)</div>'
-        + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
-        + '<input class="inp" type="number" min="1" id="fila-line-' + q.domain + '" value="' + (q.open_line_id || 1) + '" style="max-width:110px;" placeholder="1"/>'
-        + '<div style="font-size:12px;color:#475569;">Conector: <span style="color:#94a3b8;font-family:monospace;">' + (q.connector_id || 'whatsapp_uc') + '</span></div>'
-        + '<button class="btn btn-primary btn-sm" onclick="salvarFila(\'' + q.domain + '\')" style="margin-left:auto;">Salvar Fila</button>'
-        + '</div>'
-        + '<div style="font-size:11.5px;color:#475569;margin-top:8px;">Encontre o ID em Bitrix24 → <strong style="color:#94a3b8;">Contact Center → Open Lines</strong></div>'
-        + '</div>'
+        + '<button class="btn btn-ghost btn-sm" id="btn-reg-' + domEnc + '" onclick="ativarConnector(\'' + q.domain + '\',0)" title="Força register+activate no Bitrix24">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>'
+        + ' Registrar Connector</button>'
+        + '</div></div>';
+
+      // Vínculos existentes
+      if (vinculos.length > 0) {
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">';
+        vinculos.forEach(function(v) {
+          var tel = '+' + v.session_jid.split(':')[0].split('@')[0];
+          var jidEnc = encodeURIComponent(v.session_jid);
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;flex-wrap:wrap;">'
+            + '<div style="display:flex;align-items:center;gap:10px;">'
+            + '<div class="dot dot-green"></div>'
+            + '<div>'
+            + '<div style="font-size:13.5px;font-weight:600;color:#e2e8f0;">' + tel + '</div>'
+            + '<div style="font-size:11px;color:#475569;">' + v.session_jid + '</div>'
+            + '</div></div>'
+            + '<div style="display:flex;align-items:center;gap:10px;">'
+            + '<span class="badge badge-blue">Open Line ' + (v.open_line_id||'?') + '</span>'
+            + '<button class="btn btn-danger btn-sm" onclick="removerVinculo(\'' + domEnc + '\',\'' + jidEnc + '\')">'
+            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>'
+            + ' Remover</button>'
+            + '</div></div>';
+        });
+        html += '</div>';
+      } else {
+        html += '<div style="padding:12px 14px;background:rgba(255,255,255,.02);border:1px dashed rgba(255,255,255,.08);border-radius:10px;font-size:12.5px;color:#475569;margin-bottom:14px;text-align:center;">'
+          + 'Nenhum número vinculado — clique em <strong style="color:#94a3b8;">Novo Vínculo</strong> para conectar um WhatsApp a este portal.'
+          + '</div>';
+      }
+
+      // Botão adicionar vínculo neste portal
+      html += '<div style="border-top:1px solid rgba(255,255,255,.06);padding-top:14px;">'
+        + '<button class="btn btn-ghost btn-sm" onclick="abrirModalFila(\'' + q.domain + '\')">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+        + ' Adicionar Número a este Portal</button>'
         + '</div>';
+
+      html += '</div>'; // fim card
     });
+
     html += '</div>';
     wrap.innerHTML = html;
   })
@@ -1422,24 +1493,108 @@ function carregarFilas() {
   });
 }
 
-function salvarFila(domain) {
-  var input = document.getElementById('fila-line-' + domain);
-  if (!input) return;
-  var lineId = parseInt(input.value);
-  if (!lineId || lineId < 1) { toast('ID da fila deve ser maior que zero', 'error'); return; }
+function abrirModalFila(prePortal) {
+  // Popula select de portais
+  var selPortal = document.getElementById('fila-portal');
+  selPortal.innerHTML = '<option value="">Selecione o portal...</option>';
+  _portaisCache.forEach(function(q) {
+    var opt = document.createElement('option');
+    opt.value = q.domain;
+    opt.textContent = q.domain;
+    if (prePortal && q.domain === prePortal) opt.selected = true;
+    selPortal.appendChild(opt);
+  });
 
-  fetch('/ui/bitrix/queues', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ domain: domain, open_line_id: lineId })
+  // Popula select de sessões
+  fetch(apiUrl('/ui/sessions'))
+  .then(function(r){return r.json();})
+  .then(function(d){
+    var sel = document.getElementById('fila-sessao');
+    sel.innerHTML = '<option value="">Selecione o número conectado...</option>';
+    (d.sessions||[]).forEach(function(jid) {
+      var tel = '+' + jid.split(':')[0].split('@')[0];
+      var opt = document.createElement('option');
+      opt.value = jid;
+      opt.textContent = tel + '  (' + jid + ')';
+      sel.appendChild(opt);
+    });
+  }).catch(function(){});
+
+  document.getElementById('fila-openline').value = '';
+  document.getElementById('fila-modal-save-btn').disabled = false;
+  document.getElementById('fila-modal-save-btn').textContent = 'Criar Vínculo e Ativar';
+  document.getElementById('fila-modal').style.display = 'flex';
+}
+
+function fecharModalFila() {
+  document.getElementById('fila-modal').style.display = 'none';
+}
+
+function salvarVinculoFila() {
+  var domain   = document.getElementById('fila-portal').value.trim();
+  var jid      = document.getElementById('fila-sessao').value.trim();
+  var lineId   = parseInt(document.getElementById('fila-openline').value);
+  if (!domain) { toast('Selecione o portal Bitrix24', 'error'); return; }
+  if (!jid)    { toast('Selecione o número WhatsApp', 'error'); return; }
+  if (!lineId || lineId < 1) { toast('Digite o ID da Open Line (número > 0)', 'error'); return; }
+
+  var btn = document.getElementById('fila-modal-save-btn');
+  btn.disabled = true; btn.textContent = 'Criando vínculo...';
+
+  fetch('/ui/bitrix/queues/link', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({domain: domain, session_jid: jid, open_line_id: lineId})
   })
-  .then(function(r) { return r.json(); })
+  .then(function(r){return r.json();})
   .then(function(d) {
-    if (d.error) { toast(d.error, 'error'); return; }
-    toast('Fila atualizada para ' + domain + ' → Open Line ' + lineId, 'success');
+    if (d.error) { toast(d.error, 'error'); btn.disabled=false; btn.textContent='Criar Vínculo e Ativar'; return; }
+    toast('Vínculo criado! Registrando connector no Bitrix24...', 'success');
+    fecharModalFila();
     carregarFilas();
+    // Ativa o connector após criar o vínculo
+    ativarConnector(domain, lineId);
   })
-  .catch(function() { toast('Erro ao salvar fila', 'error'); });
+  .catch(function(){ toast('Erro ao criar vínculo', 'error'); btn.disabled=false; btn.textContent='Criar Vínculo e Ativar'; });
+}
+
+function removerVinculo(domEnc, jidEnc) {
+  var jid = decodeURIComponent(jidEnc);
+  var tel = '+' + jid.split(':')[0].split('@')[0];
+  abrirConfirm('Remover o vínculo do número ' + tel + '?\nAs mensagens desse número deixarão de chegar no Bitrix24.', function() {
+    fetch('/ui/bitrix/queues/link?domain=' + domEnc + '&jid=' + jidEnc, {method:'DELETE'})
+    .then(function(r){return r.json();})
+    .then(function(d) {
+      if (d.error) { toast(d.error, 'error'); return; }
+      toast('Vínculo removido', 'success');
+      carregarFilas();
+    })
+    .catch(function(){ toast('Erro ao remover vínculo', 'error'); });
+  });
+}
+
+function ativarConnector(domain, lineId) {
+  var btnId = 'btn-reg-' + encodeURIComponent(domain);
+  var btn = document.getElementById(btnId);
+  if (btn) { btn.disabled=true; btn.textContent=' Registrando...'; }
+
+  fetch('/ui/bitrix/queues/activate', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({domain: domain, open_line_id: lineId||0})
+  })
+  .then(function(r){return r.json();})
+  .then(function(d) {
+    if (btn) { btn.disabled=false; btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg> Registrar Connector'; }
+    if (d.status === 'ok') {
+      var detalhes = Object.entries(d.steps||{}).map(function(e){return e[0]+': '+e[1];}).join(' | ');
+      toast('Connector registrado com sucesso! ' + detalhes, 'success');
+    } else {
+      var erros = Object.entries(d.steps||{}).filter(function(e){return e[1]!=='ok';}).map(function(e){return e[0]+': '+e[1];}).join(' | ');
+      toast('Erro ao registrar: ' + erros, 'error');
+    }
+  })
+  .catch(function(){ if(btn){btn.disabled=false;} toast('Erro ao registrar connector', 'error'); });
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────

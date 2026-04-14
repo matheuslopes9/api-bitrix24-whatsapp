@@ -68,6 +68,9 @@ func New(
 	// ─── Filas Bitrix (Partner App portals) ──────────────────────────────────
 	ui.Get("/bitrix/queues", h.uiListBitrixQueues)
 	ui.Put("/bitrix/queues", h.uiUpdateBitrixQueue)
+	ui.Post("/bitrix/queues/link", h.uiLinkQueue)       // Cria vínculo portal+sessão+fila
+	ui.Delete("/bitrix/queues/link", h.uiUnlinkQueue)   // Remove vínculo
+	ui.Post("/bitrix/queues/activate", h.uiActivateConnector) // Força register+activate
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))

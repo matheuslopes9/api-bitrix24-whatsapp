@@ -464,8 +464,7 @@ func (h *handlers) uiListBitrixQueues(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"queues": result})
 }
 
-// PUT /ui/bitrix/queues — atualiza open_line_id de um portal
-// Body: { "domain": "empresa.bitrix24.com.br", "open_line_id": 3 }
+// PUT /ui/bitrix/queues — atualiza open_line_id de um portal (mantido para compatibilidade)
 func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 	var body struct {
 		Domain     string `json:"domain"`
@@ -474,33 +473,15 @@ func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.OpenLineID <= 0 {
 		return c.Status(400).JSON(fiber.Map{"error": "domain e open_line_id (>0) são obrigatórios"})
 	}
-
-	domain := strings.TrimPrefix(body.Domain, "https://")
-	domain = strings.TrimPrefix(domain, "http://")
-	domain = strings.ToLower(strings.TrimRight(domain, "/"))
-
+	domain := normalizePortalParam(body.Domain)
 	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
 	}
-
 	portal.OpenLineID = body.OpenLineID
 	if err := h.repo.UpsertBitrixPortal(c.Context(), portal); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-
-	// Atualiza também todos os bitrix_accounts vinculados a este portal
-	accounts, _ := h.repo.ListBitrixAccounts(c.Context())
-	for _, acct := range accounts {
-		acctDomain := strings.TrimPrefix(acct.Domain, "https://")
-		acctDomain = strings.TrimPrefix(acctDomain, "http://")
-		if strings.EqualFold(acctDomain, domain) {
-			acct.OpenLineID = body.OpenLineID
-			_ = h.repo.UpsertBitrixAccount(c.Context(), acct)
-		}
-	}
-
-	// Reativa o connector com a nova linha em background
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
@@ -510,8 +491,162 @@ func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 			h.log.Info("uiUpdateBitrixQueue: connector reactivated", zap.String("domain", domain), zap.Int("open_line_id", body.OpenLineID))
 		}
 	}()
-
 	return c.JSON(fiber.Map{"status": "updated", "domain": domain, "open_line_id": body.OpenLineID})
+}
+
+// POST /ui/bitrix/queues/link — cria ou atualiza o vínculo portal+sessão+fila
+// Body: { "domain": "empresa.bitrix24.com.br", "session_jid": "5519...@s.whatsapp.net", "open_line_id": 218 }
+func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
+	var body struct {
+		Domain     string `json:"domain"`
+		SessionJID string `json:"session_jid"`
+		OpenLineID int    `json:"open_line_id"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.SessionJID == "" || body.OpenLineID <= 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "domain, session_jid e open_line_id (>0) são obrigatórios"})
+	}
+
+	domain := normalizePortalParam(body.Domain)
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	// Cria/atualiza o bitrix_account que o ProcessInbound usa para rotear
+	acct := &db.BitrixAccount{
+		ID:           generateUUID(),
+		SessionJID:   body.SessionJID,
+		Domain:       "https://" + domain,
+		ClientID:     h.cfg.Bitrix.ClientID,
+		ClientSecret: h.cfg.Bitrix.ClientSecret,
+		OpenLineID:   body.OpenLineID,
+		ConnectorID:  portal.ConnectorID,
+		RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
+		Status:       db.BitrixAccountActive,
+	}
+	if err := h.repo.UpsertBitrixAccount(c.Context(), acct); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Atualiza open_line_id padrão do portal se for o primeiro vínculo
+	if portal.OpenLineID == 0 {
+		portal.OpenLineID = body.OpenLineID
+		_ = h.repo.UpsertBitrixPortal(c.Context(), portal)
+	}
+
+	// Salva o token em bitrix_tokens para que o ProcessInbound consiga autenticar
+	creds := h.portalToCreds(portal)
+	if err := h.bitrixClient.SaveToken(c.Context(), creds, portal.AccessToken, portal.RefreshToken,
+		int(portal.ExpiresAt.Sub(timeNow()).Seconds())); err != nil {
+		h.log.Warn("uiLinkQueue: save token failed", zap.Error(err))
+	}
+
+	// Registra e ativa o connector em background — crítico para que o Bitrix aceite mensagens
+	go func() {
+		ctx := context.Background()
+		appBase := h.cfg.App.BaseURL()
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
+		}
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
+			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
+		}
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+			h.log.Warn("uiLinkQueue: bind event failed", zap.Error(err))
+		}
+		h.log.Info("uiLinkQueue: connector activated",
+			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
+	}()
+
+	h.log.Info("queue link created", zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
+	return c.JSON(fiber.Map{"status": "linked", "domain": domain, "session_jid": body.SessionJID, "open_line_id": body.OpenLineID})
+}
+
+// timeNow retorna time.Now() — extraído para facilitar testes.
+var timeNow = func() time.Time { return time.Now() }
+
+// DELETE /ui/bitrix/queues/link?domain=...&jid=... — remove o vínculo portal+sessão
+func (h *handlers) uiUnlinkQueue(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	jid := c.Query("jid")
+	if domain == "" || jid == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e jid são obrigatórios"})
+	}
+	// Remove o bitrix_account para esse JID
+	if err := h.repo.DeleteBitrixAccount(c.Context(), jid); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("queue link removed", zap.String("domain", domain), zap.String("jid", jid))
+	return c.JSON(fiber.Map{"status": "unlinked", "jid": jid})
+}
+
+// POST /ui/bitrix/queues/activate — força register+activate do connector no Bitrix
+// Body: { "domain": "empresa.bitrix24.com.br", "open_line_id": 218 }
+// Retorna resultado detalhado de cada etapa (register, activate, bind).
+func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
+	var body struct {
+		Domain     string `json:"domain"`
+		OpenLineID int    `json:"open_line_id"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+
+	domain := normalizePortalParam(body.Domain)
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	lineID := body.OpenLineID
+	if lineID <= 0 {
+		lineID = portal.OpenLineID
+	}
+	if lineID <= 0 {
+		lineID = 1
+	}
+
+	creds := h.portalToCreds(portal)
+	appBase := h.cfg.App.BaseURL()
+	steps := map[string]string{}
+
+	// Salva token primeiro
+	if err := h.bitrixClient.SaveToken(c.Context(), creds, portal.AccessToken, portal.RefreshToken,
+		int(portal.ExpiresAt.Sub(timeNow()).Seconds())); err != nil {
+		steps["save_token"] = "erro: " + err.Error()
+	} else {
+		steps["save_token"] = "ok"
+	}
+
+	// Register
+	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+		steps["register"] = "erro: " + err.Error()
+	} else {
+		steps["register"] = "ok"
+	}
+
+	// Activate
+	if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lineID, true); err != nil {
+		steps["activate"] = "erro: " + err.Error()
+	} else {
+		steps["activate"] = "ok"
+	}
+
+	// Bind event
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+		steps["bind_event"] = "erro: " + err.Error()
+	} else {
+		steps["bind_event"] = "ok"
+	}
+
+	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
+
+	// Retorna erro se algum passo crítico falhou
+	if steps["activate"] != "ok" {
+		return c.Status(500).JSON(fiber.Map{"status": "error", "steps": steps})
+	}
+	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "open_line_id": lineID, "steps": steps})
 }
 
 // POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD do Bitrix24
