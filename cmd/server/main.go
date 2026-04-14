@@ -248,6 +248,13 @@ func buildMessageHandler(
 	log *zap.Logger,
 ) whatsapp.MessageHandler {
 	return func(sessionID uuid.UUID, sessionJID string, evt *events.Message) {
+		log.Info("onMsg handler called",
+			zap.String("session_jid", sessionJID),
+			zap.String("from", evt.Info.Sender.String()),
+			zap.Bool("from_me", evt.Info.IsFromMe),
+			zap.Bool("is_group", evt.Info.IsGroup),
+			zap.String("msg_id", evt.Info.ID),
+		)
 		if evt.Info.IsFromMe {
 			return
 		}

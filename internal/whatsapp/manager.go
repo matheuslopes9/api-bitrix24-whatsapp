@@ -518,6 +518,12 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 	return func(rawEvt interface{}) {
 		switch evt := rawEvt.(type) {
 		case *events.Message:
+			m.log.Info("message event received",
+				zap.String("jid", sess.JID),
+				zap.String("from", evt.Info.Sender.String()),
+				zap.Bool("from_me", evt.Info.IsFromMe),
+				zap.Bool("is_group", evt.Info.IsGroup),
+			)
 			if m.onMsg != nil {
 				m.onMsg(sess.ID, sess.JID, evt)
 			}

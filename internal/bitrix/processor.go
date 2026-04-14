@@ -36,12 +36,30 @@ func NewProcessor(client *Client, repo *db.Repository, log *zap.Logger) *Process
 
 // ProcessInbound entrega uma mensagem do WhatsApp no Bitrix24 Contact Center.
 func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) error {
+	p.log.Info("ProcessInbound called",
+		zap.String("session_jid", job.SessionJID),
+		zap.String("from", job.FromJID),
+		zap.String("msg_id", job.MessageID),
+		zap.String("text", job.Text),
+		zap.String("type", job.MessageType),
+	)
+
 	// 1. Busca a conta Bitrix vinculada à sessão WA
 	acct, err := p.repo.GetBitrixAccountByJID(ctx, job.SessionJID)
 	if err != nil {
+		p.log.Error("bitrix account not found",
+			zap.String("session_jid", job.SessionJID),
+			zap.Error(err),
+		)
 		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, "bitrix account not configured")
 		return fmt.Errorf("bitrix account not found for session %s: %w", job.SessionJID, err)
 	}
+
+	p.log.Info("bitrix account found",
+		zap.String("domain", acct.Domain),
+		zap.Int("open_line_id", acct.OpenLineID),
+		zap.String("connector_id", acct.ConnectorID),
+	)
 
 	creds := TenantCreds{
 		Domain:       acct.Domain,
