@@ -304,6 +304,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
     Integrações Bitrix
   </div>
+  <div class="nav-item" id="nav-filas" onclick="showPage('filas')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+    Filas Bitrix
+  </div>
   <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
@@ -546,6 +550,34 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- ══════════════════════ FILAS BITRIX ══════════════════════ -->
+  <div id="page-filas" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Filas Bitrix</div>
+        <div class="section-sub">Conecte cada portal do Contact Center a uma fila (Open Line)</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="carregarFilas()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15"/></svg>
+        Atualizar
+      </button>
+    </div>
+
+    <!-- Info box -->
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+      <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
+        <strong style="color:#94a3b8;">O que é uma Fila?</strong> No Bitrix24 Contact Center, cada <em>Open Line</em> é uma fila de atendimento.
+        Configure aqui qual fila (ID) receberá as mensagens WhatsApp de cada portal instalado.
+        O ID correto está em <strong style="color:#94a3b8;">Bitrix24 → Contact Center → Open Lines</strong> — coluna ID.
+      </div>
+    </div>
+
+    <div id="lista-filas">
+      <div style="text-align:center;padding:40px;color:#334155;font-size:13px;">Carregando...</div>
+    </div>
+  </div>
+
   <!-- ══════════════════════ INTEGRAÇÕES ══════════════════════ -->
   <div id="page-integracoes" class="page">
     <div class="section-hdr">
@@ -692,7 +724,7 @@ var qrTimer = null;
 var qrCountdown = 0;
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -706,6 +738,7 @@ function showPage(nome) {
   if (nome === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (nome === 'sessoes') carregarSessoes();
   if (nome === 'integracoes') carregarIntegracoes();
+  if (nome === 'filas') carregarFilas();
 }
 
 function openSidebar() {
@@ -1278,6 +1311,91 @@ function excluirIntegracao(enc) {
   });
 }
 
+// ─── Filas Bitrix ─────────────────────────────────────────────────────────────
+function carregarFilas() {
+  var wrap = document.getElementById('lista-filas');
+  fetch('/ui/bitrix/queues')
+  .then(function(r) { return r.json(); })
+  .then(function(resp) {
+    var data = resp.queues || [];
+    if (!Array.isArray(data) || data.length === 0) {
+      wrap.innerHTML = '<div class="card" style="padding:48px;text-align:center;">'
+        + '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#1e293b" stroke-width="1.3" style="margin:0 auto 16px;display:block;"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>'
+        + '<p style="color:#475569;font-size:14px;margin-bottom:8px;">Nenhum portal instalado via Marketplace</p>'
+        + '<p style="color:#334155;font-size:12.5px;">Instale o app no Bitrix24 Marketplace para que os portais apareçam aqui.</p>'
+        + '</div>';
+      return;
+    }
+    var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
+    data.forEach(function(q) {
+      var sessHtml = '';
+      if (q.linked_sessions && q.linked_sessions.length > 0) {
+        sessHtml = q.linked_sessions.map(function(jid) {
+          var tel = '+' + jid.split(':')[0].split('@')[0];
+          return '<span class="badge badge-green" style="margin-right:4px;">' + tel + '</span>';
+        }).join('');
+      } else {
+        sessHtml = '<span style="font-size:12px;color:#475569;">Nenhuma sessão vinculada</span>';
+      }
+      var instaladoEm = q.installed_at ? new Date(q.installed_at).toLocaleDateString('pt-BR') : '—';
+      html += '<div class="card" style="padding:20px;">'
+        // Cabeçalho
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">'
+        + '<div style="display:flex;align-items:center;gap:14px;">'
+        + '<div class="metric-icon" style="background:rgba(192,132,252,.12);width:44px;height:44px;">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>'
+        + '</div>'
+        + '<div>'
+        + '<div style="font-size:15px;font-weight:700;color:#f1f5f9;">' + q.domain + '</div>'
+        + '<div style="font-size:11.5px;color:#475569;margin-top:2px;">Instalado em ' + instaladoEm + '</div>'
+        + '</div></div>'
+        + '<span class="badge badge-purple">Marketplace</span>'
+        + '</div>'
+        // Sessões vinculadas
+        + '<div style="margin-bottom:14px;">'
+        + '<div style="font-size:10.5px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px;">Sessões WhatsApp vinculadas</div>'
+        + sessHtml
+        + '</div>'
+        // Editor de Open Line
+        + '<div style="padding-top:14px;border-top:1px solid rgba(255,255,255,.06);">'
+        + '<div style="font-size:10.5px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Fila de Atendimento (Open Line ID)</div>'
+        + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+        + '<input class="inp" type="number" min="1" id="fila-line-' + q.domain + '" value="' + (q.open_line_id || 1) + '" style="max-width:110px;" placeholder="1"/>'
+        + '<div style="font-size:12px;color:#475569;">Conector: <span style="color:#94a3b8;font-family:monospace;">' + (q.connector_id || 'whatsapp_uc') + '</span></div>'
+        + '<button class="btn btn-primary btn-sm" onclick="salvarFila(\'' + q.domain + '\')" style="margin-left:auto;">Salvar Fila</button>'
+        + '</div>'
+        + '<div style="font-size:11.5px;color:#475569;margin-top:8px;">Encontre o ID em Bitrix24 → <strong style="color:#94a3b8;">Contact Center → Open Lines</strong></div>'
+        + '</div>'
+        + '</div>';
+    });
+    html += '</div>';
+    wrap.innerHTML = html;
+  })
+  .catch(function() {
+    wrap.innerHTML = '<div style="text-align:center;padding:24px;color:#f87171;font-size:13px;">Erro ao carregar filas</div>';
+  });
+}
+
+function salvarFila(domain) {
+  var input = document.getElementById('fila-line-' + domain);
+  if (!input) return;
+  var lineId = parseInt(input.value);
+  if (!lineId || lineId < 1) { toast('ID da fila deve ser maior que zero', 'error'); return; }
+
+  fetch('/ui/bitrix/queues', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain: domain, open_line_id: lineId })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.error) { toast(d.error, 'error'); return; }
+    toast('Fila atualizada para ' + domain + ' → Open Line ' + lineId, 'success');
+    carregarFilas();
+  })
+  .catch(function() { toast('Erro ao salvar fila', 'error'); });
+}
+
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function toast(msg, tipo) {
   var container = document.getElementById('toast');
@@ -1299,6 +1417,7 @@ function refreshAll() {
   if (paginaAtual === 'sessoes') carregarSessoes();
   if (paginaAtual === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (paginaAtual === 'integracoes') carregarIntegracoes();
+  if (paginaAtual === 'filas') carregarFilas();
   toast('Dados atualizados', 'success');
 }
 

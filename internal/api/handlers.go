@@ -400,6 +400,105 @@ func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
 }
 
 
+// GET /ui/bitrix/queues — lista portais instalados via Marketplace com info de sessões vinculadas
+func (h *handlers) uiListBitrixQueues(c *fiber.Ctx) error {
+	portals, err := h.repo.ListBitrixPortals(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	activeSessions := h.waManager.ListSessions()
+
+	type portalResp struct {
+		ID          interface{} `json:"id"`
+		Domain      string      `json:"domain"`
+		MemberID    string      `json:"member_id"`
+		OpenLineID  int         `json:"open_line_id"`
+		ConnectorID string      `json:"connector_id"`
+		InstalledAt interface{} `json:"installed_at"`
+		Sessions    []string    `json:"linked_sessions"`
+	}
+
+	result := make([]portalResp, 0, len(portals))
+	for _, p := range portals {
+		// Encontra sessões vinculadas a este portal (via bitrix_accounts)
+		linked := []string{}
+		for _, jid := range activeSessions {
+			acct, err := h.repo.GetBitrixAccountByJID(c.Context(), jid)
+			if err != nil {
+				continue
+			}
+			// Compara domain normalizado
+			acctDomain := strings.TrimPrefix(acct.Domain, "https://")
+			acctDomain = strings.TrimPrefix(acctDomain, "http://")
+			if strings.EqualFold(acctDomain, p.Domain) {
+				linked = append(linked, jid)
+			}
+		}
+		result = append(result, portalResp{
+			ID:          p.ID,
+			Domain:      p.Domain,
+			MemberID:    p.MemberID,
+			OpenLineID:  p.OpenLineID,
+			ConnectorID: p.ConnectorID,
+			InstalledAt: p.InstalledAt,
+			Sessions:    linked,
+		})
+	}
+
+	return c.JSON(fiber.Map{"queues": result})
+}
+
+// PUT /ui/bitrix/queues — atualiza open_line_id de um portal
+// Body: { "domain": "empresa.bitrix24.com.br", "open_line_id": 3 }
+func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
+	var body struct {
+		Domain     string `json:"domain"`
+		OpenLineID int    `json:"open_line_id"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.OpenLineID <= 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e open_line_id (>0) são obrigatórios"})
+	}
+
+	domain := strings.TrimPrefix(body.Domain, "https://")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.ToLower(strings.TrimRight(domain, "/"))
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	portal.OpenLineID = body.OpenLineID
+	if err := h.repo.UpsertBitrixPortal(c.Context(), portal); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Atualiza também todos os bitrix_accounts vinculados a este portal
+	accounts, _ := h.repo.ListBitrixAccounts(c.Context())
+	for _, acct := range accounts {
+		acctDomain := strings.TrimPrefix(acct.Domain, "https://")
+		acctDomain = strings.TrimPrefix(acctDomain, "http://")
+		if strings.EqualFold(acctDomain, domain) {
+			acct.OpenLineID = body.OpenLineID
+			_ = h.repo.UpsertBitrixAccount(c.Context(), acct)
+		}
+	}
+
+	// Reativa o connector com a nova linha em background
+	go func() {
+		ctx := context.Background()
+		creds := h.portalToCreds(portal)
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
+			h.log.Warn("uiUpdateBitrixQueue: activate connector failed", zap.String("domain", domain), zap.Error(err))
+		} else {
+			h.log.Info("uiUpdateBitrixQueue: connector reactivated", zap.String("domain", domain), zap.Int("open_line_id", body.OpenLineID))
+		}
+	}()
+
+	return c.JSON(fiber.Map{"status": "updated", "domain": domain, "open_line_id": body.OpenLineID})
+}
+
 // POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD do Bitrix24
 // O operador respondeu no Contact Center → encaminha para o WhatsApp correto
 func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {

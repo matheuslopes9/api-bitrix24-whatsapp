@@ -65,6 +65,9 @@ func New(
 	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
 	ui.Get("/bitrix/accounts", h.uiListBitrixAccounts)
 	ui.Delete("/bitrix/accounts", h.uiDeleteBitrixAccount)
+	// ─── Filas Bitrix (Partner App portals) ──────────────────────────────────
+	ui.Get("/bitrix/queues", h.uiListBitrixQueues)
+	ui.Put("/bitrix/queues", h.uiUpdateBitrixQueue)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
