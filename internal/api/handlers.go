@@ -627,6 +627,13 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["register"] = "ok"
 	}
 
+	// Set connector data (ANTES do activate — registra handler de mensagens do operador)
+	if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lineID, appBase+"/bitrix/connector/event"); err != nil {
+		steps["set_data"] = "erro: " + err.Error()
+	} else {
+		steps["set_data"] = "ok"
+	}
+
 	// Activate
 	if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lineID, true); err != nil {
 		steps["activate"] = "erro: " + err.Error()
