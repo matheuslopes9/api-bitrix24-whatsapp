@@ -88,6 +88,10 @@ func New(
 	bx.Post("/webhook", h.bitrixWebhook)                // Recebe eventos do Bitrix (legado)
 	bx.Post("/connector/event", h.bitrixConnectorEvent) // ONIMCONNECTORMESSAGEADD — reply do operador
 
+	// ─── Debug (sem auth — apenas para diagnóstico) ───────────────────────
+	app.Post("/debug/bitrix-event", h.debugBitrixEvent)
+	app.Get("/debug/bitrix-event", h.debugBitrixEvent)
+
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
 	bx.Post("/install", h.bitrixInstall)              // Application Installer URL (ONAPPINSTALL)

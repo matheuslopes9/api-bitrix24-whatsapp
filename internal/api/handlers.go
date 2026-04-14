@@ -653,73 +653,139 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 // POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD do Bitrix24
 // O operador respondeu no Contact Center → encaminha para o WhatsApp correto
 func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
-	h.log.Info("connector event received", zap.String("body", string(c.Body())))
+	// Log completo do payload bruto — crítico para diagnóstico
+	h.log.Info("connector event received",
+		zap.String("method", c.Method()),
+		zap.String("content_type", c.Get("Content-Type")),
+		zap.String("raw_body", string(c.Body())),
+	)
 
 	// Bitrix envia form-encoded
 	connector := c.FormValue("data[CONNECTOR]")
 	lineStr := c.FormValue("data[LINE]")
-	chatID := c.FormValue("data[MESSAGES][0][chat][id]")      // JID externo (ex: "127586399207476:47@lid")
-	imChatID := c.FormValue("data[MESSAGES][0][im][chat_id]") // ID interno do chat no Bitrix (ex: "6026")
-	imMsgID := c.FormValue("data[MESSAGES][0][im][message_id]") // ID interno da msg no Bitrix (ex: "196946")
+	chatIDRaw := c.FormValue("data[MESSAGES][0][chat][id]")      // ex: "127586399207476:47@lid"
+	imChatID := c.FormValue("data[MESSAGES][0][im][chat_id]")
+	imMsgID := c.FormValue("data[MESSAGES][0][im][message_id]")
 	text := c.FormValue("data[MESSAGES][0][message][text]")
 	userID := c.FormValue("data[MESSAGES][0][message][user_id]")
-
-	h.log.Info("connector event parsed",
-		zap.String("connector", connector),
-		zap.String("line", lineStr),
-		zap.String("chat_id", chatID),
-		zap.String("user_id", userID),
-		zap.String("text", text))
-
-	// Arquivo enviado pelo operador (outbound)
 	fileDownloadLink := c.FormValue("data[MESSAGES][0][message][files][0][downloadLink]")
 	fileName := c.FormValue("data[MESSAGES][0][message][files][0][name]")
 	fileMime := c.FormValue("data[MESSAGES][0][message][files][0][mime]")
 
+	// Normaliza o JID do chat imediatamente — remove device suffix ":47"
+	// "127586399207476:47@lid" → "127586399207476@lid"
+	// "5511999@s.whatsapp.net" → mantém como está
+	chatID := sanitizeJID(chatIDRaw)
+
+	h.log.Info("connector event parsed",
+		zap.String("connector", connector),
+		zap.String("line", lineStr),
+		zap.String("chat_id_raw", chatIDRaw),
+		zap.String("chat_id_normalized", chatID),
+		zap.String("im_chat_id", imChatID),
+		zap.String("im_msg_id", imMsgID),
+		zap.String("user_id", userID),
+		zap.String("text", text),
+		zap.String("file_url", fileDownloadLink),
+	)
+
 	// user_id=0 é mensagem automática do sistema (welcome message), ignora
 	if userID == "0" || userID == "" {
+		h.log.Info("connector event: ignored (system message or no user_id)")
 		return c.SendStatus(fiber.StatusOK)
 	}
 	// Precisa de texto OU arquivo
 	if text == "" && fileDownloadLink == "" {
+		h.log.Info("connector event: ignored (no text and no file)")
 		return c.SendStatus(fiber.StatusOK)
 	}
 	if chatID == "" {
+		h.log.Warn("connector event: ignored (chat_id empty)")
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Remove BBCode do Bitrix24 ([b]...[/b], [br], etc.)
 	cleanText := stripBBCode(text)
-
-	// Sanitiza o JID: "127586399207476:47@lid" → "127586399207476@s.whatsapp.net"
-	toJID := sanitizeJID(chatID)
+	// toJID para envio WA: @lid mantém como @lid (whatsmeow resolve), @s.whatsapp.net mantém
+	toJID := chatID
 
 	ctx := context.Background()
 
-	// Busca o contato pelo JID original (como foi salvo no banco)
+	// Busca o contato pelo JID normalizado (sem device suffix)
+	// O contato foi salvo em processor.go com normalizeChatID() que também remove o device suffix
 	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
 	if err != nil {
-		h.log.Warn("connector event: contact not found", zap.String("jid", chatID), zap.Error(err))
+		h.log.Warn("connector event: contact not found by normalized JID, trying sessions directly",
+			zap.String("chat_id", chatID),
+			zap.String("chat_id_raw", chatIDRaw),
+			zap.Error(err),
+		)
+		// Fallback: descobre a sessão pela bitrix_account (connector + line)
+		// útil quando o contato ainda não foi mapeado no banco
+		sessions := h.waManager.ListSessions()
+		if len(sessions) == 1 {
+			// Só uma sessão ativa — usa ela diretamente
+			sessionJID := sessions[0]
+			line := 0
+			fmt.Sscanf(lineStr, "%d", &line)
+			if err := h.q.PushOutbound(ctx, &queue.OutboundJob{
+				SessionJID:      sessionJID,
+				ToJID:           toJID,
+				Text:            cleanText,
+				BitrixConnector: connector,
+				BitrixLine:      line,
+				BitrixImChatID:  imChatID,
+				BitrixImMsgID:   imMsgID,
+				BitrixChatExtID: chatIDRaw,
+				FileURL:         fileDownloadLink,
+				FileName:        fileName,
+				FileMime:        fileMime,
+			}); err != nil {
+				h.log.Error("connector event: push outbound failed (fallback)", zap.Error(err))
+				return c.SendStatus(fiber.StatusOK)
+			}
+			h.log.Info("outbound job queued (fallback — single session)",
+				zap.String("to_jid", toJID),
+				zap.String("session_jid", sessionJID),
+				zap.String("text", cleanText),
+			)
+			return c.SendStatus(fiber.StatusOK)
+		}
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Descobre qual sessão WA usar
+	// Descobre qual sessão WA usar a partir do contato
 	sessionJID := ""
 	if contact.SessionID != nil {
 		sess, err := h.repo.GetSessionByID(ctx, *contact.SessionID)
 		if err == nil {
 			sessionJID = sess.JID
+		} else {
+			h.log.Warn("connector event: GetSessionByID failed",
+				zap.String("contact_jid", contact.WAJID),
+				zap.Error(err),
+			)
 		}
 	}
+	// Fallback: se o contato não tem session_id, usa a única sessão ativa
 	if sessionJID == "" {
-		h.log.Warn("connector event: no session found for contact", zap.String("jid", chatID))
-		return c.SendStatus(fiber.StatusOK)
+		sessions := h.waManager.ListSessions()
+		if len(sessions) == 1 {
+			sessionJID = sessions[0]
+			h.log.Info("connector event: using only active session as fallback",
+				zap.String("session_jid", sessionJID),
+			)
+		} else {
+			h.log.Warn("connector event: no session found for contact",
+				zap.String("chat_id", chatID),
+				zap.Int("active_sessions", len(sessions)),
+			)
+			return c.SendStatus(fiber.StatusOK)
+		}
 	}
 
 	line := 0
 	fmt.Sscanf(lineStr, "%d", &line)
 
-	// Coloca na fila de saída
 	if err := h.q.PushOutbound(ctx, &queue.OutboundJob{
 		SessionJID:      sessionJID,
 		ToJID:           toJID,
@@ -728,7 +794,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		BitrixLine:      line,
 		BitrixImChatID:  imChatID,
 		BitrixImMsgID:   imMsgID,
-		BitrixChatExtID: chatID,
+		BitrixChatExtID: chatIDRaw,
 		FileURL:         fileDownloadLink,
 		FileName:        fileName,
 		FileMime:        fileMime,
@@ -737,12 +803,30 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	h.log.Info("operator reply queued",
+	h.log.Info("outbound job queued for JID",
 		zap.String("to_jid", toJID),
-		zap.String("session", sessionJID),
-		zap.String("text", cleanText))
+		zap.String("session_jid", sessionJID),
+		zap.String("text", cleanText),
+		zap.String("connector", connector),
+		zap.Int("line", line),
+	)
 
 	return c.SendStatus(fiber.StatusOK)
+}
+
+// POST /debug/bitrix-event — loga o payload completo para testes manuais (sem autenticação)
+func (h *handlers) debugBitrixEvent(c *fiber.Ctx) error {
+	h.log.Info("DEBUG bitrix-event",
+		zap.String("method", c.Method()),
+		zap.String("content_type", c.Get("Content-Type")),
+		zap.String("raw_body", string(c.Body())),
+		zap.String("query", string(c.Request().URI().QueryString())),
+	)
+	return c.JSON(fiber.Map{
+		"status":       "logged",
+		"body_length":  len(c.Body()),
+		"content_type": c.Get("Content-Type"),
+	})
 }
 
 // ─── Helpers de filtragem por portal ─────────────────────────────────────────
