@@ -328,15 +328,11 @@ func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, conne
 	icon := map[string]string{
 		"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48dGV4dCB4PSIyNCIgeT0iMzIiIGZvbnQtc2l6ZT0iMjQiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPtc8L3RleHQ+PC9zdmc+",
 	}
-	connectorEventURL := handlerURL + "/bitrix/connector/event"
 	raw, err := c.call(ctx, creds, "imconnector.register", map[string]interface{}{
 		"ID":                connectorID,
 		"NAME":              name,
 		"ICON":              icon,
 		"PLACEMENT_HANDLER": handlerURL,
-		"LINES": map[string]interface{}{
-			"MESSAGES_HANDLER": connectorEventURL,
-		},
 	})
 	c.log.Info("imconnector.register response", zap.String("raw", string(raw)), zap.Error(err))
 	return err
