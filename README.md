@@ -1,141 +1,187 @@
 # WhatsApp ↔ Bitrix24 Connector
 
-Conector de alta performance entre WhatsApp e Bitrix24, capaz de gerenciar múltiplas sessões simultâneas.
+Conector entre WhatsApp e Bitrix24 Contact Center, suportando múltiplas sessões simultâneas (multi-tenant).
 
 ## Stack
 
 | Componente | Tecnologia |
 |---|---|
 | Linguagem | Go 1.25 |
-| WhatsApp | whatsmeow v0.0.0-20260327181659-02ec817e7cf4 |
+| WhatsApp | whatsmeow v0.0.0-20260327181659 |
 | HTTP | Fiber v2 |
 | Banco de dados | PostgreSQL (pgxpool) |
 | Cache / Filas | Redis |
-| Persistência de sessões WA | SQLite (por número) |
+| Persistência de sessões WA | SQLite (um arquivo por número) |
 | Métricas | Prometheus |
 | Deploy | EasyPanel + Docker |
 
-## Arquitetura
+---
+
+## Arquitetura geral
 
 ```
-WhatsApp ──► Manager ──► Queue (Redis) ──► Worker Pool ──► Bitrix24 API
-                │                                              │
-                └──────────────────────────────────────────────┘
-                              (resposta do agente)
+WhatsApp ──────► Manager ──────► Redis Queue ──────► Worker Pool ──────► Bitrix24 REST API
+                   │                                                            │
+                   │◄───────────────────────────────────────────────────────────┘
+                         (resposta do operador via webhook POST /bitrix/connector/event)
 ```
 
-- **Manager**: gerencia múltiplas sessões WhatsApp (`whatsmeow`) em goroutines independentes
-- **Queue**: fila Redis separada para mensagens inbound (WA→Bitrix) e outbound (Bitrix→WA)
-- **Worker Pool**: 20 workers paralelos com retry exponencial (até 5 tentativas); mensagens para o mesmo JID são serializadas (mutex por JID)
-- **Watchdog**: verifica saúde das sessões a cada 30s e reconecta automaticamente
-- **Bitrix24**: integração via `imconnector` (Contact Center / Open Lines); mensagens chegam como conversa no operador
+### Componentes principais
 
-## Fluxo de mensagem (WA → Bitrix24)
+| Componente | Arquivo | Função |
+|---|---|---|
+| **Manager** | `internal/whatsapp/manager.go` | Gerencia N sessões WhatsApp em goroutines independentes. Mantém mapa `sessions[jid]` em memória. |
+| **Processor** | `internal/bitrix/processor.go` | Converte InboundJob em chamada REST ao Bitrix24 (imconnector.send.messages + upload de mídia). |
+| **Client** | `internal/bitrix/client.go` | Cliente HTTP para a API REST do Bitrix24. Gerencia token OAuth2 com refresh automático. |
+| **Queue** | `internal/queue/queue.go` | Filas Redis `queue:inbound` e `queue:outbound` com retry exponencial. |
+| **Worker Pool** | `internal/queue/worker.go` | 20 goroutines paralelas consumindo as filas. Mutex por JID de destino (outbound). |
+| **Watchdog** | `internal/watchdog/watchdog.go` | Verifica sessões a cada 30s e reconecta automaticamente. |
+| **API** | `internal/api/` | Handlers HTTP (Fiber). Dashboard, UI de gestão, webhooks Bitrix, API pública. |
+| **Repository** | `internal/db/repository.go` | Acesso ao PostgreSQL (sessões, tokens, contas, mensagens, contatos). |
 
-```
-WA mensagem chega (texto, imagem, doc, vídeo, áudio, vCard, sticker)
-      │
-      ▼
-Manager (whatsmeow event handler)
-      │  salva no banco (status: received)
-      │  baixa mídia (com fallback DownloadAny + MediaDocument)
-      ▼
-Redis Queue (queue:inbound)
-      │
-      ▼
-Worker Pool (20 goroutines)
-      │  UploadToDisk → disk.storage.uploadfile (base64 JSON, nome único com timestamp)
-      │  imconnector.send.messages com files[] ou texto
-      │  imconnector.send.status.delivery (para parar o spinner)
-      ▼
-Bitrix24 Contact Center (conversa aberta para o operador)
-```
+---
 
-## Fluxo de resposta (Bitrix24 → WA)
+## Fluxo 1: WhatsApp → Bitrix24 (FUNCIONANDO)
 
 ```
-Operador responde no Contact Center
-      │  ONIMCONNECTORMESSAGEADD webhook → POST /bitrix/connector/event
-      ▼
-Handler extrai texto/arquivo e monta OutboundJob
-      │
-      ▼
-Redis Queue (queue:outbound)
-      │
-      ▼
-Worker Pool (serializado por JID de destino)
-      │  SendTyping → ChatPresenceComposing ("digitando...") por 1.5–4s
-      │  waManager.Send (texto) ou waManager.SendDocument (arquivo) ou waManager.SendAudio (mp3)
-      │  imconnector.send.status.delivery (confirma delivery outbound)
-      ▼
-WhatsApp (mensagem entregue ao cliente com indicador de digitação)
+1. Cliente envia mensagem no WhatsApp
+2. whatsmeow dispara evento *events.Message
+3. buildEventHandler (manager.go) recebe o evento
+4. buildMessageHandler (main.go) é chamado via m.onMsg(sess.ID, sess.JID, evt)
+5. Mensagem salva no banco (status: received)
+6. Mídia baixada (imagem, vídeo, doc, áudio, vCard, sticker)
+7. InboundJob empurrado para Redis queue:inbound
+8. Worker consome o job:
+   a. GetBitrixAccountByJID → busca credenciais pelo session_jid
+   b. UploadToDisk (se mídia) → disk.storage.uploadfile (base64 JSON)
+   c. imconnector.send.messages → entrega ao Contact Center do Bitrix
+   d. imconnector.send.status.delivery → confirma entrega (remove spinner)
+9. Mensagem aparece na conversa do operador no Bitrix24
 ```
 
-## Dashboard
+**Campos críticos no banco:**
+- `bitrix_accounts.session_jid` — chave do match, normalizado sem device suffix via `SPLIT_PART(jid, ':', 1)`
+- `bitrix_accounts.connector_id` — ex: `whatsapp_uc`
+- `bitrix_accounts.open_line_id` — ID da Open Line configurada no Bitrix24
+- `bitrix_accounts.domain` — ex: `https://uctdemo.bitrix24.com`
 
-O sistema inclui uma interface web acessível em `/dashboard` com as seguintes seções:
+---
 
-### Painel
-- Visão geral de sessões ativas, mensagens nas filas e taxa de erro
-- Cards de sessões WhatsApp conectadas
-- Cards de Workers e Redis (status de filas em tempo real)
+## Fluxo 2: Bitrix24 → WhatsApp (EM INVESTIGAÇÃO)
+
+```
+1. Operador responde no Contact Center do Bitrix24
+2. Bitrix24 DEVERIA chamar POST /bitrix/connector/event (webhook)
+3. Handler extrai texto/arquivo, monta OutboundJob
+4. OutboundJob empurrado para Redis queue:outbound
+5. Worker consome:
+   a. SendTyping → "digitando..." por 1.5–4s
+   b. waManager.Send / SendDocument / SendAudio
+   c. imconnector.send.status.delivery (confirma outbound)
+6. Mensagem chega ao cliente no WhatsApp
+```
+
+**PROBLEMA ATUAL:** O passo 2 não acontece. O Bitrix24 não chama `POST /bitrix/connector/event` quando o operador responde. O endpoint existe e está registrado corretamente, mas o Bitrix nunca aciona o webhook.
+
+### O que já foi tentado e NÃO funcionou:
+
+| Tentativa | Resultado |
+|---|---|
+| `event.bind` com `ONIMCONNECTORMESSAGEADD` | Bitrix aceita o bind (`true`) mas nunca chama o endpoint |
+| `imconnector.register` com `LINES.MESSAGES_HANDLER` | Quebrou o inbound (WA→Bitrix parou de funcionar) |
+| `imconnector.connector.data.set` com `DATA.SEND_MESSAGE` após activate | Quebrou o inbound |
+| `imconnector.connector.data.set` com `DATA.CONFIG.send_message` antes do activate | Quebrou o inbound |
+
+### O que o concorrente (Whatcrm) faz diferente:
+Nos logs do Bitrix24, o app "WhatsApp por Whatcrm" chama `imconnector.connector.data.set` e depois **recebe** `ONIMCONNECTORMESSAGEADD`. A nossa app também chama `imconnector.connector.data.set`, mas o inbound quebra toda vez que adicionamos essa chamada ao fluxo de ativação.
+
+### Hipóteses em aberto:
+1. O `imconnector.connector.data.set` precisa de um formato específico ainda não descoberto
+2. O Whatcrm usa um fluxo de instalação completamente diferente (via Marketplace, não app local)
+3. O connector precisa estar registrado com o `PLACEMENT_HANDLER` apontando para uma URL que retorna HTML específico
+4. O `event.bind` funciona mas o evento só é disparado para apps do Marketplace, não apps locais
+
+### Estado atual do código (seguro — não quebra o inbound):
+```
+register → activate → event.bind (ONIMCONNECTORMESSAGEADD)
+```
+O `imconnector.connector.data.set` foi removido do fluxo de ativação.
+
+---
+
+## Dashboard (`/dashboard`)
+
+Interface web de gestão acessível sem autenticação (protegida por proxy interno).
+
+### Seções
+
+**Painel** — visão geral em tempo real:
+- Contador de sessões WA ativas
+- Filas Redis (inbound, outbound, dead)
 - Gráfico de mensagens dos últimos 7 dias
 
-### Sessões WhatsApp
-- Lista de dispositivos conectados com status em tempo real
-- Botão de desconexão com confirmação via modal
-- Atualização automática a cada 10s
+**Sessões WhatsApp** — gestão de dispositivos:
+- Lista de JIDs conectados com status
+- Botão conectar (abre modal de QR scan)
+- Botão desconectar (confirmação via modal)
+- Auto-refresh a cada 10s
 
-### Integrações Bitrix24
-- Cards com detalhes de cada conta Bitrix24 vinculada a uma sessão WA
-- Botão **Editar** — abre modal com dados pré-preenchidos para alterar configurações
-- Botão **Excluir** — confirmação via modal antes de remover
-- Botão **Adicionar Integração** — modal para criar nova vinculação sessão WA ↔ Bitrix24
-- Formulário com campos: sessão WA, domain, Client ID, Client Secret, Redirect URI, Open Line ID, Connector ID
+**Filas Bitrix** — gestão de portais e conectores:
+- Cards por portal Bitrix24 instalado
+- Mostra: domain, connector ID, open line ID, sessão WA vinculada
+- Botão "Ativar Conector" — executa: register → activate → event.bind
+- Botão "Vincular" — associa sessão WA ao portal
+- Botão "Desvincular"
 
-### Relatórios
-- Gráficos de volume diário (inbound vs outbound)
-- Tabela de estatísticas dos últimos 7/30 dias
+**Relatórios** — estatísticas de mensagens (requer `X-API-Key`).
 
-### Tema claro/escuro
-- Alternância via ícone de sol/lua no menu lateral
-- Persistido em `localStorage` — mantido entre sessões do navegador
-- Todos os gráficos se adaptam automaticamente às cores do tema ativo
+**Tema claro/escuro** — persistido em `localStorage`.
 
-## Endpoints
+---
 
-### UI (sem autenticação)
+## Endpoints HTTP
+
+### UI pública (sem autenticação)
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/connect` | Página de conexão WhatsApp (QR scan) |
 | `GET` | `/dashboard` | Dashboard principal |
-| `POST` | `/ui/sessions` | Inicia nova sessão |
-| `GET` | `/ui/sessions/:phone/qr` | Polling do QR code |
-| `GET` | `/ui/sessions` | Lista sessões ativas |
-| `DELETE` | `/ui/sessions/remove?jid=` | Desconecta sessão (via query param) |
-| `GET` | `/ui/overview` | Visão geral de sessões e filas |
-| `POST` | `/ui/bitrix/accounts` | Cria/atualiza conta Bitrix24 |
-| `GET` | `/ui/bitrix/accounts` | Lista contas Bitrix24 cadastradas |
+| `GET` | `/connect` | Página legada de conexão WA |
+| `GET` | `/ui/overview` | JSON: sessões ativas + status das filas |
+| `GET` | `/ui/sessions` | JSON: lista de JIDs ativos |
+| `POST` | `/ui/sessions` | Inicia nova sessão WA (body: `{"phone":"551999..."}`) |
+| `GET` | `/ui/sessions/:phone/qr` | Polling do QR code (base64 ou vazio) |
+| `DELETE` | `/ui/sessions/remove?jid=` | Desconecta e remove sessão |
+| `GET` | `/ui/bitrix/queues` | Lista portais Bitrix24 instalados |
+| `PUT` | `/ui/bitrix/queues` | Atualiza open_line_id de um portal |
+| `POST` | `/ui/bitrix/queues/link` | Vincula sessão WA a um portal |
+| `DELETE` | `/ui/bitrix/queues/link` | Remove vínculo sessão WA ↔ portal |
+| `POST` | `/ui/bitrix/queues/activate` | Executa register + activate + event.bind |
+| `GET` | `/ui/bitrix/accounts` | Lista contas Bitrix24 (modo legado) |
+| `POST` | `/ui/bitrix/accounts` | Cria conta Bitrix24 (modo legado) |
 | `DELETE` | `/ui/bitrix/accounts` | Remove conta Bitrix24 |
 
-### WhatsApp (requer `X-API-Key`)
+### WhatsApp API (requer `X-API-Key`)
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `POST` | `/wa/sessions` | Inicia nova sessão |
-| `GET` | `/wa/sessions` | Lista sessões ativas |
-| `GET` | `/wa/sessions/:phone/qr` | Polling para obter QR code |
+| `POST` | `/wa/sessions` | Inicia sessão |
+| `GET` | `/wa/sessions` | Lista sessões |
+| `GET` | `/wa/sessions/:phone/qr` | Polling QR |
 | `DELETE` | `/wa/sessions/:jid` | Remove sessão |
-| `POST` | `/wa/send` | Envia mensagem de texto |
+| `POST` | `/wa/send` | Envia mensagem de texto direto |
 
-### Bitrix24
+### Bitrix24 webhooks (sem autenticação)
 
 | Método | Rota | Descrição |
 |---|---|---|
-| `GET` | `/bitrix/oauth/start` | Info sobre autenticação (app local) |
-| `GET/POST` | `/bitrix/callback` | Callback de instalação do app (ONAPPINSTALL) |
-| `POST` | `/bitrix/connector/event` | Recebe ONIMCONNECTORMESSAGEADD (resposta do operador) |
+| `GET/POST` | `/bitrix/callback` | Callback de instalação do app local (ONAPPINSTALL) |
+| `POST` | `/bitrix/connector/event` | **Webhook esperado para respostas do operador** (ONIMCONNECTORMESSAGEADD) |
+| `POST` | `/bitrix/install` | Installer URL do Partner App (Marketplace) |
+| `POST` | `/bitrix/auth` | Token BX24.js enviado pela página /bitrix-connect |
+| `POST` | `/bitrix/partner/link` | Vincula sessão WA ao portal após QR scan (Partner App) |
+| `GET` | `/bitrix-connect` | Application URL do Partner App (iframe no Bitrix24) |
+| `GET` | `/bitrix/oauth/start` | Info de autenticação OAuth2 |
 
 ### Sistema
 
@@ -146,263 +192,177 @@ O sistema inclui uma interface web acessível em `/dashboard` com as seguintes s
 | `GET` | `/stats/daily` | Estatísticas diárias (requer `X-API-Key`) |
 | `GET` | `/stats/queues` | Status das filas (requer `X-API-Key`) |
 
-## Autenticação da API
+---
 
-Rotas `/wa/*` e `/stats/*` exigem header:
-```
-X-API-Key: <APP_SECRET>
-```
+## Banco de dados
 
-## Multi-tenant (múltiplas contas Bitrix24)
+Tabelas (migration: `migrations/001_init.sql`):
 
-O sistema suporta múltiplas sessões WhatsApp, cada uma vinculada a uma conta Bitrix24 diferente:
+| Tabela | Descrição |
+|---|---|
+| `whatsapp_sessions` | Sessões WA — JID, telefone, status (`active`/`disconnected`/`banned`), path do SQLite |
+| `bitrix_accounts` | Vinculação sessão WA ↔ conta Bitrix24 — domain, client_id/secret, open_line_id, connector_id |
+| `bitrix_tokens` | Tokens OAuth2 por domain — access_token, refresh_token, expires_at |
+| `bitrix_portals` | Portais instalados via Partner App (Marketplace) — member_id, tokens, connector, open_line |
+| `contact_mapping` | Mapeamento JID WhatsApp ↔ chat_id Bitrix24 (normalizado sem device suffix) |
+| `messages` | Log de todas as mensagens trocadas — direção, tipo, status, conteúdo |
 
-- Tabela `bitrix_accounts` mapeia `session_jid` → credenciais Bitrix24 (domain, client_id, client_secret, open_line_id, connector_id)
-- O `bitrix.Client` é stateless — recebe `TenantCreds` por chamada
-- Matching por prefixo de telefone via `SPLIT_PART(session_jid, ':', 1)`, ignorando o device suffix (`:18`, `:19`) que muda a cada reconexão
-- Gerenciado pela UI no menu **Integrações Bitrix24**
+---
 
-## Tipos de mídia suportados (WA → Bitrix)
+## Tipos de mídia suportados
+
+### WA → Bitrix24
 
 | Tipo | Comportamento |
 |---|---|
-| Texto | Enviado diretamente como mensagem |
-| Imagem (jpg/png) | Upload para Bitrix Disk + attachment |
-| Vídeo (mp4) | Upload para Bitrix Disk + attachment |
-| Documento (pdf, xlsx, etc) | Upload para Bitrix Disk + attachment |
-| Áudio gravado no WA (PTT) | Upload como voice.ogg + attachment |
-| Áudio pré-gravado | Tenta download; fallback `[Áudio]` se HMAC inválido |
-| Contato (vCard) | Upload como .vcf + attachment |
-| Sticker | Upload como .webp + attachment |
+| Texto | Enviado diretamente |
+| Imagem (jpg/png) | Download + upload para Bitrix Disk + attachment |
+| Vídeo (mp4) | Download + upload para Bitrix Disk + attachment |
+| Documento (pdf, xlsx, etc) | Download + upload para Bitrix Disk + attachment |
+| Áudio PTT (voice note) | Upload como `voice.ogg` + attachment |
+| Áudio pré-gravado | Tenta download com fallback `DownloadAny`; se falhar, `[Áudio]` |
+| Contato (vCard) | Upload como `.vcf` + attachment |
+| Sticker | Upload como `.webp` + attachment |
 
-> **Nota sobre áudio:** `invalid media hmac` ocorre quando a MediaKey do áudio não está disponível na sessão atual (áudios de outros dispositivos). É uma limitação criptográfica do WhatsApp — não tem solução.
+### Bitrix24 → WA
 
-## Tipos de mídia suportados (Bitrix → WA)
-
-| Tipo MIME | Comportamento |
+| MIME | Comportamento |
 |---|---|
-| `audio/mpeg` (mp3) | Enviado como áudio nativo WA (com botão play) |
-| `audio/wav` | Enviado como documento (WA não suporta wav como áudio) |
-| `audio/ogg` | Enviado como documento |
-| `video/webm` | Enviado como documento |
-| Imagens, vídeos, docs | Enviado como documento |
+| `audio/mpeg` (mp3) | `SendAudio` — aparece como áudio nativo com botão play |
+| Outros áudios (wav, ogg) | `SendDocument` — WA não suporta esses formatos como áudio |
+| Imagens, vídeos, docs | `SendDocument` |
+| Texto | `Send` — mensagem de texto simples |
 
-## Indicador de digitação (outbound)
+---
 
-Antes de cada mensagem enviada pelo operador ao cliente WA, o sistema:
-1. Envia `ChatPresenceComposing` ("digitando...") ao destinatário
-2. Aguarda 1.5–4s proporcional ao tamanho do texto (com jitter aleatório)
-3. Envia `ChatPresencePaused`
-4. Envia a mensagem
+## Multi-tenant
 
-Mensagens para o mesmo número são serializadas (mutex por JID) — nunca chegam em paralelo.
+Cada sessão WhatsApp é vinculada a um portal Bitrix24 diferente:
 
-## Renovação automática de token Bitrix24
+- Tabela `bitrix_accounts`: `session_jid` → credenciais Bitrix24
+- O JID é normalizado: `5519910001772:27@s.whatsapp.net` → chave `5519910001772` (ignora device suffix que muda a cada reconexão)
+- Query SQL usa `SPLIT_PART(session_jid, ':', 1)` para match robusto
+- Tabela `bitrix_portals`: portais instalados via Marketplace (Partner App), com fluxo OAuth2 próprio
 
-O token OAuth2 expira a cada 1 hora. O sistema renova automaticamente:
-- Toda chamada REST verifica se o token expira em menos de 60s
-- Se sim, faz POST para `https://oauth.bitrix.info/oauth/token/` com o `refresh_token`
-- O novo token é salvo no PostgreSQL sob o domain da config
-- Nenhuma intervenção manual é necessária
-
-## Fluxo de Conexão WhatsApp (via UI)
-
-1. Acessar `https://<dominio>/connect`
-2. Digitar o número no formato `5519910001772`
-3. Clicar em **Conectar** e aguardar o QR code aparecer
-4. Escanear com o WhatsApp do celular (⋮ → Aparelhos conectados → Conectar um aparelho)
-5. Sessão ativa aparece na lista "Dispositivos conectados"
-
-## Fluxo de Autenticação Bitrix24 (app local)
-
-1. No Bitrix24: **Aplicações → Criar app local**
-2. Configurar Handler Path: `https://<dominio>/bitrix/callback`
-3. Conceder escopos: `crm`, `imopenlines`, `im`, `imconnector`, `disk`
-4. Ao instalar, o Bitrix24 chama automaticamente `POST /bitrix/callback` com o token
-5. Token salvo no banco — renovação automática via refresh_token (sem reinstalar nunca mais)
-6. O app registra automaticamente: `imconnector.register` + `imconnector.activate` + `event.bind ONIMCONNECTORMESSAGEADD`
-
-## Fluxo de Vinculação Bitrix24 ↔ WhatsApp (via Dashboard)
-
-1. Acessar `/dashboard` → menu **Integrações Bitrix24**
-2. Clicar em **Adicionar Integração**
-3. Preencher: sessão WA, domain Bitrix24, Client ID, Client Secret, Redirect URI, Open Line ID, Connector ID
-4. Clicar em **Salvar** — aparece card com as informações da integração
-5. Para editar: clicar em **Editar** no card → modal com dados pré-preenchidos
-6. Para remover: clicar em **Excluir** → confirmação via modal
+---
 
 ## Deploy no EasyPanel
 
-### Pré-requisitos
+### Variáveis de ambiente obrigatórias
 
-- Projeto EasyPanel criado (ex: `integracao-mosca`)
-- Serviço **PostgreSQL** criado no projeto
-- Serviço **Redis** criado no projeto
-- Repositório GitHub: `matheuslopes9/api-bitrix24-whatsapp`
-
-### Passo a passo
-
-1. Criar serviço **App** no EasyPanel apontando para o repo GitHub
-2. Build automático via `Dockerfile`
-3. Configurar variáveis de ambiente (ver seção abaixo)
-4. Rodar migrations no terminal do PostgreSQL (EasyPanel):
-   ```bash
-   psql -U admin -d whatsapp-bitrix
-   ```
-   Colar o conteúdo de `migrations/001_init.sql`
-5. Acessar `https://<dominio>/connect` para conectar o WhatsApp
-6. Acessar `https://<dominio>/dashboard` → **Integrações Bitrix24** para vincular a conta
-7. Instalar o app local no Bitrix24 — token e connector são configurados automaticamente via `/bitrix/callback`
-
-### Variáveis de ambiente
-
-> **Atenção:** Não use `#` em senhas/secrets — o EasyPanel interpreta como comentário e trunca o valor.
+> **Importante:** Não use `#` em valores — o EasyPanel interpreta como comentário e trunca.
 
 ```env
 APP_PORT=3000
 APP_ENV=production
 APP_SECRET=<string-forte-sem-hash>
+APP_BASE_URL=https://<dominio-easypanel>   ← OBRIGATÓRIO para webhooks Bitrix funcionarem
 
-POSTGRES_HOST=<nome-servico-easypanel>
+POSTGRES_HOST=<nome-servico>
 POSTGRES_PORT=5432
 POSTGRES_USER=admin
-POSTGRES_PASSWORD=<senha-sem-hash>
+POSTGRES_PASSWORD=<senha>
 POSTGRES_DB=whatsapp-bitrix
 POSTGRES_SSLMODE=disable
-POSTGRES_MAX_OPEN_CONNS=50
-POSTGRES_MAX_IDLE_CONNS=10
 
-REDIS_HOST=<nome-servico-easypanel>
+REDIS_HOST=<nome-servico>
 REDIS_PORT=6379
-REDIS_PASSWORD=<senha-sem-hash>
+REDIS_PASSWORD=<senha>
 REDIS_DB=0
 
 WA_SESSIONS_DIR=./sessions
-WA_MEDIA_DIR=./media
-WA_LOG_LEVEL=INFO
-
 QUEUE_WORKERS=20
 QUEUE_MAX_RETRY=5
 QUEUE_RETRY_BASE_DELAY_MS=1000
-
 WATCHDOG_PING_INTERVAL_SECS=30
 ```
 
-> **Nota:** As credenciais Bitrix24 (domain, client_id, client_secret, open_line_id, connector_id) são configuradas diretamente pela UI em `/dashboard` → **Integrações Bitrix24**, não por variáveis de ambiente.
+### Passos de setup
 
-## Desenvolvimento local
+1. Criar serviço App no EasyPanel apontando para `matheuslopes9/api-bitrix24-whatsapp`
+2. Configurar variáveis de ambiente (incluindo `APP_BASE_URL`)
+3. Rodar migrations no PostgreSQL: `psql -U admin -d whatsapp-bitrix` → colar `migrations/001_init.sql`
+4. Acessar `/dashboard` → **Sessões WhatsApp** → conectar número via QR
+5. No Bitrix24: instalar app local com Handler Path `https://<dominio>/bitrix/callback`, escopos: `crm, im, imopenlines, imconnector, disk, contact_center`
+6. Em `/dashboard` → **Filas Bitrix** → vincular sessão WA ao portal e clicar **Ativar Conector**
 
-### Requisitos
-- Go 1.25+
-- Docker + Docker Compose
-- CGO habilitado (necessário para sqlite3)
-- gcc / musl-dev instalados
+---
 
-### Subir infraestrutura local
-```bash
-docker compose up -d postgres redis
-```
+## Problemas conhecidos
 
-### Rodar o servidor
-```bash
-cp .env.example .env
-# editar .env com suas credenciais
-go run ./cmd/server
-```
+| Problema | Causa | Status |
+|---|---|---|
+| Bitrix→WA não funciona | Bitrix não chama `POST /bitrix/connector/event` | **EM INVESTIGAÇÃO** |
+| `imconnector.connector.data.set` quebra o inbound | Formato/timing incorreto corrompe estado do connector | Removido do fluxo — investigar formato correto |
+| `invalid media hmac` no áudio | MediaKey indisponível para áudios de outros dispositivos | Limitação criptográfica do WA — fallback para `[Áudio]` |
+| Device suffix muda a cada reconexão | WA muda `:27` → `:28` → `:29` a cada novo par | `SPLIT_PART` na query resolve |
+| `#` em variáveis trunca no EasyPanel | EasyPanel interpreta `#` como comentário | Não usar `#` em senhas/secrets |
+| SQLite "readonly database" no logout | Volume de sessões montado como read-only | Warning ignorável — desconexão funciona |
+| `@` no JID truncado em path routing | Fiber trata `@` como separador | Usa query param `?jid=` em vez de path param |
 
-### Build Docker
-```bash
-docker build -t wa-bitrix-connector .
-```
-
-## Banco de dados
-
-Tabelas criadas pela migration `migrations/001_init.sql`:
-
-| Tabela | Descrição |
-|---|---|
-| `whatsapp_sessions` | Sessões WA ativas (JID, telefone, status) |
-| `contact_mapping` | Mapeamento JID WhatsApp ↔ chat ID Bitrix24 (normalizado sem device part) |
-| `messages` | Log de mensagens trocadas |
-| `bitrix_tokens` | Tokens OAuth2 do Bitrix24 com renovação automática |
-| `bitrix_accounts` | Contas Bitrix24 vinculadas a cada sessão WA (multi-tenant) |
-| `event_log` | Log de eventos do sistema |
+---
 
 ## Estrutura do projeto
 
 ```
 .
-├── cmd/server/          # Entrypoint
+├── cmd/server/main.go          # Entrypoint — wiring de todos os componentes
 ├── internal/
-│   ├── api/             # HTTP handlers + rotas (Fiber)
-│   │   ├── server.go    # Setup do app Fiber e rotas
-│   │   ├── dashboard.go # Dashboard UI (HTML/CSS/JS inline)
-│   │   ├── assets.go    # Servir assets estáticos embarcados
-│   │   ├── assets/      # chart.js, logo.png, logo_uc.png
-│   │   ├── ui.go        # Handlers da UI /connect e /ui/*
-│   │   └── handlers.go  # Handlers da API /wa/* e /bitrix/*
-│   ├── bitrix/          # Cliente Bitrix24 + processador de mensagens
-│   │   ├── client.go    # Chamadas REST ao Bitrix24 (OAuth2 + disk + imconnector)
-│   │   └── processor.go # Lógica WA→Bitrix (ensureContact + upload + entrega)
-│   ├── config/          # Configuração via viper/env
-│   ├── db/              # Repositório PostgreSQL
-│   ├── queue/           # Filas Redis + worker pool (mutex por JID)
-│   ├── telemetry/       # Métricas Prometheus
-│   ├── watchdog/        # Monitoramento de sessões
-│   └── whatsapp/        # Manager de sessões whatsmeow + typing indicator
-├── migrations/          # SQL migrations
+│   ├── api/
+│   │   ├── server.go           # Rotas Fiber
+│   │   ├── handlers.go         # /wa/*, /bitrix/*, /health
+│   │   ├── ui.go               # /ui/*, /connect
+│   │   ├── dashboard.go        # HTML/CSS/JS do dashboard
+│   │   ├── partner.go          # Fluxo Partner App (Marketplace)
+│   │   └── assets.go           # Servir logo, favicon, chart.js
+│   ├── bitrix/
+│   │   ├── client.go           # REST Bitrix24: OAuth2, imconnector, disk
+│   │   └── processor.go        # Lógica WA→Bitrix: contact + upload + entrega
+│   ├── config/config.go        # Viper — lê variáveis de ambiente
+│   ├── db/
+│   │   ├── db.go               # pgxpool connection
+│   │   ├── models.go           # Structs das tabelas
+│   │   └── repository.go       # Queries SQL
+│   ├── queue/
+│   │   ├── queue.go            # Redis RPUSH/BLPOP + retry + dead queue
+│   │   └── worker.go           # Worker pool — 20 goroutines inbound + 20 outbound
+│   ├── telemetry/metrics.go    # Contadores Prometheus
+│   ├── watchdog/watchdog.go    # Reconexão automática de sessões
+│   └── whatsapp/
+│       ├── manager.go          # Sessões whatsmeow: QR, connect, disconnect, send
+│       └── session.go          # Struct Session
+├── migrations/001_init.sql     # Schema PostgreSQL completo
 ├── Dockerfile
-├── docker-compose.yml
-└── .env.example
+└── docker-compose.yml
 ```
 
-## Problemas conhecidos / armadilhas
+---
 
-| Problema | Causa | Solução |
-|---|---|---|
-| `get token: no rows` | Domain do callback vem sem `https://` | `SaveToken` sempre usa `cfg.Domain` |
-| `sessions loaded count:0` | `ListActiveSessions` não retorna desconectadas | `LoadAll` usa `ListAllSessions` |
-| PairSuccess sem log (deadlock) | `AddEventHandler` dentro de event handler | Usa `go client.AddEventHandler(...)` |
-| `session file not found` | SQLite deletado no redeploy, registro permanece no DB | `connectSession` verifica se arquivo existe antes de abrir |
-| Variáveis truncadas no EasyPanel | `#` no valor interpretado como comentário | Nunca usar `#` em senhas/secrets |
-| `DISK_OBJ_22000` | Nome de arquivo duplicado no Bitrix Disk | `uniqueFileName` adiciona timestamp ao nome (ex: `voice_20260410_120000.ogg`) |
-| Chat duplicado no Bitrix | JID com `:47@lid` vs `@lid` cria sessões diferentes | `normalizeChatID` remove device part antes de enviar ao connector |
-| `invalid media hmac` no áudio | MediaKey indisponível para áudios de outros dispositivos | Fallback para `[Áudio]` — limitação criptográfica do WA |
-| `ERROR_ARGUMENT` no disk upload | `fileContent` deve ser `[fileName, base64]` em JSON | `UploadToDisk` usa JSON com base64, não multipart |
-| Spinner no Contact Center | `imconnector.send.status.delivery` não era chamado | Chamado após cada envio (inbound e outbound) |
-| Token expirado a cada 1h | Refresh enviava para domain errado + salvava com domain errado | Endpoint fixo `oauth.bitrix.info`; sempre salva com `cfg.Domain` |
-| Mensagens outbound em paralelo | 20 workers disparando para o mesmo JID simultaneamente | Mutex por JID no worker pool |
-| wav/ogg como áudio WA | WA rejeita wav e ogg como AudioMessage | Apenas `audio/mpeg` vai como áudio nativo; demais como documento |
-| Inbound não chega ao Bitrix após reconexão | JID device suffix muda a cada reconexão (`:18`→`:19`), causando falha no match exato | `SPLIT_PART(session_jid, ':', 1)` em todas as queries de `bitrix_accounts` |
-| Botão Editar do card não abre modal | `JSON.stringify` dentro de `onclick=""` gera aspas duplas que quebram o atributo HTML | `data-acct='...'` + `JSON.parse(this.dataset.acct)` no handler JS |
-| `@` no JID truncado no path routing | Fiber trata `@` como separador em parâmetros de rota | Desconexão usa query param `?jid=encodeURIComponent(jid)` em vez de path param |
-| Tema claro: texto invisível nos cards | Estilos inline com cores hardcoded não são sobrescritos por classes CSS | Seletores CSS `[style*="color:#e2e8f0"]` com `!important` |
-| Tema claro: linhas do gráfico invisíveis | Cor de grid hardcoded como `rgba(255,255,255,.04)` (branco sobre branco) | Funções `chartGridColor()`, `chartTickColor()`, `chartLegendColor()` com valores por tema |
+## Status atual (14/04/2026)
 
-## Status atual
+| Funcionalidade | Status |
+|---|---|
+| Deploy EasyPanel + Docker | ✅ Funcionando |
+| PostgreSQL + Redis conectados | ✅ Funcionando |
+| Sessões WhatsApp (QR scan, reconexão, watchdog) | ✅ Funcionando |
+| Dashboard UI (sessões, filas, relatórios, tema claro/escuro) | ✅ Funcionando |
+| **WA → Bitrix24** (texto, imagem, vídeo, doc, áudio, vCard, sticker) | ✅ Funcionando |
+| Upload de mídia para Bitrix Disk | ✅ Funcionando |
+| Renovação automática de token OAuth2 | ✅ Funcionando |
+| Delivery confirmation (spinner removido) | ✅ Funcionando |
+| Multi-tenant (N sessões WA × N portais Bitrix) | ✅ Funcionando |
+| Partner App (Marketplace) — instalação e vinculação | ✅ Funcionando |
+| Indicador de digitação ("digitando...") antes de mensagens outbound | ✅ Implementado |
+| **Bitrix24 → WA** (operador responde no Contact Center) | ❌ **Não funcionando** |
+| Testes automatizados | ❌ Não implementado |
 
-- [x] Deploy EasyPanel configurado e rodando
-- [x] PostgreSQL e Redis conectados
-- [x] Gerenciamento de sessões WhatsApp (async QR via goroutine)
-- [x] UI `/connect` com QR scan, lista de dispositivos e botão desconectar
-- [x] Dashboard completo em `/dashboard` com Painel, Sessões, Integrações e Relatórios
-- [x] WhatsApp conectado via QR scan em produção
-- [x] Fila Redis com worker pool (20 workers, retry exponencial)
-- [x] Watchdog de reconexão automática (intervalo 30s)
-- [x] Métricas Prometheus
-- [x] Autenticação Bitrix24 via app local (token salvo automaticamente no install)
-- [x] Renovação automática de token OAuth2 (refresh sem reinstalar)
-- [x] Fluxo WA → Bitrix24 via Contact Center (imconnector) — texto, imagem, vídeo, doc, vCard, sticker
-- [x] Fluxo Bitrix24 → WA — texto, documentos e áudio mp3 nativo
-- [x] Spinner do Contact Center eliminado (delivery confirmation inbound e outbound)
-- [x] Upload de mídia para Bitrix Disk (base64 JSON, nome único, Shared Drive)
-- [x] Normalização de JID para evitar chat duplicado no Bitrix
-- [x] Suporte a vCard (contato) e sticker
-- [x] Indicador de digitação ("digitando...") no WA antes de cada mensagem outbound
-- [x] Serialização por JID — mensagens para o mesmo número nunca chegam em paralelo
-- [x] Multi-tenant — múltiplas sessões WA com contas Bitrix24 independentes
-- [x] Gerenciamento de integrações Bitrix24 via UI (criar/editar/excluir com cards e modais)
-- [x] Matching de JID por prefixo de telefone (imune a mudança de device suffix na reconexão)
-- [x] Tema claro/escuro com persistência em localStorage
-- [x] Assets estáticos embarcados no binário (logo, favicon, chart.js)
-- [ ] Testes end-to-end automatizados
+### Próximo passo: Bitrix→WA
+
+O endpoint `POST /bitrix/connector/event` existe e processa corretamente quando chamado manualmente (via curl). O problema é que o **Bitrix24 não chama esse endpoint** quando o operador responde.
+
+Para avançar nessa investigação sem risco de quebrar o inbound, as opções são:
+
+1. **Verificar via API do Bitrix** qual handler está registrado atualmente: `GET /rest/imconnector.list` ou inspecionar via Admin → Logs de REST
+2. **Testar manualmente** o endpoint: `curl -X POST https://<dominio>/bitrix/connector/event -d 'data[CONNECTOR]=whatsapp_uc&data[LINE]=218&data[MESSAGES][0][message][text]=Oi&data[MESSAGES][0][chat][id]=127586399207476@lid&data[MESSAGES][0][message][user_id]=1558'`
+3. **Consultar fórum Bitrix24** sobre como apps locais (não Marketplace) recebem `ONIMCONNECTORMESSAGEADD`
+4. **Inspecionar um app Whatcrm** para ver o payload exato do `imconnector.connector.data.set` que eles usam
