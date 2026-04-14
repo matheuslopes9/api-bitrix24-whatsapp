@@ -338,6 +338,20 @@ func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, conne
 	return err
 }
 
+// SetConnectorData configura o handler de mensagens outbound (operador → WA).
+// O Bitrix24 chama SEND_MESSAGE quando o operador envia uma resposta no Contact Center.
+func (c *Client) SetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int, sendMessageURL string) error {
+	raw, err := c.call(ctx, creds, "imconnector.connector.data.set", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"DATA": map[string]interface{}{
+			"SEND_MESSAGE": sendMessageURL,
+		},
+	})
+	c.log.Info("imconnector.connector.data.set response", zap.String("raw", string(raw)), zap.Error(err))
+	return err
+}
+
 // ActivateConnector ativa o conector em uma Open Line específica.
 func (c *Client) ActivateConnector(ctx context.Context, creds TenantCreds, connectorID string, lineID int, active bool) error {
 	activeVal := "0"

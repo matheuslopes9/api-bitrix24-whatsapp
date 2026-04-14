@@ -641,6 +641,13 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["bind_event"] = "ok"
 	}
 
+	// Configura SEND_MESSAGE handler — chamado pelo Bitrix quando operador responde
+	if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lineID, appBase+"/bitrix/connector/event"); err != nil {
+		steps["set_data"] = "erro: " + err.Error()
+	} else {
+		steps["set_data"] = "ok"
+	}
+
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
 	// Retorna erro se algum passo crítico falhou
