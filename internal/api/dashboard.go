@@ -9,8 +9,17 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 }
 
 // GET /ui/overview — dados agregados para a dashboard (sem auth, apenas interna)
+// ?portal=empresa.bitrix24.com.br → filtra apenas sessões daquele portal
 func (h *handlers) uiOverview(c *fiber.Ctx) error {
-	sessions := h.waManager.ListSessions()
+	portal := normalizePortalParam(c.Query("portal"))
+
+	allSessions := h.waManager.ListSessions()
+	sessions := allSessions
+
+	if portal != "" {
+		sessions = h.sessionsForPortal(c.Context(), portal, allSessions)
+	}
+
 	in, out, dead := h.q.Lengths(c.Context())
 
 	stats, _ := h.repo.GetDailyStats(c.Context(), 1)
@@ -29,6 +38,7 @@ func (h *handlers) uiOverview(c *fiber.Ctx) error {
 		"messages_inbound":  msgsIn,
 		"messages_outbound": msgsOut,
 		"messages_failed":   dead,
+		"portal":            portal,
 	})
 }
 
@@ -290,6 +300,9 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- Badge do portal (visível apenas no modo cliente) -->
+  <div id="sidebar-portal-badge" style="display:none;margin:-8px 0 12px;padding:7px 10px;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.2);border-radius:8px;font-size:11px;color:#25D366;font-weight:600;text-align:center;word-break:break-all;line-height:1.4;"></div>
+
   <div style="font-size:10.5px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:.1em;padding:0 10px;margin-bottom:6px;">Navegação</div>
 
   <div class="nav-item active" id="nav-painel" onclick="showPage('painel')">
@@ -488,7 +501,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div class="section-title">Sessões WhatsApp</div>
         <div class="section-sub">Conecte e gerencie números de telefone</div>
       </div>
-      <button class="btn btn-primary" onclick="abrirModalQR()">
+      <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalQR()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Nova Sessão
       </button>
@@ -723,6 +736,39 @@ var qrInterval = null;
 var qrTimer = null;
 var qrCountdown = 0;
 
+// ─── Isolamento por portal ────────────────────────────────────────────────────
+// Quando a URL contém ?portal=empresa.bitrix24.com.br, o dashboard filtra
+// apenas os dados daquele portal. Sem o param, mostra tudo (modo admin).
+var PORTAL = (function() {
+  try { return new URLSearchParams(window.location.search).get('portal') || ''; } catch(e) { return ''; }
+})();
+
+// Adiciona ?portal= a uma URL de API se estivermos em modo portal
+function apiUrl(base) {
+  if (!PORTAL) return base;
+  var sep = base.indexOf('?') !== -1 ? '&' : '?';
+  return base + sep + 'portal=' + encodeURIComponent(PORTAL);
+}
+
+// Aplica modo portal: esconde menus de admin, mostra badge do portal
+(function() {
+  if (!PORTAL) return;
+  // Esconde menus que não fazem sentido para o cliente (só admin vê)
+  ['nav-integracoes'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  // Esconde botão "Nova Sessão" na página de sessões (cliente não cadastra sessões)
+  var btnNovaSessao = document.getElementById('btn-nova-sessao');
+  if (btnNovaSessao) btnNovaSessao.style.display = 'none';
+  // Mostra badge do portal no sidebar
+  var portalBadge = document.getElementById('sidebar-portal-badge');
+  if (portalBadge) {
+    portalBadge.style.display = 'block';
+    portalBadge.textContent = PORTAL;
+  }
+})();
+
 // ─── Navegação ────────────────────────────────────────────────────────────────
 var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix' };
 
@@ -752,7 +798,7 @@ function closeSidebar() {
 
 // ─── Visão geral (painel) ─────────────────────────────────────────────────────
 function carregarVisaoGeral() {
-  fetch('/ui/overview')
+  fetch(apiUrl('/ui/overview'))
   .then(function(r) { return r.json(); })
   .then(function(d) {
     setText('m-sessoes', d.active_sessions);
@@ -878,7 +924,7 @@ function distribuir24h(total) {
 
 // ─── Sessões ──────────────────────────────────────────────────────────────────
 function carregarSessoes() {
-  fetch('/ui/sessions')
+  fetch(apiUrl('/ui/sessions'))
   .then(function(r) { return r.json(); })
   .then(function(d) {
     var wrap = document.getElementById('lista-sessoes');
@@ -984,7 +1030,7 @@ function iniciarQRPoll(phone) {
 }
 
 function fazerQRPoll(phone) {
-  fetch('/ui/sessions/' + phone + '/qr')
+  fetch(apiUrl('/ui/sessions/' + phone + '/qr'))
   .then(function(r) { return r.json(); })
   .then(function(d) {
     if (d.status === 'connected') {
@@ -1198,7 +1244,7 @@ function abrirModalIntegracao() {
   document.getElementById('int-modal-sub').textContent = 'Vincule um número WhatsApp a um portal Bitrix24';
   document.getElementById('int-jid-group').style.display = 'block';
   // Popula select de sessões
-  fetch('/ui/sessions')
+  fetch(apiUrl('/ui/sessions'))
   .then(function(r) { return r.json(); })
   .then(function(d) {
     var sel = document.getElementById('int-jid');
@@ -1314,7 +1360,7 @@ function excluirIntegracao(enc) {
 // ─── Filas Bitrix ─────────────────────────────────────────────────────────────
 function carregarFilas() {
   var wrap = document.getElementById('lista-filas');
-  fetch('/ui/bitrix/queues')
+  fetch(apiUrl('/ui/bitrix/queues'))
   .then(function(r) { return r.json(); })
   .then(function(resp) {
     var data = resp.queues || [];

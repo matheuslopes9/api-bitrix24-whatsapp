@@ -401,10 +401,25 @@ func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
 
 
 // GET /ui/bitrix/queues — lista portais instalados via Marketplace com info de sessões vinculadas
+// ?portal=empresa.bitrix24.com.br → filtra apenas aquele portal (modo cliente)
 func (h *handlers) uiListBitrixQueues(c *fiber.Ctx) error {
+	portalFilter := normalizePortalParam(c.Query("portal"))
+
 	portals, err := h.repo.ListBitrixPortals(c.Context())
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Se vier filtro de portal, mostra apenas o portal do cliente
+	if portalFilter != "" {
+		var filtered []*db.BitrixPortal
+		for _, p := range portals {
+			if strings.EqualFold(p.Domain, portalFilter) {
+				filtered = append(filtered, p)
+				break
+			}
+		}
+		portals = filtered
 	}
 
 	activeSessions := h.waManager.ListSessions()
@@ -592,6 +607,36 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		zap.String("text", cleanText))
 
 	return c.SendStatus(fiber.StatusOK)
+}
+
+// ─── Helpers de filtragem por portal ─────────────────────────────────────────
+
+// normalizePortalParam normaliza o parâmetro ?portal= da query string,
+// removendo https://, http:// e trailing slash — igual ao que fazemos no banco.
+func normalizePortalParam(p string) string {
+	p = strings.TrimPrefix(p, "https://")
+	p = strings.TrimPrefix(p, "http://")
+	p = strings.TrimRight(p, "/")
+	return strings.ToLower(strings.TrimSpace(p))
+}
+
+// sessionsForPortal retorna apenas as sessões WA que estão vinculadas ao portal
+// via bitrix_accounts (que é a tabela que o ProcessInbound usa para roteamento).
+func (h *handlers) sessionsForPortal(ctx context.Context, portal string, allSessions []string) []string {
+	var filtered []string
+	for _, jid := range allSessions {
+		acct, err := h.repo.GetBitrixAccountByJID(ctx, jid)
+		if err != nil {
+			continue
+		}
+		acctDomain := strings.TrimPrefix(acct.Domain, "https://")
+		acctDomain = strings.TrimPrefix(acctDomain, "http://")
+		acctDomain = strings.ToLower(strings.TrimRight(acctDomain, "/"))
+		if acctDomain == portal {
+			filtered = append(filtered, jid)
+		}
+	}
+	return filtered
 }
 
 // sanitizeJID normaliza JIDs do Bitrix para formato aceito pelo whatsmeow.

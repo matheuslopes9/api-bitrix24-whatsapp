@@ -43,8 +43,13 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 }
 
 // GET /ui/sessions
+// ?portal=empresa.bitrix24.com.br → filtra apenas sessões daquele portal
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
+	portal := normalizePortalParam(c.Query("portal"))
 	jids := h.waManager.ListSessions()
+	if portal != "" {
+		jids = h.sessionsForPortal(c.Context(), portal, jids)
+	}
 	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
 }
 

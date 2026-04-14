@@ -476,11 +476,11 @@ function salvarERedirecionarAdmin(auth) {
   .then(function(r){return r.json();})
   .then(function(){
     document.getElementById('msg').textContent = 'Abrindo painel...';
-    window.location.href = '/dashboard';
+    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
   })
   .catch(function(){
-    // mesmo com erro, redireciona — o token pode já estar salvo
-    window.location.href = '/dashboard';
+    // mesmo com erro, redireciona com portal para manter isolamento
+    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
   });
 }
 
@@ -493,7 +493,7 @@ var t = setTimeout(function(){
       refresh_token:getQueryParam('REFRESH_ID'), member_id:getQueryParam('member_id')});
     return;
   }
-  // Sem credenciais — vai para o dashboard mesmo assim
+  // Sem credenciais — vai para o dashboard sem filtro (admin)
   window.location.href = '/dashboard';
 }, 3000);
 
