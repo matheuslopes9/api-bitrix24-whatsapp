@@ -468,9 +468,17 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 	}
 
 	client := whatsmeow.NewClient(deviceStore, waLog.Noop)
+
+	// Usa o JID real do device (pode diferir do JID salvo no banco após reconexão).
+	// Isso garante que m.sessions sempre usa a chave correta.
+	realJID := s.JID
+	if client.Store.ID != nil {
+		realJID = client.Store.ID.String()
+	}
+
 	sess := &Session{
 		ID:     s.ID,
-		JID:    s.JID,
+		JID:    realJID,
 		Phone:  s.Phone,
 		Client: client,
 		dbPath: s.SessionFile,
@@ -483,18 +491,25 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 	}
 
 	m.mu.Lock()
-	m.sessions[s.JID] = sess
+	m.sessions[realJID] = sess
 	m.mu.Unlock()
 
 	now := time.Now()
 	_ = m.repo.UpsertSession(ctx, &db.WhatsAppSession{
 		ID:          s.ID,
-		JID:         s.JID,
+		JID:         realJID,
 		Phone:       s.Phone,
 		Status:      db.SessionActive,
 		SessionFile: s.SessionFile,
 		LastSeen:    &now,
 	})
+
+	if realJID != s.JID {
+		m.log.Info("session jid updated on reconnect",
+			zap.String("old_jid", s.JID),
+			zap.String("new_jid", realJID),
+			zap.String("phone", s.Phone))
+	}
 
 	return nil
 }

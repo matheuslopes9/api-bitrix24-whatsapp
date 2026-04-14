@@ -9,16 +9,8 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 }
 
 // GET /ui/overview — dados agregados para a dashboard (sem auth, apenas interna)
-// ?portal=empresa.bitrix24.com.br → filtra apenas sessões daquele portal
 func (h *handlers) uiOverview(c *fiber.Ctx) error {
-	portal := normalizePortalParam(c.Query("portal"))
-
-	allSessions := h.waManager.ListSessions()
-	sessions := allSessions
-
-	if portal != "" {
-		sessions = h.sessionsForPortal(c.Context(), portal, allSessions)
-	}
+	sessions := h.waManager.ListSessions()
 
 	in, out, dead := h.q.Lengths(c.Context())
 
@@ -38,7 +30,6 @@ func (h *handlers) uiOverview(c *fiber.Ctx) error {
 		"messages_inbound":  msgsIn,
 		"messages_outbound": msgsOut,
 		"messages_failed":   dead,
-		"portal":            portal,
 	})
 }
 
@@ -312,10 +303,6 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
   <div class="nav-item" id="nav-sessoes" onclick="showPage('sessoes')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18" stroke-linecap="round"/></svg>
     Sessões WhatsApp
-  </div>
-  <div class="nav-item" id="nav-integracoes" onclick="showPage('integracoes')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-    Integrações Bitrix
   </div>
   <div class="nav-item" id="nav-filas" onclick="showPage('filas')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
@@ -591,24 +578,6 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
-  <!-- ══════════════════════ INTEGRAÇÕES ══════════════════════ -->
-  <div id="page-integracoes" class="page">
-    <div class="section-hdr">
-      <div>
-        <div class="section-title">Integrações Bitrix24</div>
-        <div class="section-sub">Vincule cada número WhatsApp a um portal Bitrix24</div>
-      </div>
-      <button class="btn btn-primary" onclick="abrirModalIntegracao()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Nova Integração
-      </button>
-    </div>
-
-    <!-- Lista de integrações -->
-    <div id="lista-integracoes">
-      <div style="text-align:center;padding:40px;color:#334155;font-size:13px;">Carregando...</div>
-    </div>
-  </div>
 
 </div>
 
@@ -789,11 +758,6 @@ function apiUrl(base) {
 // Aplica modo portal: esconde menus de admin, mostra badge do portal
 (function() {
   if (!PORTAL) return;
-  // Esconde menus que não fazem sentido para o cliente (só admin vê)
-  ['nav-integracoes'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el) el.style.display = 'none';
-  });
   // Esconde botão "Nova Sessão" na página de sessões (cliente não cadastra sessões)
   var btnNovaSessao = document.getElementById('btn-nova-sessao');
   if (btnNovaSessao) btnNovaSessao.style.display = 'none';
@@ -806,7 +770,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', relatorios: 'Relatórios', integracoes: 'Integrações Bitrix' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', relatorios: 'Relatórios' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -819,7 +783,6 @@ function showPage(nome) {
   closeSidebar();
   if (nome === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (nome === 'sessoes') carregarSessoes();
-  if (nome === 'integracoes') carregarIntegracoes();
   if (nome === 'filas') carregarFilas();
 }
 
@@ -1501,12 +1464,17 @@ function abrirModalFila(prePortal) {
     var opt = document.createElement('option');
     opt.value = q.domain;
     opt.textContent = q.domain;
-    if (prePortal && q.domain === prePortal) opt.selected = true;
+    // Pré-seleciona: usa portal passado como argumento, ou o portal da URL em modo cliente
+    if ((prePortal && q.domain === prePortal) || (!prePortal && PORTAL && q.domain.toLowerCase() === PORTAL.toLowerCase())) {
+      opt.selected = true;
+    }
     selPortal.appendChild(opt);
   });
+  // Em modo cliente, trava o select no portal da URL
+  selPortal.disabled = !!PORTAL;
 
-  // Popula select de sessões
-  fetch(apiUrl('/ui/sessions'))
+  // Popula select de sessões — busca todas as sessões ativas (sem filtro de portal)
+  fetch('/ui/sessions')
   .then(function(r){return r.json();})
   .then(function(d){
     var sel = document.getElementById('fila-sessao');
@@ -1518,6 +1486,9 @@ function abrirModalFila(prePortal) {
       opt.textContent = tel + '  (' + jid + ')';
       sel.appendChild(opt);
     });
+    if ((d.sessions||[]).length === 0) {
+      sel.innerHTML = '<option value="">Nenhum número conectado — conecte primeiro em Sessões</option>';
+    }
   }).catch(function(){});
 
   document.getElementById('fila-openline').value = '';
@@ -1617,7 +1588,6 @@ function refreshAll() {
   carregarVisaoGeral();
   if (paginaAtual === 'sessoes') carregarSessoes();
   if (paginaAtual === 'relatorios') carregarRelatorios(periodoRelatorio);
-  if (paginaAtual === 'integracoes') carregarIntegracoes();
   if (paginaAtual === 'filas') carregarFilas();
   toast('Dados atualizados', 'success');
 }

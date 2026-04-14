@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
 // GET /connect
@@ -43,13 +44,10 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 }
 
 // GET /ui/sessions
-// ?portal=empresa.bitrix24.com.br → filtra apenas sessões daquele portal
+// Retorna todas as sessões ativas — sem filtro por portal.
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
-	portal := normalizePortalParam(c.Query("portal"))
 	jids := h.waManager.ListSessions()
-	if portal != "" {
-		jids = h.sessionsForPortal(c.Context(), portal, jids)
-	}
+	h.log.Info("uiListSessions called", zap.Int("count", len(jids)), zap.Strings("jids", jids))
 	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
 }
 
