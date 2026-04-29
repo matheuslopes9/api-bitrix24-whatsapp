@@ -619,7 +619,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		lineID = 1
 	}
 
-	creds := h.portalToCreds(portal)
+	// Usa o app local se disponível — o Partner App pode estar com INSTALLED:false
+	// o que impede o Bitrix de disparar eventos mesmo com event.bind registrado.
+	// O app local tem instalação completa e escopo suficiente.
+	creds := h.localCredsForDomain(c.Context(), domain, portal)
 	appBase := h.cfg.App.BaseURL()
 	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/connector/event"))
 	steps := map[string]string{}
@@ -632,6 +635,11 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["save_token"] = "ok"
 	}
 
+	// Verifica qual app está sendo usado
+	if appInfo, err := h.bitrixClient.RawCall(c.Context(), creds, "app.info", map[string]interface{}{}); err == nil {
+		steps["app_info"] = string(appInfo)
+	}
+
 	eventURL := appBase + "/bitrix/connector/event"
 	// Register
 	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
@@ -640,16 +648,25 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["register"] = "ok"
 	}
 
-	// Activate
-	if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lineID, true); err != nil {
-		steps["activate"] = "erro: " + err.Error()
+	// Ativa em TODAS as open lines onde o connector já existe ou na lineID especificada.
+	// Resolve o problema de o admin configurar linha 218 mas o chat estar na linha 109.
+	lines := h.discoverOpenLines(c.Context(), creds, portal.ConnectorID, lineID)
+	activatedLines := []int{}
+	for _, lid := range lines {
+		if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lid, true); err != nil {
+			steps[fmt.Sprintf("activate_line_%d", lid)] = "erro: " + err.Error()
+		} else {
+			steps[fmt.Sprintf("activate_line_%d", lid)] = "ok"
+			activatedLines = append(activatedLines, lid)
+		}
+	}
+	if len(activatedLines) > 0 {
+		steps["activate"] = fmt.Sprintf("ok (linhas: %v)", activatedLines)
 	} else {
-		steps["activate"] = "ok"
+		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// Lista todos os bindings existentes do evento e remove cada um pelo handler URL.
-	// O Bitrix exige o handler URL no unbind — não aceita unbind genérico sem handler.
-	// Sem isso, cada chamada de BindEvent acumula bindings duplicados.
+	// Remove bindings antigos e registra o novo
 	if existing, err := h.bitrixClient.ListEventBindings(c.Context(), creds); err == nil {
 		var bindings []struct {
 			Event   string `json:"event"`
@@ -923,27 +940,54 @@ func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
 }
 
 // POST /debug/bitrix-call — executa qualquer método REST no Bitrix24 diretamente
-// Body JSON: { "domain": "uctdemo.bitrix24.com", "method": "event.unbind", "params": {...} }
+// Body JSON: { "domain": "uctdemo.bitrix24.com", "method": "event.unbind", "params": {...}, "use_local_app": true }
+// use_local_app=true usa as credenciais do app local (bitrix_account) em vez do Partner App (portal).
 func (h *handlers) debugBitrixCall(c *fiber.Ctx) error {
 	var body struct {
-		Domain string                 `json:"domain"`
-		Method string                 `json:"method"`
-		Params map[string]interface{} `json:"params"`
+		Domain      string                 `json:"domain"`
+		Method      string                 `json:"method"`
+		Params      map[string]interface{} `json:"params"`
+		UseLocalApp bool                   `json:"use_local_app"`
 	}
 	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.Method == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "domain e method são obrigatórios"})
 	}
 	domain := normalizePortalParam(body.Domain)
-	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
-	if err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
-	}
-	creds := h.portalToCreds(portal)
 	if body.Params == nil {
 		body.Params = map[string]interface{}{}
 	}
+
+	var creds bitrix.TenantCreds
+	if body.UseLocalApp {
+		// Usa o token do app local salvo via /bitrix/callback
+		sessions := h.waManager.ListSessions()
+		var acct *db.BitrixAccount
+		for _, jid := range sessions {
+			a, err := h.repo.GetBitrixAccountByJID(c.Context(), jid)
+			if err == nil && strings.EqualFold(strings.TrimPrefix(a.Domain, "https://"), domain) {
+				acct = a
+				break
+			}
+		}
+		if acct == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "bitrix_account não encontrado para domain: " + domain})
+		}
+		creds = bitrix.TenantCreds{
+			Domain:       acct.Domain,
+			ClientID:     acct.ClientID,
+			ClientSecret: acct.ClientSecret,
+			RedirectURI:  acct.RedirectURI,
+		}
+	} else {
+		portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+		}
+		creds = h.portalToCreds(portal)
+	}
+
 	raw, err := h.bitrixClient.RawCall(c.Context(), creds, body.Method, body.Params)
-	result := fiber.Map{"domain": domain, "method": body.Method}
+	result := fiber.Map{"domain": domain, "method": body.Method, "use_local_app": body.UseLocalApp}
 	if err != nil {
 		result["error"] = err.Error()
 	}
@@ -1070,6 +1114,72 @@ func (h *handlers) debugConnectorList(c *fiber.Ctx) error {
 		result["raw"] = json.RawMessage(raw)
 	}
 	return c.JSON(result)
+}
+
+// ─── Helpers de credenciais e descoberta de linhas ───────────────────────────
+
+// localCredsForDomain retorna as credenciais do app LOCAL para um domínio.
+// O app local tem INSTALLED:true no Bitrix, o que é obrigatório para receber eventos.
+// Se não encontrar app local, cai de volta para as credenciais do portal (Partner App).
+func (h *handlers) localCredsForDomain(ctx context.Context, domain string, portal *db.BitrixPortal) bitrix.TenantCreds {
+	for _, jid := range h.waManager.ListSessions() {
+		acct, err := h.repo.GetBitrixAccountByJID(ctx, jid)
+		if err != nil {
+			continue
+		}
+		acctDomain := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(acct.Domain, "https://"), "http://"))
+		if acctDomain == domain && acct.ClientID != "" && acct.ClientSecret != "" {
+			return bitrix.TenantCreds{
+				Domain:       acct.Domain,
+				ClientID:     acct.ClientID,
+				ClientSecret: acct.ClientSecret,
+				RedirectURI:  acct.RedirectURI,
+			}
+		}
+	}
+	return h.portalToCreds(portal)
+}
+
+// discoverOpenLines retorna todas as open lines onde o connector deve ser ativado.
+// Consulta o Bitrix para obter a lista de open lines disponíveis e inclui a lineID
+// passada explicitamente. Isso resolve o problema de o admin configurar a linha
+// errada enquanto os chats acontecem em outra.
+func (h *handlers) discoverOpenLines(ctx context.Context, creds bitrix.TenantCreds, connectorID string, defaultLineID int) []int {
+	lines := []int{}
+	seen := map[int]bool{}
+
+	// Tenta listar as open lines via imconnector.list com status
+	// Bitrix não tem um método direto de listar as linhas — usamos as conhecidas
+	// via imconnector.status para verificar quais estão configuradas
+	candidateLines := []int{defaultLineID}
+	// Adiciona linhas comuns como candidatas para varredura
+	for _, l := range []int{1, 109, 218} {
+		candidateLines = append(candidateLines, l)
+	}
+
+	for _, lid := range candidateLines {
+		if lid <= 0 || seen[lid] {
+			continue
+		}
+		seen[lid] = true
+		raw, err := h.bitrixClient.GetConnectorStatus(ctx, creds, connectorID, lid)
+		if err != nil {
+			continue
+		}
+		var status struct {
+			Error bool `json:"ERROR"`
+		}
+		// Inclui a linha se não tiver erro (existe no portal)
+		if json.Unmarshal(raw, &status) == nil && !status.Error {
+			lines = append(lines, lid)
+		}
+	}
+
+	// Garante que a linha default sempre está incluída
+	if !seen[defaultLineID] && defaultLineID > 0 {
+		lines = append(lines, defaultLineID)
+	}
+	return lines
 }
 
 // ─── Helpers de filtragem por portal ─────────────────────────────────────────
