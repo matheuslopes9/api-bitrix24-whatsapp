@@ -647,7 +647,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "ok"
 	}
 
-	// Bind event (fallback para apps locais — Partner Apps usam HANDLER no register)
+	// Unbind primeiro para limpar qualquer binding antigo com URL desatualizada,
+	// depois rebind com a URL correta. "already binded" indica que havia um binding
+	// prévio — sem o unbind, não conseguimos atualizar o handler URL.
+	_ = h.bitrixClient.UnbindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", "")
 	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 		steps["bind_event"] = "erro: " + err.Error()
 	} else {
@@ -905,6 +908,52 @@ func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
 		result["raw"] = json.RawMessage(raw)
 	}
 	return c.JSON(result)
+}
+
+// POST /debug/rebind-event — força unbind+rebind do ONIMCONNECTORMESSAGEADD
+// Body JSON: { "domain": "uctdemo.bitrix24.com", "handler_url": "https://..." }
+// Se handler_url vier vazio, usa o appBase+"/bitrix/connector/event" padrão.
+func (h *handlers) debugRebindEvent(c *fiber.Ctx) error {
+	var body struct {
+		Domain     string `json:"domain"`
+		HandlerURL string `json:"handler_url"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+	domain := normalizePortalParam(body.Domain)
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+	creds := h.portalToCreds(portal)
+	handlerURL := body.HandlerURL
+	if handlerURL == "" {
+		handlerURL = h.cfg.App.BaseURL() + "/bitrix/connector/event"
+	}
+	steps := map[string]string{}
+
+	// Unbind sem especificar handler — remove todos os bindings do evento
+	if err := h.bitrixClient.UnbindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", ""); err != nil {
+		steps["unbind"] = "erro: " + err.Error()
+	} else {
+		steps["unbind"] = "ok"
+	}
+
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", handlerURL); err != nil {
+		steps["bind"] = "erro: " + err.Error()
+	} else {
+		steps["bind"] = "ok"
+	}
+
+	// Verifica o estado atual após rebind
+	raw, _ := h.bitrixClient.ListEventBindings(c.Context(), creds)
+	return c.JSON(fiber.Map{
+		"domain":      domain,
+		"handler_url": handlerURL,
+		"steps":       steps,
+		"bindings":    json.RawMessage(raw),
+	})
 }
 
 // GET /debug/connector-data?domain=...&line=218&connector=whatsapp_uc

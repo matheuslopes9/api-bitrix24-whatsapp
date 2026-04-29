@@ -501,14 +501,30 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 }
 
 // BindEvent registra um webhook para um evento do Bitrix24.
-// Implementação fiel ao tutorial oficial: só event + handler.
-// O Bitrix gerencia auth_type/event_type internamente.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
 	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
 		"event":   event,
 		"handler": handlerURL,
 	})
 	c.log.Info("event.bind response",
+		zap.String("event", event),
+		zap.String("handler", handlerURL),
+		zap.String("domain", creds.Domain),
+		zap.String("raw", string(raw)),
+		zap.Error(err),
+	)
+	return err
+}
+
+// UnbindEvent remove um webhook de evento do Bitrix24.
+// Necessário para limpar bindings antigos com URLs desatualizadas antes de rebind.
+func (c *Client) UnbindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
+	params := map[string]interface{}{"event": event}
+	if handlerURL != "" {
+		params["handler"] = handlerURL
+	}
+	raw, err := c.call(ctx, creds, "event.unbind", params)
+	c.log.Info("event.unbind response",
 		zap.String("event", event),
 		zap.String("handler", handlerURL),
 		zap.String("domain", creds.Domain),
