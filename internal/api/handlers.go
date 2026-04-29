@@ -434,8 +434,8 @@ func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
 
 
 // GET /ui/bitrix/lines?domain=empresa.bitrix24.com — varre e retorna todas as Open Lines do portal
-// Usa imopenlines.config.get para buscar nome e configuração de cada linha candidata.
-// Não requer input do usuário — apenas o domain do portal já instalado.
+// Busca sequencialmente para respeitar o rate limit do Bitrix (2 req/s).
+// Para quando encontra 3 erros consecutivos — linhas são numeradas sequencialmente.
 func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
 	domain := normalizePortalParam(c.Query("domain"))
 	if domain == "" {
@@ -455,71 +455,57 @@ func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
 	}
 
 	var lines []OpenLine
+	consecutiveMisses := 0
 
-	// Varre IDs de 1 a 500 em paralelo com limite de concorrência
-	type result struct {
-		line OpenLine
-		ok   bool
-	}
-	results := make(chan result, 500)
-	sem := make(chan struct{}, 20) // 20 requisições paralelas
-
-	for i := 1; i <= 500; i++ {
-		go func(id int) {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			raw, err := h.bitrixClient.GetOpenLineConfig(c.Context(), creds, id)
-			if err != nil || raw == nil {
-				results <- result{ok: false}
-				return
+	// Varre sequencialmente com pausa entre chamadas para não estourar rate limit.
+	// Para após 10 IDs consecutivos sem resultado (linhas não são contíguas mas
+	// gaps grandes indicam que chegamos no fim).
+	for id := 1; id <= 1000; id++ {
+		raw, err := h.bitrixClient.GetOpenLineConfig(c.Context(), creds, id)
+		if err != nil || raw == nil {
+			consecutiveMisses++
+			if consecutiveMisses >= 10 {
+				break
 			}
-			var cfg struct {
-				ID     string `json:"ID"`
-				Name   string `json:"LINE_NAME"`
-				Active string `json:"ACTIVE"`
-			}
-			if json.Unmarshal(raw, &cfg) != nil {
-				results <- result{ok: false}
-				return
-			}
-
-			// Verifica se o connector está ativo nessa linha
-			statusRaw, _ := h.bitrixClient.GetConnectorStatus(c.Context(), creds, portal.ConnectorID, id)
-			connectorOK := false
-			if statusRaw != nil {
-				var st struct {
-					Status    bool `json:"STATUS"`
-					Configured bool `json:"CONFIGURED"`
-				}
-				if json.Unmarshal(statusRaw, &st) == nil {
-					connectorOK = st.Status && st.Configured
-				}
-			}
-
-			results <- result{ok: true, line: OpenLine{
-				ID:          id,
-				Name:        cfg.Name,
-				Active:      cfg.Active == "Y",
-				ConnectorOK: connectorOK,
-			}}
-		}(i)
-	}
-
-	for i := 0; i < 500; i++ {
-		r := <-results
-		if r.ok {
-			lines = append(lines, r.line)
+			// Pausa para respeitar rate limit antes do próximo
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
-	}
 
-	// Ordena por ID
-	for i := 0; i < len(lines); i++ {
-		for j := i + 1; j < len(lines); j++ {
-			if lines[j].ID < lines[i].ID {
-				lines[i], lines[j] = lines[j], lines[i]
+		consecutiveMisses = 0
+
+		var cfg struct {
+			ID     string `json:"ID"`
+			Name   string `json:"LINE_NAME"`
+			Active string `json:"ACTIVE"`
+		}
+		if json.Unmarshal(raw, &cfg) != nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+
+		// Verifica status do connector nessa linha
+		statusRaw, _ := h.bitrixClient.GetConnectorStatus(c.Context(), creds, portal.ConnectorID, id)
+		connectorOK := false
+		if statusRaw != nil {
+			var st struct {
+				Status     bool `json:"STATUS"`
+				Configured bool `json:"CONFIGURED"`
+			}
+			if json.Unmarshal(statusRaw, &st) == nil {
+				connectorOK = st.Status && st.Configured
 			}
 		}
+
+		lines = append(lines, OpenLine{
+			ID:          id,
+			Name:        cfg.Name,
+			Active:      cfg.Active == "Y",
+			ConnectorOK: connectorOK,
+		})
+
+		// Pausa mínima entre requisições para respeitar rate limit
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	return c.JSON(fiber.Map{"domain": domain, "lines": lines, "total": len(lines)})
@@ -1254,46 +1240,13 @@ func (h *handlers) localCredsForDomain(ctx context.Context, domain string, porta
 	return h.portalToCreds(portal)
 }
 
-// discoverOpenLines retorna todas as open lines onde o connector deve ser ativado.
-// Consulta o Bitrix para obter a lista de open lines disponíveis e inclui a lineID
-// passada explicitamente. Isso resolve o problema de o admin configurar a linha
-// errada enquanto os chats acontecem em outra.
-func (h *handlers) discoverOpenLines(ctx context.Context, creds bitrix.TenantCreds, connectorID string, defaultLineID int) []int {
-	lines := []int{}
-	seen := map[int]bool{}
-
-	// Tenta listar as open lines via imconnector.list com status
-	// Bitrix não tem um método direto de listar as linhas — usamos as conhecidas
-	// via imconnector.status para verificar quais estão configuradas
-	candidateLines := []int{defaultLineID}
-	// Adiciona linhas comuns como candidatas para varredura
-	for _, l := range []int{1, 109, 218} {
-		candidateLines = append(candidateLines, l)
+// discoverOpenLines retorna apenas a linha especificada.
+// Não faz varredura — o usuário já escolheu a linha via UI.
+func (h *handlers) discoverOpenLines(_ context.Context, _ bitrix.TenantCreds, _ string, lineID int) []int {
+	if lineID <= 0 {
+		return []int{1}
 	}
-
-	for _, lid := range candidateLines {
-		if lid <= 0 || seen[lid] {
-			continue
-		}
-		seen[lid] = true
-		raw, err := h.bitrixClient.GetConnectorStatus(ctx, creds, connectorID, lid)
-		if err != nil {
-			continue
-		}
-		var status struct {
-			Error bool `json:"ERROR"`
-		}
-		// Inclui a linha se não tiver erro (existe no portal)
-		if json.Unmarshal(raw, &status) == nil && !status.Error {
-			lines = append(lines, lid)
-		}
-	}
-
-	// Garante que a linha default sempre está incluída
-	if !seen[defaultLineID] && defaultLineID > 0 {
-		lines = append(lines, defaultLineID)
-	}
-	return lines
+	return []int{lineID}
 }
 
 // ─── Helpers de filtragem por portal ─────────────────────────────────────────
