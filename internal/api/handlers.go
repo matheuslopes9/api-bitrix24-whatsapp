@@ -922,6 +922,37 @@ func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+// POST /debug/bitrix-call — executa qualquer método REST no Bitrix24 diretamente
+// Body JSON: { "domain": "uctdemo.bitrix24.com", "method": "event.unbind", "params": {...} }
+func (h *handlers) debugBitrixCall(c *fiber.Ctx) error {
+	var body struct {
+		Domain string                 `json:"domain"`
+		Method string                 `json:"method"`
+		Params map[string]interface{} `json:"params"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.Method == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e method são obrigatórios"})
+	}
+	domain := normalizePortalParam(body.Domain)
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+	creds := h.portalToCreds(portal)
+	if body.Params == nil {
+		body.Params = map[string]interface{}{}
+	}
+	raw, err := h.bitrixClient.RawCall(c.Context(), creds, body.Method, body.Params)
+	result := fiber.Map{"domain": domain, "method": body.Method}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	if raw != nil {
+		result["raw"] = json.RawMessage(raw)
+	}
+	return c.JSON(result)
+}
+
 // POST /debug/rebind-event — força unbind+rebind do ONIMCONNECTORMESSAGEADD
 // Body JSON: { "domain": "uctdemo.bitrix24.com", "handler_url": "https://..." }
 // Se handler_url vier vazio, usa o appBase+"/bitrix/connector/event" padrão.

@@ -555,6 +555,12 @@ func (c *Client) GetConnectorList(ctx context.Context, creds TenantCreds) (json.
 	return c.call(ctx, creds, "imconnector.list", map[string]interface{}{})
 }
 
+// RawCall executa qualquer método REST no Bitrix24 e retorna o resultado bruto.
+// Usado pelo endpoint /debug/bitrix-call para diagnóstico e operações manuais.
+func (c *Client) RawCall(ctx context.Context, creds TenantCreds, method string, params map[string]interface{}) (json.RawMessage, error) {
+	return c.call(ctx, creds, method, params)
+}
+
 // GetConnectorData retorna os dados configurados de um connector em uma linha específica.
 // Mostra o campo HANDLER que o Bitrix usa para entregar ONIMCONNECTORMESSAGEADD.
 func (c *Client) GetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int) (json.RawMessage, error) {
