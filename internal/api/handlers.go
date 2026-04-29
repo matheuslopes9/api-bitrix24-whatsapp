@@ -261,7 +261,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			eventURL := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
 			go func() {
 				ctx := context.Background()
-				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", acct.RedirectURI); err != nil {
+				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback"), eventURL); err != nil {
 					h.log.Warn("imconnector.register failed", zap.Error(err))
 				}
 				if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
@@ -293,7 +293,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	eventURL := strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
 	go func() {
 		ctx := context.Background()
-		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", h.cfg.Bitrix.RedirectURI); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback"), eventURL); err != nil {
 			h.log.Warn("imconnector.register failed", zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, fallbackCreds, "whatsapp_uc", h.cfg.Bitrix.OpenLineID, true); err != nil {
@@ -557,13 +557,14 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+		eventURL := appBase + "/bitrix/connector/event"
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 			h.log.Warn("uiLinkQueue: bind event failed", zap.Error(err))
 		}
 		h.log.Info("uiLinkQueue: connector activated",
@@ -631,8 +632,9 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["save_token"] = "ok"
 	}
 
+	eventURL := appBase + "/bitrix/connector/event"
 	// Register
-	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
 		steps["register"] = "erro: " + err.Error()
 	} else {
 		steps["register"] = "ok"
@@ -645,8 +647,8 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "ok"
 	}
 
-	// Bind event
-	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+	// Bind event (fallback para apps locais — Partner Apps usam HANDLER no register)
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 		steps["bind_event"] = "erro: " + err.Error()
 	} else {
 		steps["bind_event"] = "ok"
@@ -895,6 +897,32 @@ func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
 
 	creds := h.portalToCreds(portal)
 	raw, err := h.bitrixClient.ListEventBindings(c.Context(), creds)
+	result := fiber.Map{"domain": domain}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	if raw != nil {
+		result["raw"] = json.RawMessage(raw)
+	}
+	return c.JSON(result)
+}
+
+// GET /debug/connector-list?domain=...
+// Lista os connectors registrados no portal — permite verificar se o campo HANDLER
+// está configurado com a URL correta após o imconnector.register.
+func (h *handlers) debugConnectorList(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	creds := h.portalToCreds(portal)
+	raw, err := h.bitrixClient.GetConnectorList(c.Context(), creds)
 	result := fiber.Map{"domain": domain}
 	if err != nil {
 		result["error"] = err.Error()

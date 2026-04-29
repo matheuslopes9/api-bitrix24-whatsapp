@@ -347,9 +347,12 @@ type ConnectorChat struct {
 }
 
 // RegisterConnector registra este app como conector de canal externo no Bitrix24.
-// handlerURL é a base pública do servidor (ex: https://app.easypanel.host).
-// O MESSAGES_HANDLER recebe os eventos ONIMCONNECTORMESSAGEADD (operador → WA).
-func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, connectorID, name, handlerURL string) error {
+// appBaseURL é a base pública (ex: https://app.easypanel.host) — usada como PLACEMENT_HANDLER.
+// messageHandlerURL é o endpoint que o Bitrix chama quando o operador responde no Contact Center
+// (ex: https://app.easypanel.host/bitrix/connector/event).
+// O campo HANDLER no imconnector.register é o mecanismo oficial para Partner Apps receberem
+// ONIMCONNECTORMESSAGEADD — o event.bind funciona apenas em apps locais com escopo rest_app.
+func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, connectorID, name, appBaseURL, messageHandlerURL string) error {
 	icon := map[string]string{
 		"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48dGV4dCB4PSIyNCIgeT0iMzIiIGZvbnQtc2l6ZT0iMjQiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPtc8L3RleHQ+PC9zdmc+",
 	}
@@ -357,7 +360,8 @@ func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, conne
 		"ID":                connectorID,
 		"NAME":              name,
 		"ICON":              icon,
-		"PLACEMENT_HANDLER": handlerURL,
+		"PLACEMENT_HANDLER": appBaseURL,
+		"HANDLER":           messageHandlerURL,
 	})
 	c.log.Info("imconnector.register response", zap.String("raw", string(raw)), zap.Error(err))
 	return err
@@ -528,6 +532,12 @@ func (c *Client) GetConnectorStatus(ctx context.Context, creds TenantCreds, conn
 // Útil para ver se ONIMCONNECTORMESSAGEADD está realmente bindado e qual handler URL.
 func (c *Client) ListEventBindings(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
 	return c.call(ctx, creds, "event.get", map[string]interface{}{})
+}
+
+// GetConnectorList retorna a lista de connectors registrados no portal.
+// Útil para verificar se o HANDLER está configurado corretamente no connector.
+func (c *Client) GetConnectorList(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
+	return c.call(ctx, creds, "imconnector.list", map[string]interface{}{})
 }
 
 // ─── CRM ──────────────────────────────────────────────────────────────────

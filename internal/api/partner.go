@@ -143,8 +143,9 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
 		appBaseURL := h.cfg.App.BaseURL()
+		eventURL := appBaseURL + "/bitrix/connector/event"
 
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL, eventURL); err != nil {
 			h.log.Warn("partner install: imconnector.register failed", zap.String("domain", domain), zap.Error(err))
 		}
 		// open_line_id=0 → ativa com linha padrão 1; o admin pode ajustar depois
@@ -155,7 +156,6 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
 		}
-		eventURL := appBaseURL + "/bitrix/connector/event"
 		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 			h.log.Warn("partner install: event.bind failed", zap.String("domain", domain), zap.Error(err))
 		}
@@ -368,13 +368,14 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
 		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase); err != nil {
+		eventURL := appBase + "/bitrix/connector/event"
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
 			h.log.Warn("partner link: register connector failed", zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner link: activate connector failed", zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 			h.log.Warn("partner link: bind event failed", zap.Error(err))
 		}
 		h.log.Info("partner link: connector activated",
