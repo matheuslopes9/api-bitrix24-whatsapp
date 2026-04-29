@@ -534,6 +534,22 @@ func (c *Client) UnbindEvent(ctx context.Context, creds TenantCreds, event, hand
 	return err
 }
 
+// GetOpenLineConfig retorna a configuração de uma Open Line pelo ID.
+// Retorna nil se a linha não existir (Bitrix retorna false).
+func (c *Client) GetOpenLineConfig(ctx context.Context, creds TenantCreds, lineID int) (json.RawMessage, error) {
+	raw, err := c.call(ctx, creds, "imopenlines.config.get", map[string]interface{}{
+		"CONFIG_ID": lineID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Bitrix retorna "false" para linhas inexistentes
+	if string(raw) == "false" || string(raw) == "null" {
+		return nil, nil
+	}
+	return raw, nil
+}
+
 // GetConnectorStatus retorna o status do connector em uma Open Line específica.
 // Crítico para diagnosticar por que ONIMCONNECTORMESSAGEADD não dispara — se o
 // connector não estiver ATIVO na linha onde o operador responde, o evento nunca sai.

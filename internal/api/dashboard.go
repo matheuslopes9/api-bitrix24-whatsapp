@@ -604,9 +604,17 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         </select>
       </div>
       <div class="inp-group">
-        <label class="inp-label">Open Line ID (Fila de Atendimento)</label>
-        <input class="inp" id="fila-openline" type="number" min="1" placeholder="218" />
-        <span style="font-size:11px;color:#475569;margin-top:2px;">Encontre em Bitrix24 → Contact Center → Open Lines → coluna ID</span>
+        <label class="inp-label">Open Line (Fila de Atendimento)</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="inp" id="fila-openline" style="flex:1;">
+            <option value="">Selecione o portal primeiro...</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-sm" id="fila-buscar-linhas-btn" onclick="buscarLinhasBitrix()" style="white-space:nowrap;padding:0 12px;height:38px;" disabled>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Buscar Linhas
+          </button>
+        </div>
+        <span style="font-size:11px;color:#475569;margin-top:4px;display:block;" id="fila-linhas-hint">Selecione o portal e clique em "Buscar Linhas" para listar as Open Lines disponíveis.</span>
       </div>
     </div>
 
@@ -1464,16 +1472,32 @@ function abrirModalFila(prePortal) {
     var opt = document.createElement('option');
     opt.value = q.domain;
     opt.textContent = q.domain;
-    // Pré-seleciona: usa portal passado como argumento, ou o portal da URL em modo cliente
     if ((prePortal && q.domain === prePortal) || (!prePortal && PORTAL && q.domain.toLowerCase() === PORTAL.toLowerCase())) {
       opt.selected = true;
     }
     selPortal.appendChild(opt);
   });
-  // Em modo cliente, trava o select no portal da URL
   selPortal.disabled = !!PORTAL;
 
-  // Popula select de sessões — busca todas as sessões ativas (sem filtro de portal)
+  // Quando muda o portal, limpa as linhas e habilita o botão buscar
+  selPortal.onchange = function() {
+    document.getElementById('fila-openline').innerHTML = '<option value="">Clique em "Buscar Linhas"...</option>';
+    var hasDomain = !!selPortal.value;
+    document.getElementById('fila-buscar-linhas-btn').disabled = !hasDomain;
+    document.getElementById('fila-linhas-hint').textContent = hasDomain
+      ? 'Clique em "Buscar Linhas" para carregar as Open Lines disponíveis no portal.'
+      : 'Selecione o portal e clique em "Buscar Linhas".';
+  };
+
+  // Se portal já veio pré-selecionado, habilita botão e dispara busca automaticamente
+  var temPortal = !!selPortal.value;
+  document.getElementById('fila-buscar-linhas-btn').disabled = !temPortal;
+  document.getElementById('fila-openline').innerHTML = '<option value="">'
+    + (temPortal ? 'Clique em "Buscar Linhas"...' : 'Selecione o portal primeiro...')
+    + '</option>';
+  if (temPortal) { buscarLinhasBitrix(); }
+
+  // Popula select de sessões
   fetch('/ui/sessions')
   .then(function(r){return r.json();})
   .then(function(d){
@@ -1491,10 +1515,58 @@ function abrirModalFila(prePortal) {
     }
   }).catch(function(){});
 
-  document.getElementById('fila-openline').value = '';
   document.getElementById('fila-modal-save-btn').disabled = false;
   document.getElementById('fila-modal-save-btn').textContent = 'Criar Vínculo e Ativar';
   document.getElementById('fila-modal').style.display = 'flex';
+}
+
+function buscarLinhasBitrix() {
+  var domain = document.getElementById('fila-portal').value.trim();
+  if (!domain) { toast('Selecione o portal primeiro', 'error'); return; }
+
+  var btn = document.getElementById('fila-buscar-linhas-btn');
+  var sel = document.getElementById('fila-openline');
+  var hint = document.getElementById('fila-linhas-hint');
+
+  btn.disabled = true;
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Buscando...';
+  sel.innerHTML = '<option value="">Buscando linhas...</option>';
+  hint.textContent = 'Varrendo Open Lines no portal, aguarde...';
+
+  fetch(apiUrl('/ui/bitrix/lines?domain=' + encodeURIComponent(domain)))
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar Linhas';
+
+    var lines = d.lines || [];
+    if (lines.length === 0) {
+      sel.innerHTML = '<option value="">Nenhuma Open Line encontrada</option>';
+      hint.textContent = 'Nenhuma Open Line encontrada no portal. Verifique se o app tem permissão de acesso.';
+      return;
+    }
+
+    sel.innerHTML = '<option value="">Selecione a Open Line...</option>';
+    lines.forEach(function(l) {
+      var opt = document.createElement('option');
+      opt.value = l.id;
+      var status = l.connector_ok ? ' ✓' : '';
+      opt.textContent = l.name + ' (ID: ' + l.id + ')' + status;
+      if (l.connector_ok) { opt.style.color = '#4ade80'; }
+      sel.appendChild(opt);
+    });
+
+    var ativos = lines.filter(function(l){ return l.connector_ok; });
+    hint.textContent = lines.length + ' linhas encontradas'
+      + (ativos.length > 0 ? ' · ' + ativos.length + ' já com connector ativo (✓)' : '')
+      + '. Selecione a linha desejada.';
+  })
+  .catch(function() {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar Linhas';
+    sel.innerHTML = '<option value="">Erro ao buscar linhas</option>';
+    hint.textContent = 'Erro ao buscar linhas. Verifique se o token do portal é válido.';
+  });
 }
 
 function fecharModalFila() {
@@ -1507,7 +1579,7 @@ function salvarVinculoFila() {
   var lineId   = parseInt(document.getElementById('fila-openline').value);
   if (!domain) { toast('Selecione o portal Bitrix24', 'error'); return; }
   if (!jid)    { toast('Selecione o número WhatsApp', 'error'); return; }
-  if (!lineId || lineId < 1) { toast('Digite o ID da Open Line (número > 0)', 'error'); return; }
+  if (!lineId || lineId < 1) { toast('Selecione uma Open Line (clique em "Buscar Linhas")', 'error'); return; }
 
   var btn = document.getElementById('fila-modal-save-btn');
   btn.disabled = true; btn.textContent = 'Criando vínculo...';

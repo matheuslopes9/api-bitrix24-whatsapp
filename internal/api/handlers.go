@@ -411,6 +411,98 @@ func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
 }
 
 
+// GET /ui/bitrix/lines?domain=empresa.bitrix24.com — varre e retorna todas as Open Lines do portal
+// Usa imopenlines.config.get para buscar nome e configuração de cada linha candidata.
+// Não requer input do usuário — apenas o domain do portal já instalado.
+func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+	creds := h.localCredsForDomain(c.Context(), domain, portal)
+
+	type OpenLine struct {
+		ID          int    `json:"id"`
+		Name        string `json:"name"`
+		Active      bool   `json:"active"`
+		ConnectorOK bool   `json:"connector_ok"`
+	}
+
+	var lines []OpenLine
+
+	// Varre IDs de 1 a 500 em paralelo com limite de concorrência
+	type result struct {
+		line OpenLine
+		ok   bool
+	}
+	results := make(chan result, 500)
+	sem := make(chan struct{}, 20) // 20 requisições paralelas
+
+	for i := 1; i <= 500; i++ {
+		go func(id int) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			raw, err := h.bitrixClient.GetOpenLineConfig(c.Context(), creds, id)
+			if err != nil || raw == nil {
+				results <- result{ok: false}
+				return
+			}
+			var cfg struct {
+				ID     string `json:"ID"`
+				Name   string `json:"LINE_NAME"`
+				Active string `json:"ACTIVE"`
+			}
+			if json.Unmarshal(raw, &cfg) != nil {
+				results <- result{ok: false}
+				return
+			}
+
+			// Verifica se o connector está ativo nessa linha
+			statusRaw, _ := h.bitrixClient.GetConnectorStatus(c.Context(), creds, portal.ConnectorID, id)
+			connectorOK := false
+			if statusRaw != nil {
+				var st struct {
+					Status    bool `json:"STATUS"`
+					Configured bool `json:"CONFIGURED"`
+				}
+				if json.Unmarshal(statusRaw, &st) == nil {
+					connectorOK = st.Status && st.Configured
+				}
+			}
+
+			results <- result{ok: true, line: OpenLine{
+				ID:          id,
+				Name:        cfg.Name,
+				Active:      cfg.Active == "Y",
+				ConnectorOK: connectorOK,
+			}}
+		}(i)
+	}
+
+	for i := 0; i < 500; i++ {
+		r := <-results
+		if r.ok {
+			lines = append(lines, r.line)
+		}
+	}
+
+	// Ordena por ID
+	for i := 0; i < len(lines); i++ {
+		for j := i + 1; j < len(lines); j++ {
+			if lines[j].ID < lines[i].ID {
+				lines[i], lines[j] = lines[j], lines[i]
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{"domain": domain, "lines": lines, "total": len(lines)})
+}
+
 // GET /ui/bitrix/queues — lista portais instalados via Marketplace com info de sessões vinculadas
 // ?portal=empresa.bitrix24.com.br → filtra apenas aquele portal (modo cliente)
 func (h *handlers) uiListBitrixQueues(c *fiber.Ctx) error {
