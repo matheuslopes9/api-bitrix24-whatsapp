@@ -457,57 +457,86 @@ func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
 	}
 
 	var lines []OpenLine
-	consecutiveMisses := 0
 
-	// Varre sequencialmente com pausa entre chamadas para não estourar rate limit.
-	// Para após 10 IDs consecutivos sem resultado (linhas não são contíguas mas
-	// gaps grandes indicam que chegamos no fim).
-	for id := 1; id <= 1000; id++ {
-		raw, err := h.bitrixClient.GetOpenLineConfig(c.Context(), creds, id)
-		if err != nil || raw == nil {
+	// Varre os IDs em paralelo controlado (5 workers) com rate limiting.
+	// O Bitrix permite ~2 req/s por token — 5 workers com 400ms entre batches
+	// fica bem abaixo do limite e permite varrer 500 IDs em ~40s.
+	// Para ao encontrar 50 misses consecutivos (IDs acima do máximo do portal).
+	type result struct {
+		id          int
+		line        OpenLine
+		found       bool
+	}
+
+	const maxID = 500
+	const workers = 5
+	jobs := make(chan int, maxID)
+	results := make(chan result, maxID)
+
+	// Inicia workers
+	for w := 0; w < workers; w++ {
+		go func() {
+			for id := range jobs {
+				raw, err := h.bitrixClient.GetOpenLineConfig(c.Context(), creds, id)
+				if err != nil || raw == nil {
+					results <- result{id: id, found: false}
+					time.Sleep(200 * time.Millisecond)
+					continue
+				}
+				var cfg struct {
+					ID     string `json:"ID"`
+					Name   string `json:"LINE_NAME"`
+					Active string `json:"ACTIVE"`
+				}
+				if json.Unmarshal(raw, &cfg) != nil || cfg.ID == "" {
+					results <- result{id: id, found: false}
+					continue
+				}
+				statusRaw, _ := h.bitrixClient.GetConnectorStatus(c.Context(), creds, portal.ConnectorID, id)
+				connectorOK := false
+				if statusRaw != nil {
+					var st struct {
+						Status     bool `json:"STATUS"`
+						Configured bool `json:"CONFIGURED"`
+					}
+					if json.Unmarshal(statusRaw, &st) == nil {
+						connectorOK = st.Status && st.Configured
+					}
+				}
+				results <- result{id: id, found: true, line: OpenLine{
+					ID: id, Name: cfg.Name, Active: cfg.Active == "Y", ConnectorOK: connectorOK,
+				}}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}()
+	}
+
+	// Envia jobs
+	for i := 1; i <= maxID; i++ {
+		jobs <- i
+	}
+	close(jobs)
+
+	// Coleta resultados — rastreia misses consecutivos para early exit
+	allResults := make([]result, maxID)
+	for i := 0; i < maxID; i++ {
+		r := <-results
+		allResults[r.id-1] = r
+	}
+
+	// Monta lista ordenada, parando após 50 misses consecutivos no final
+	consecutiveMisses := 0
+	for i := 0; i < maxID; i++ {
+		r := allResults[i]
+		if r.found {
+			lines = append(lines, r.line)
+			consecutiveMisses = 0
+		} else {
 			consecutiveMisses++
-			if consecutiveMisses >= 10 {
+			if consecutiveMisses >= 50 && len(lines) > 0 {
 				break
 			}
-			// Pausa para respeitar rate limit antes do próximo
-			time.Sleep(50 * time.Millisecond)
-			continue
 		}
-
-		consecutiveMisses = 0
-
-		var cfg struct {
-			ID     string `json:"ID"`
-			Name   string `json:"LINE_NAME"`
-			Active string `json:"ACTIVE"`
-		}
-		if json.Unmarshal(raw, &cfg) != nil {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-
-		// Verifica status do connector nessa linha
-		statusRaw, _ := h.bitrixClient.GetConnectorStatus(c.Context(), creds, portal.ConnectorID, id)
-		connectorOK := false
-		if statusRaw != nil {
-			var st struct {
-				Status     bool `json:"STATUS"`
-				Configured bool `json:"CONFIGURED"`
-			}
-			if json.Unmarshal(statusRaw, &st) == nil {
-				connectorOK = st.Status && st.Configured
-			}
-		}
-
-		lines = append(lines, OpenLine{
-			ID:          id,
-			Name:        cfg.Name,
-			Active:      cfg.Active == "Y",
-			ConnectorOK: connectorOK,
-		})
-
-		// Pausa mínima entre requisições para respeitar rate limit
-		time.Sleep(50 * time.Millisecond)
 	}
 
 	return c.JSON(fiber.Map{"domain": domain, "lines": lines, "total": len(lines)})
