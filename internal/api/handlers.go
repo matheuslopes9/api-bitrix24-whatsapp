@@ -774,8 +774,8 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
-	// Retorna erro se algum passo crítico falhou
-	if steps["activate"] != "ok" {
+	// Retorna erro se nenhuma linha foi ativada
+	if !strings.HasPrefix(steps["activate"], "ok") {
 		return c.Status(500).JSON(fiber.Map{"status": "error", "steps": steps})
 	}
 	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "open_line_id": lineID, "steps": steps})
