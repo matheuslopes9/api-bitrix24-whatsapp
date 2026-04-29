@@ -186,14 +186,30 @@ func (c *Client) call(ctx context.Context, creds TenantCreds, method string, par
 	}
 	defer resp.Body.Close()
 
-	var result struct {
-		Result json.RawMessage `json:"result"`
-		Error  string          `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
+
+	var result struct {
+		Result           json.RawMessage `json:"result"`
+		Error            string          `json:"error"`
+		ErrorDescription string          `json:"error_description"`
+	}
+	if err := json.Unmarshal(rawBody, &result); err != nil {
+		return nil, fmt.Errorf("decode bitrix response (status %d, body: %s): %w", resp.StatusCode, string(rawBody), err)
+	}
 	if result.Error != "" {
+		c.log.Warn("bitrix api error",
+			zap.String("method", method),
+			zap.Int("status", resp.StatusCode),
+			zap.String("error", result.Error),
+			zap.String("error_description", result.ErrorDescription),
+			zap.String("raw_body", string(rawBody)),
+		)
+		if result.ErrorDescription != "" {
+			return nil, fmt.Errorf("bitrix error: %s — %s", result.Error, result.ErrorDescription)
+		}
 		return nil, fmt.Errorf("bitrix error: %s", result.Error)
 	}
 	return result.Result, nil
@@ -473,10 +489,17 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 
 // BindEvent registra um webhook para um evento específico do Bitrix24.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
-	_, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
+	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
 		"event":   event,
 		"handler": handlerURL,
 	})
+	c.log.Info("event.bind response",
+		zap.String("event", event),
+		zap.String("handler", handlerURL),
+		zap.String("domain", creds.Domain),
+		zap.String("raw", string(raw)),
+		zap.Error(err),
+	)
 	return err
 }
 
