@@ -487,64 +487,38 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 	return err
 }
 
-// BindEvent registra um webhook para um evento específico do Bitrix24.
-// offline=1 garante que o evento dispare mesmo sem o app estar no contexto ativo
-// do usuário — necessário para ONIMCONNECTORMESSAGEADD, já que o operador no
-// Open Channel não está "usando" o app no momento da resposta.
-//
-// Usa form-urlencoded em vez de JSON: testes empíricos mostraram que a API do
-// Bitrix24 silenciosamente descarta o campo "offline" quando recebido como JSON,
-// gravando offline=0 no bind mesmo após enviar offline=1. Com form-urlencoded
-// (mesmo formato do curl manual), o parâmetro é honrado.
+// BindEvent registra um webhook para um evento do Bitrix24.
+// Implementação fiel ao tutorial oficial: só event + handler.
+// O Bitrix gerencia auth_type/event_type internamente.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
-	t, err := c.token(ctx, creds)
-	if err != nil {
-		return err
-	}
-
-	domain := normalizeDomain(creds.Domain)
-	form := url.Values{
-		"event":   {event},
-		"handler": {handlerURL},
-		"offline": {"1"},
-	}
-	reqURL := fmt.Sprintf("%s/rest/event.bind.json?auth=%s", domain, t.AccessToken)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	rawBody, _ := io.ReadAll(resp.Body)
+	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
+		"event":   event,
+		"handler": handlerURL,
+	})
 	c.log.Info("event.bind response",
 		zap.String("event", event),
 		zap.String("handler", handlerURL),
 		zap.String("domain", creds.Domain),
-		zap.String("raw", string(rawBody)),
+		zap.String("raw", string(raw)),
+		zap.Error(err),
 	)
+	return err
+}
 
-	var result struct {
-		Result           json.RawMessage `json:"result"`
-		Error            string          `json:"error"`
-		ErrorDescription string          `json:"error_description"`
-	}
-	if err := json.Unmarshal(rawBody, &result); err != nil {
-		return fmt.Errorf("decode event.bind response (status %d, body: %s): %w", resp.StatusCode, string(rawBody), err)
-	}
-	if result.Error != "" {
-		if result.ErrorDescription != "" {
-			return fmt.Errorf("bitrix error: %s — %s", result.Error, result.ErrorDescription)
-		}
-		return fmt.Errorf("bitrix error: %s", result.Error)
-	}
-	return nil
+// GetConnectorStatus retorna o status do connector em uma Open Line específica.
+// Crítico para diagnosticar por que ONIMCONNECTORMESSAGEADD não dispara — se o
+// connector não estiver ATIVO na linha onde o operador responde, o evento nunca sai.
+func (c *Client) GetConnectorStatus(ctx context.Context, creds TenantCreds, connectorID string, lineID int) (json.RawMessage, error) {
+	return c.call(ctx, creds, "imconnector.status", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+	})
+}
+
+// ListEventBindings retorna todos os event handlers registrados para o app no portal.
+// Útil para ver se ONIMCONNECTORMESSAGEADD está realmente bindado e qual handler URL.
+func (c *Client) ListEventBindings(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
+	return c.call(ctx, creds, "event.get", map[string]interface{}{})
 }
 
 // ─── CRM ──────────────────────────────────────────────────────────────────

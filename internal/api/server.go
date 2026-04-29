@@ -91,6 +91,8 @@ func New(
 	// ─── Debug (sem auth — apenas para diagnóstico) ───────────────────────
 	app.Post("/debug/bitrix-event", h.debugBitrixEvent)
 	app.Get("/debug/bitrix-event", h.debugBitrixEvent)
+	app.Get("/debug/connector-status", h.debugConnectorStatus) // ?domain=...&line=...
+	app.Get("/debug/event-bindings", h.debugEventBindings)     // ?domain=...
 
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.

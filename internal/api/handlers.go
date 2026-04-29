@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -131,9 +132,9 @@ func (h *handlers) sendMessage(c *fiber.Ctx) error {
 // O Bitrix24 chama este endpoint com event=ONAPPINSTALL e auth[access_token].
 // O session_jid identifica qual conta BitrixAccount (já criada via UI) recebe o token.
 //
-// ESTE ENDPOINT TAMBÉM RECEBE ONIMCONNECTORMESSAGEADD (resposta do operador → WA),
-// porque o Bitrix exige que event handlers com offline=1 usem o Handler Path
-// oficial registrado pelo app — não aceita URLs alternativas.
+// Aceita também ONIMCONNECTORMESSAGEADD pelo mesmo caminho: o tutorial oficial do
+// Bitrix24 usa o mesmo handler URL para o slider de instalação e para os eventos
+// — ambos chegam aqui e são distinguidos pelo campo "event" do payload.
 func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	h.log.Info("bitrix callback received",
 		zap.String("method", c.Method()),
@@ -257,9 +258,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}
 			_ = h.repo.UpdateBitrixAccountStatus(c.Context(), sessionJID, db.BitrixAccountActive)
 
-			// O event handler aponta para a mesma URL da app (/bitrix/callback) — Bitrix
-			// exige que offline=1 use uma URL "instalada" pelo app, e essa é a única.
-			eventURL := acct.RedirectURI
+			eventURL := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
 			go func() {
 				ctx := context.Background()
 				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", acct.RedirectURI); err != nil {
@@ -291,7 +290,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	eventURL := h.cfg.Bitrix.RedirectURI
+	eventURL := strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
 	go func() {
 		ctx := context.Background()
 		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", h.cfg.Bitrix.RedirectURI); err != nil {
@@ -564,7 +563,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/callback"); err != nil {
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
 			h.log.Warn("uiLinkQueue: bind event failed", zap.Error(err))
 		}
 		h.log.Info("uiLinkQueue: connector activated",
@@ -621,7 +620,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 
 	creds := h.portalToCreds(portal)
 	appBase := h.cfg.App.BaseURL()
-	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/callback"))
+	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/connector/event"))
 	steps := map[string]string{}
 
 	// Salva token primeiro
@@ -646,9 +645,8 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "ok"
 	}
 
-	// Bind event — usa /bitrix/callback (Handler Path da app) porque offline=1 só
-	// aceita URLs registradas como handler oficial pelo Bitrix.
-	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/callback"); err != nil {
+	// Bind event
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
 		steps["bind_event"] = "erro: " + err.Error()
 	} else {
 		steps["bind_event"] = "ok"
@@ -840,6 +838,71 @@ func (h *handlers) debugBitrixEvent(c *fiber.Ctx) error {
 		"body_length":  len(c.Body()),
 		"content_type": c.Get("Content-Type"),
 	})
+}
+
+// GET /debug/connector-status?domain=...&line=218&connector=whatsapp_uc
+// Retorna o status real do connector na linha — crítico para diagnosticar
+// por que ONIMCONNECTORMESSAGEADD não dispara.
+func (h *handlers) debugConnectorStatus(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+	line := 0
+	fmt.Sscanf(c.Query("line"), "%d", &line)
+	if line == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "line é obrigatório"})
+	}
+	connectorID := c.Query("connector")
+	if connectorID == "" {
+		connectorID = "whatsapp_uc"
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	creds := h.portalToCreds(portal)
+	raw, err := h.bitrixClient.GetConnectorStatus(c.Context(), creds, connectorID, line)
+	result := fiber.Map{
+		"domain":       domain,
+		"connector_id": connectorID,
+		"line":         line,
+	}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	if raw != nil {
+		result["raw"] = json.RawMessage(raw)
+	}
+	return c.JSON(result)
+}
+
+// GET /debug/event-bindings?domain=...
+// Lista todos os event handlers registrados — confirma se ONIMCONNECTORMESSAGEADD
+// está bindado e qual a URL atual do handler.
+func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	creds := h.portalToCreds(portal)
+	raw, err := h.bitrixClient.ListEventBindings(c.Context(), creds)
+	result := fiber.Map{"domain": domain}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	if raw != nil {
+		result["raw"] = json.RawMessage(raw)
+	}
+	return c.JSON(result)
 }
 
 // ─── Helpers de filtragem por portal ─────────────────────────────────────────
