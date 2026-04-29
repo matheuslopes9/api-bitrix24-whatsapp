@@ -266,9 +266,11 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}
 		}
 		if err != nil {
-			h.log.Warn("bitrix callback: account not found for jid, saving with domain from response",
+			h.log.Warn("bitrix callback: account not found by jid, will save token by domain",
 				zap.String("session_jid", sessionJID), zap.Error(err))
+			// Cai no bloco abaixo para salvar pelo domain
 		} else {
+			// Achou o account — salva token e ativa
 			creds := bitrix.TenantCreds{
 				Domain:       acct.Domain,
 				ClientID:     acct.ClientID,
@@ -278,55 +280,116 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			if err := h.bitrixClient.SaveToken(c.Context(), creds, accessToken, refreshToken, exp); err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 			}
-			_ = h.repo.UpdateBitrixAccountStatus(c.Context(), sessionJID, db.BitrixAccountActive)
-
-			eventURL := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
-			go func() {
-				ctx := context.Background()
-				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback"), eventURL); err != nil {
-					h.log.Warn("imconnector.register failed", zap.Error(err))
-				}
-				if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
-					h.log.Warn("imconnector.activate failed", zap.Error(err))
-				}
-				if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-					h.log.Warn("event.bind failed", zap.Error(err))
-				}
-				h.log.Info("bitrix account activated", zap.String("domain", acct.Domain), zap.String("jid", sessionJID))
-			}()
+			_ = h.repo.UpdateBitrixAccountStatus(c.Context(), acct.SessionJID, db.BitrixAccountActive)
+			appBase := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback")
+			eventURL := appBase + "/bitrix/connector/event"
+			go h.activateConnectorForAccount(acct, creds, appBase, eventURL)
 			return c.SendStatus(fiber.StatusOK)
 		}
 	}
 
-	// Fallback sem session_jid: usa domain vindo da resposta do Bitrix
+	// Salva token pelo domain — funciona mesmo quando o session_jid está desatualizado.
+	// O domain é a chave estável: nunca muda, independente do device suffix do JID.
+	// Isso garante que o token do app local (INSTALLED:true) sempre fica disponível.
 	if domain == "" {
 		domain = h.cfg.Bitrix.Domain
 	}
-	fallbackCreds := bitrix.TenantCreds{
-		Domain:       domain,
+	appBase := h.cfg.App.BaseURL()
+	eventURL := appBase + "/bitrix/connector/event"
+
+	// Determina as credenciais: se existe um account para esse domain, usa as credenciais dele;
+	// caso contrário, usa as credenciais globais da config (app local único).
+	callbackCreds := bitrix.TenantCreds{
+		Domain:       "https://" + strings.TrimPrefix(strings.TrimPrefix(domain, "https://"), "http://"),
 		ClientID:     h.cfg.Bitrix.ClientID,
 		ClientSecret: h.cfg.Bitrix.ClientSecret,
 		RedirectURI:  h.cfg.Bitrix.RedirectURI,
 	}
-	if err := h.bitrixClient.SaveToken(c.Context(), fallbackCreds, accessToken, refreshToken, exp); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+
+	// Tenta encontrar um account para esse domain para usar suas credenciais específicas
+	normalDomain := normalizePortalParam(domain)
+	for _, activeJID := range h.waManager.ListSessions() {
+		if a, err := h.repo.GetBitrixAccountByJID(c.Context(), activeJID); err == nil {
+			acctDomain := normalizePortalParam(strings.TrimPrefix(a.Domain, "https://"))
+			if acctDomain == normalDomain {
+				callbackCreds = bitrix.TenantCreds{
+					Domain:       a.Domain,
+					ClientID:     a.ClientID,
+					ClientSecret: a.ClientSecret,
+					RedirectURI:  a.RedirectURI,
+				}
+				break
+			}
+		}
 	}
 
-	eventURL := strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
+	if err := h.bitrixClient.SaveToken(c.Context(), callbackCreds, accessToken, refreshToken, exp); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	h.log.Info("bitrix callback: token saved by domain", zap.String("domain", domain))
+
 	go func() {
 		ctx := context.Background()
-		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback"), eventURL); err != nil {
-			h.log.Warn("imconnector.register failed", zap.Error(err))
+		// Faz unbind de qualquer binding antigo e rebind com token fresco do app local
+		if existing, err := h.bitrixClient.ListEventBindings(ctx, callbackCreds); err == nil {
+			var bindings []struct {
+				Event   string `json:"event"`
+				Handler string `json:"handler"`
+			}
+			if json.Unmarshal(existing, &bindings) == nil {
+				for _, b := range bindings {
+					if b.Event == "ONIMCONNECTORMESSAGEADD" {
+						_ = h.bitrixClient.UnbindEvent(ctx, callbackCreds, b.Event, b.Handler)
+					}
+				}
+			}
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, fallbackCreds, "whatsapp_uc", h.cfg.Bitrix.OpenLineID, true); err != nil {
-			h.log.Warn("imconnector.activate failed", zap.Error(err))
+		connectorID := "whatsapp_uc"
+		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+			h.log.Warn("callback: imconnector.register failed", zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, fallbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("event.bind failed", zap.Error(err))
+		lineID := h.cfg.Bitrix.OpenLineID
+		if lineID <= 0 {
+			lineID = 1
 		}
+		if err := h.bitrixClient.ActivateConnector(ctx, callbackCreds, connectorID, lineID, true); err != nil {
+			h.log.Warn("callback: imconnector.activate failed", zap.Error(err))
+		}
+		if err := h.bitrixClient.BindEvent(ctx, callbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("callback: event.bind failed", zap.Error(err))
+		}
+		h.log.Info("callback: connector activated via domain fallback", zap.String("domain", domain))
 	}()
 
 	return c.SendStatus(fiber.StatusOK)
+}
+
+// activateConnectorForAccount faz register+activate+bind em background para um account específico.
+func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bitrix.TenantCreds, appBase, eventURL string) {
+	ctx := context.Background()
+	if existing, err := h.bitrixClient.ListEventBindings(ctx, creds); err == nil {
+		var bindings []struct {
+			Event   string `json:"event"`
+			Handler string `json:"handler"`
+		}
+		if json.Unmarshal(existing, &bindings) == nil {
+			for _, b := range bindings {
+				if b.Event == "ONIMCONNECTORMESSAGEADD" {
+					_ = h.bitrixClient.UnbindEvent(ctx, creds, b.Event, b.Handler)
+				}
+			}
+		}
+	}
+	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
+	}
+	if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
+		h.log.Warn("activateConnectorForAccount: activate failed", zap.Error(err))
+	}
+	if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+		h.log.Warn("activateConnectorForAccount: event.bind failed", zap.Error(err))
+	}
+	h.log.Info("activateConnectorForAccount: done", zap.String("domain", acct.Domain), zap.String("jid", acct.SessionJID))
 }
 
 // GET /bitrix/oauth/start
