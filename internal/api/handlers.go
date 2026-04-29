@@ -445,7 +445,9 @@ func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
 	}
-	creds := h.localCredsForDomain(c.Context(), domain, portal)
+	// Usa o portal token (Partner App) para listar linhas — funciona para leitura.
+	// O app local só é necessário para event.bind.
+	creds := h.portalToCreds(portal)
 
 	type OpenLine struct {
 		ID          int    `json:"id"`
