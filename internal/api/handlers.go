@@ -189,7 +189,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			Domain:       partnerMemberID, // placeholder até BX24.js enviar o domain real
 			AccessToken:  partnerToken,
 			RefreshToken: partnerRefresh,
-			ExpiresAt:    time.Now().Add(time.Duration(exp) * time.Second),
+			ExpiresAt:    time.Now().Add(time.Duration(sanitizeExpiresIn(exp)) * time.Second),
 			MemberID:     partnerMemberID,
 			ConnectorID:  "whatsapp_uc",
 			OpenLineID:   0,

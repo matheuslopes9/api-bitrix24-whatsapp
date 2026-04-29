@@ -79,8 +79,17 @@ func (c *Client) ExchangeCode(ctx context.Context, creds TenantCreds, code strin
 }
 
 // SaveToken salva um token diretamente (usado no installation handler do app local).
+// Sanitiza expiresIn: tokens do Bitrix vivem ~1h, então valores absurdos
+// (<= 0 ou > 24h) indicam dados corrompidos e são truncados para 1 hora.
+// Sem essa proteção, um expires_at no ano 2235 (corrupção observada em produção)
+// faz o cliente nunca renovar o token, causando expired_token permanente.
 func (c *Client) SaveToken(ctx context.Context, creds TenantCreds, accessToken, refreshToken string, expiresIn int) error {
 	domain := normalizeDomain(creds.Domain)
+	if expiresIn <= 0 || expiresIn > 86400 {
+		c.log.Warn("SaveToken: expiresIn out of range, defaulting to 3600s",
+			zap.String("domain", domain), zap.Int("expires_in_received", expiresIn))
+		expiresIn = 3600
+	}
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
 		Domain:       domain,

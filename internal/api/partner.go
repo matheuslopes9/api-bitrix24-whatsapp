@@ -120,6 +120,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 
 	expiresIn := 3600
 	fmt.Sscanf(expiresInStr, "%d", &expiresIn)
+	expiresIn = sanitizeExpiresIn(expiresIn)
 
 	portal := &db.BitrixPortal{
 		ID:           uuid.New(),
@@ -225,7 +226,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	if body.RefreshToken != "" {
 		existing.RefreshToken = body.RefreshToken
 	}
-	existing.ExpiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
+	existing.ExpiresAt = time.Now().Add(time.Duration(sanitizeExpiresIn(expiresIn)) * time.Second)
 	if body.MemberID != "" {
 		existing.MemberID = body.MemberID
 	}
@@ -407,6 +408,16 @@ func normalizePortalDomain(d string) string {
 	d = strings.TrimPrefix(d, "http://")
 	d = strings.TrimRight(d, "/")
 	return strings.ToLower(d)
+}
+
+// sanitizeExpiresIn protege contra valores absurdos de expires_in vindos do Bitrix
+// (ou de cálculos errados a partir de tokens já corrompidos no banco). Tokens do
+// Bitrix24 vivem 1h; qualquer coisa fora de [1, 86400] é tratada como 3600.
+func sanitizeExpiresIn(v int) int {
+	if v <= 0 || v > 86400 {
+		return 3600
+	}
+	return v
 }
 
 // portalToCreds converte um BitrixPortal em TenantCreds para chamadas ao bitrixClient.
