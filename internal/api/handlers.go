@@ -240,9 +240,31 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		fmt.Sscanf(expiresIn, "%d", &exp)
 	}
 
-	// Se temos session_jid, busca a conta cadastrada na UI e salva token/ativa
+	// Se temos session_jid, busca a conta cadastrada na UI e salva token/ativa.
+	// O JID na URL pode ter device suffix desatualizado (ex: :19 quando a sessão atual é :39).
+	// Tenta primeiro pelo JID exato; se não achar, tenta pela sessão ativa com mesmo número.
 	if sessionJID != "" {
 		acct, err := h.repo.GetBitrixAccountByJID(c.Context(), sessionJID)
+		if err != nil {
+			// Fallback: procura sessão ativa cujo número bate com o prefixo do JID da URL
+			phone := sessionJID
+			if idx := strings.Index(phone, ":"); idx != -1 {
+				phone = phone[:idx]
+			}
+			if idx := strings.Index(phone, "@"); idx != -1 {
+				phone = phone[:idx]
+			}
+			for _, activeJID := range h.waManager.ListSessions() {
+				if strings.HasPrefix(activeJID, phone) {
+					acct, err = h.repo.GetBitrixAccountByJID(c.Context(), activeJID)
+					if err == nil {
+						h.log.Info("bitrix callback: matched account by phone prefix",
+							zap.String("url_jid", sessionJID), zap.String("active_jid", activeJID))
+						break
+					}
+				}
+			}
+		}
 		if err != nil {
 			h.log.Warn("bitrix callback: account not found for jid, saving with domain from response",
 				zap.String("session_jid", sessionJID), zap.Error(err))
