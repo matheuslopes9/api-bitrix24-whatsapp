@@ -647,10 +647,22 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "ok"
 	}
 
-	// Unbind primeiro para limpar qualquer binding antigo com URL desatualizada,
-	// depois rebind com a URL correta. "already binded" indica que havia um binding
-	// prévio — sem o unbind, não conseguimos atualizar o handler URL.
-	_ = h.bitrixClient.UnbindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", "")
+	// Lista todos os bindings existentes do evento e remove cada um pelo handler URL.
+	// O Bitrix exige o handler URL no unbind — não aceita unbind genérico sem handler.
+	// Sem isso, cada chamada de BindEvent acumula bindings duplicados.
+	if existing, err := h.bitrixClient.ListEventBindings(c.Context(), creds); err == nil {
+		var bindings []struct {
+			Event   string `json:"event"`
+			Handler string `json:"handler"`
+		}
+		if json.Unmarshal(existing, &bindings) == nil {
+			for _, b := range bindings {
+				if b.Event == "ONIMCONNECTORMESSAGEADD" {
+					_ = h.bitrixClient.UnbindEvent(c.Context(), creds, b.Event, b.Handler)
+				}
+			}
+		}
+	}
 	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 		steps["bind_event"] = "erro: " + err.Error()
 	} else {
@@ -933,12 +945,24 @@ func (h *handlers) debugRebindEvent(c *fiber.Ctx) error {
 	}
 	steps := map[string]string{}
 
-	// Unbind sem especificar handler — remove todos os bindings do evento
-	if err := h.bitrixClient.UnbindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", ""); err != nil {
-		steps["unbind"] = "erro: " + err.Error()
-	} else {
-		steps["unbind"] = "ok"
+	// Lista todos os bindings existentes e remove cada um pelo handler URL específico.
+	// O Bitrix não aceita unbind sem handler — precisamos iterar e remover um a um.
+	existing, _ := h.bitrixClient.ListEventBindings(c.Context(), creds)
+	var bindings []struct {
+		Event   string `json:"event"`
+		Handler string `json:"handler"`
 	}
+	removed := 0
+	if existing != nil && json.Unmarshal(existing, &bindings) == nil {
+		for _, b := range bindings {
+			if b.Event == "ONIMCONNECTORMESSAGEADD" {
+				if err := h.bitrixClient.UnbindEvent(c.Context(), creds, b.Event, b.Handler); err == nil {
+					removed++
+				}
+			}
+		}
+	}
+	steps["unbind"] = fmt.Sprintf("removidos %d bindings", removed)
 
 	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", handlerURL); err != nil {
 		steps["bind"] = "erro: " + err.Error()
