@@ -543,11 +543,23 @@ func (c *Client) GetOpenLineConfig(ctx context.Context, creds TenantCreds, lineI
 	if err != nil {
 		return nil, err
 	}
-	// Bitrix retorna "false" para linhas inexistentes
 	if string(raw) == "false" || string(raw) == "null" {
 		return nil, nil
 	}
 	return raw, nil
+}
+
+// ListOpenLines retorna todas as Open Lines do portal de uma vez.
+// Usa imopenlines.config.list.get que suporta paginação (limit/offset).
+func (c *Client) ListOpenLines(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
+	return c.call(ctx, creds, "imopenlines.config.list.get", map[string]interface{}{
+		"PARAMS": map[string]interface{}{
+			"select": []string{"ID", "LINE_NAME", "ACTIVE"},
+			"order":  map[string]string{"ID": "ASC"},
+			"limit":  200,
+			"offset": 0,
+		},
+	})
 }
 
 // GetConnectorStatus retorna o status do connector em uma Open Line específica.
