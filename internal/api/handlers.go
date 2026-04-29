@@ -702,19 +702,42 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		h.log.Warn("uiLinkQueue: save token failed", zap.Error(err))
 	}
 
-	// Registra e ativa o connector em background — crítico para que o Bitrix aceite mensagens
+	// Registra e ativa o connector em background.
+	// Usa as creds do account recém-criado (app local, INSTALLED:true) para o event.bind.
+	localCreds := bitrix.TenantCreds{
+		Domain:       acct.Domain,
+		ClientID:     acct.ClientID,
+		ClientSecret: acct.ClientSecret,
+		RedirectURI:  acct.RedirectURI,
+	}
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
 		eventURL := appBase + "/bitrix/connector/event"
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
+		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("uiLinkQueue: bind event failed", zap.Error(err))
+		// Unbind qualquer binding antigo antes de fazer o novo
+		if existing, err := h.bitrixClient.ListEventBindings(ctx, localCreds); err == nil {
+			var bindings []struct {
+				Event   string `json:"event"`
+				Handler string `json:"handler"`
+			}
+			if json.Unmarshal(existing, &bindings) == nil {
+				for _, b := range bindings {
+					if b.Event == "ONIMCONNECTORMESSAGEADD" {
+						_ = h.bitrixClient.UnbindEvent(ctx, localCreds, b.Event, b.Handler)
+					}
+				}
+			}
+		}
+		if err := h.bitrixClient.BindEvent(ctx, localCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("uiLinkQueue: bind event failed (app local)", zap.Error(err))
+		} else {
+			h.log.Info("uiLinkQueue: event bound with local app token")
 		}
 		h.log.Info("uiLinkQueue: connector activated",
 			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
@@ -815,24 +838,67 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// Remove bindings antigos e registra o novo
-	if existing, err := h.bitrixClient.ListEventBindings(c.Context(), creds); err == nil {
-		var bindings []struct {
-			Event   string `json:"event"`
-			Handler string `json:"handler"`
+	// event.bind deve usar o token do app local (INSTALLED:true).
+	// Busca o account ativo para esse domain — ele tem ClientID/Secret do app local.
+	// Faz unbind+rebind diretamente na API do Bitrix com o access_token do account.
+	bindDone := false
+	for _, activeJID := range h.waManager.ListSessions() {
+		acct, err := h.repo.GetBitrixAccountByJID(c.Context(), activeJID)
+		if err != nil {
+			continue
 		}
-		if json.Unmarshal(existing, &bindings) == nil {
-			for _, b := range bindings {
-				if b.Event == "ONIMCONNECTORMESSAGEADD" {
-					_ = h.bitrixClient.UnbindEvent(c.Context(), creds, b.Event, b.Handler)
+		acctDomain := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(acct.Domain, "https://"), "http://"))
+		if acctDomain != domain {
+			continue
+		}
+		// Usa as creds do app local para buscar o token (ClientID diferente do Partner App)
+		localCreds := bitrix.TenantCreds{
+			Domain:       acct.Domain,
+			ClientID:     acct.ClientID,
+			ClientSecret: acct.ClientSecret,
+			RedirectURI:  acct.RedirectURI,
+		}
+		if existing, err := h.bitrixClient.ListEventBindings(c.Context(), localCreds); err == nil {
+			var bindings []struct {
+				Event   string `json:"event"`
+				Handler string `json:"handler"`
+			}
+			if json.Unmarshal(existing, &bindings) == nil {
+				for _, b := range bindings {
+					if b.Event == "ONIMCONNECTORMESSAGEADD" {
+						_ = h.bitrixClient.UnbindEvent(c.Context(), localCreds, b.Event, b.Handler)
+					}
 				}
 			}
 		}
+		if err := h.bitrixClient.BindEvent(c.Context(), localCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			steps["bind_event"] = "erro (app local): " + err.Error()
+		} else {
+			steps["bind_event"] = "ok (app local)"
+			bindDone = true
+		}
+		break
 	}
-	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-		steps["bind_event"] = "erro: " + err.Error()
-	} else {
-		steps["bind_event"] = "ok"
+	if !bindDone && steps["bind_event"] == "" {
+		// Fallback: usa creds do portal (Partner App)
+		if existing, err := h.bitrixClient.ListEventBindings(c.Context(), creds); err == nil {
+			var bindings []struct {
+				Event   string `json:"event"`
+				Handler string `json:"handler"`
+			}
+			if json.Unmarshal(existing, &bindings) == nil {
+				for _, b := range bindings {
+					if b.Event == "ONIMCONNECTORMESSAGEADD" {
+						_ = h.bitrixClient.UnbindEvent(c.Context(), creds, b.Event, b.Handler)
+					}
+				}
+			}
+		}
+		if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			steps["bind_event"] = "erro (partner): " + err.Error()
+		} else {
+			steps["bind_event"] = "ok (partner app)"
+		}
 	}
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
