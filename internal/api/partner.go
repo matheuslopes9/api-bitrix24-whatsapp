@@ -154,7 +154,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
 		}
-		eventURL := appBaseURL + "/bitrix/connector/event"
+		eventURL := appBaseURL + "/bitrix/callback"
 		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 			h.log.Warn("partner install: event.bind failed", zap.String("domain", domain), zap.Error(err))
 		}
@@ -373,7 +373,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner link: activate connector failed", zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/callback"); err != nil {
 			h.log.Warn("partner link: bind event failed", zap.Error(err))
 		}
 		h.log.Info("partner link: connector activated",

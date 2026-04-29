@@ -130,6 +130,10 @@ func (h *handlers) sendMessage(c *fiber.Ctx) error {
 // GET|POST /bitrix/callback?session_jid=<jid> — handler de instalação do app local Bitrix24
 // O Bitrix24 chama este endpoint com event=ONAPPINSTALL e auth[access_token].
 // O session_jid identifica qual conta BitrixAccount (já criada via UI) recebe o token.
+//
+// ESTE ENDPOINT TAMBÉM RECEBE ONIMCONNECTORMESSAGEADD (resposta do operador → WA),
+// porque o Bitrix exige que event handlers com offline=1 usem o Handler Path
+// oficial registrado pelo app — não aceita URLs alternativas.
 func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	h.log.Info("bitrix callback received",
 		zap.String("method", c.Method()),
@@ -142,6 +146,12 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 
 	// App local envia form-encoded com auth[access_token]
 	event := c.FormValue("event")
+
+	// Roteia ONIMCONNECTORMESSAGEADD direto pro handler de connector — o operador
+	// respondeu no Open Channel e a mensagem precisa ir pro WhatsApp.
+	if event == "ONIMCONNECTORMESSAGEADD" {
+		return h.bitrixConnectorEvent(c)
+	}
 	accessToken := c.FormValue("auth[access_token]")
 	refreshToken := c.FormValue("auth[refresh_token]")
 	domain := c.FormValue("auth[domain]")
@@ -247,7 +257,9 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}
 			_ = h.repo.UpdateBitrixAccountStatus(c.Context(), sessionJID, db.BitrixAccountActive)
 
-			eventURL := strings.TrimSuffix(acct.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
+			// O event handler aponta para a mesma URL da app (/bitrix/callback) — Bitrix
+			// exige que offline=1 use uma URL "instalada" pelo app, e essa é a única.
+			eventURL := acct.RedirectURI
 			go func() {
 				ctx := context.Background()
 				if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", acct.RedirectURI); err != nil {
@@ -279,7 +291,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	eventURL := strings.TrimSuffix(h.cfg.Bitrix.RedirectURI, "/bitrix/callback") + "/bitrix/connector/event"
+	eventURL := h.cfg.Bitrix.RedirectURI
 	go func() {
 		ctx := context.Background()
 		if err := h.bitrixClient.RegisterConnector(ctx, fallbackCreds, "whatsapp_uc", "WhatsApp UC", h.cfg.Bitrix.RedirectURI); err != nil {
@@ -552,7 +564,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/callback"); err != nil {
 			h.log.Warn("uiLinkQueue: bind event failed", zap.Error(err))
 		}
 		h.log.Info("uiLinkQueue: connector activated",
@@ -609,7 +621,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 
 	creds := h.portalToCreds(portal)
 	appBase := h.cfg.App.BaseURL()
-	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/connector/event"))
+	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/callback"))
 	steps := map[string]string{}
 
 	// Salva token primeiro
@@ -634,8 +646,9 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "ok"
 	}
 
-	// Bind event
-	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
+	// Bind event — usa /bitrix/callback (Handler Path da app) porque offline=1 só
+	// aceita URLs registradas como handler oficial pelo Bitrix.
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/callback"); err != nil {
 		steps["bind_event"] = "erro: " + err.Error()
 	} else {
 		steps["bind_event"] = "ok"

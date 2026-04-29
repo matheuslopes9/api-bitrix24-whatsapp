@@ -488,10 +488,14 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 }
 
 // BindEvent registra um webhook para um evento específico do Bitrix24.
+// offline=1 garante que o evento dispare mesmo sem o app estar no contexto ativo
+// do usuário — necessário para ONIMCONNECTORMESSAGEADD, já que o operador no
+// Open Channel não está "usando" o app no momento da resposta.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
 	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
 		"event":   event,
 		"handler": handlerURL,
+		"offline": 1,
 	})
 	c.log.Info("event.bind response",
 		zap.String("event", event),
