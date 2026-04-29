@@ -535,9 +535,17 @@ func (c *Client) ListEventBindings(ctx context.Context, creds TenantCreds) (json
 }
 
 // GetConnectorList retorna a lista de connectors registrados no portal.
-// Útil para verificar se o HANDLER está configurado corretamente no connector.
 func (c *Client) GetConnectorList(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
 	return c.call(ctx, creds, "imconnector.list", map[string]interface{}{})
+}
+
+// GetConnectorData retorna os dados configurados de um connector em uma linha específica.
+// Mostra o campo HANDLER que o Bitrix usa para entregar ONIMCONNECTORMESSAGEADD.
+func (c *Client) GetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int) (json.RawMessage, error) {
+	return c.call(ctx, creds, "imconnector.connector.data.get", map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+	})
 }
 
 // ─── CRM ──────────────────────────────────────────────────────────────────

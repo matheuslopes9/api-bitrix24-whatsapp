@@ -907,6 +907,41 @@ func (h *handlers) debugEventBindings(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+// GET /debug/connector-data?domain=...&line=218&connector=whatsapp_uc
+// Retorna os dados do connector em uma linha — inclui o campo HANDLER configurado
+// via imconnector.register, que é o endpoint que o Bitrix usa para entregar mensagens.
+func (h *handlers) debugConnectorData(c *fiber.Ctx) error {
+	domain := normalizePortalParam(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain é obrigatório"})
+	}
+	line := 0
+	fmt.Sscanf(c.Query("line"), "%d", &line)
+	if line == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "line é obrigatório"})
+	}
+	connectorID := c.Query("connector")
+	if connectorID == "" {
+		connectorID = "whatsapp_uc"
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
+	}
+
+	creds := h.portalToCreds(portal)
+	raw, err := h.bitrixClient.GetConnectorData(c.Context(), creds, connectorID, line)
+	result := fiber.Map{"domain": domain, "connector": connectorID, "line": line}
+	if err != nil {
+		result["error"] = err.Error()
+	}
+	if raw != nil {
+		result["raw"] = json.RawMessage(raw)
+	}
+	return c.JSON(result)
+}
+
 // GET /debug/connector-list?domain=...
 // Lista os connectors registrados no portal — permite verificar se o campo HANDLER
 // está configurado com a URL correta após o imconnector.register.
