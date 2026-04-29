@@ -347,12 +347,11 @@ type ConnectorChat struct {
 }
 
 // RegisterConnector registra este app como conector de canal externo no Bitrix24.
-// appBaseURL é a base pública (ex: https://app.easypanel.host) — usada como PLACEMENT_HANDLER.
-// messageHandlerURL é o endpoint que o Bitrix chama quando o operador responde no Contact Center
-// (ex: https://app.easypanel.host/bitrix/connector/event).
-// O campo HANDLER no imconnector.register é o mecanismo oficial para Partner Apps receberem
-// ONIMCONNECTORMESSAGEADD — o event.bind funciona apenas em apps locais com escopo rest_app.
-func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, connectorID, name, appBaseURL, messageHandlerURL string) error {
+// PLACEMENT_HANDLER é a URL que o Bitrix usa para entregar o evento ONIMCONNECTORMESSAGEADD
+// quando o operador responde no Contact Center. Deve apontar para o endpoint que processa
+// a mensagem, não para a raiz do app.
+// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-register.html
+func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, connectorID, name, placementHandlerURL string) error {
 	icon := map[string]string{
 		"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48dGV4dCB4PSIyNCIgeT0iMzIiIGZvbnQtc2l6ZT0iMjQiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPtc8L3RleHQ+PC9zdmc+",
 	}
@@ -360,8 +359,7 @@ func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, conne
 		"ID":                connectorID,
 		"NAME":              name,
 		"ICON":              icon,
-		"PLACEMENT_HANDLER": appBaseURL,
-		"HANDLER":           messageHandlerURL,
+		"PLACEMENT_HANDLER": placementHandlerURL,
 	})
 	c.log.Info("imconnector.register response", zap.String("raw", string(raw)), zap.Error(err))
 	return err

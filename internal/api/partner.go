@@ -145,7 +145,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		appBaseURL := h.cfg.App.BaseURL()
 		eventURL := appBaseURL + "/bitrix/connector/event"
 
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL, eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
 			h.log.Warn("partner install: imconnector.register failed", zap.String("domain", domain), zap.Error(err))
 		}
 		// open_line_id=0 → ativa com linha padrão 1; o admin pode ajustar depois
@@ -369,7 +369,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		creds := h.portalToCreds(portal)
 		appBase := h.cfg.App.BaseURL()
 		eventURL := appBase + "/bitrix/connector/event"
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
 			h.log.Warn("partner link: register connector failed", zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {

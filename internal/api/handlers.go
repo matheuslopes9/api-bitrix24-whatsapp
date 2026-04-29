@@ -345,7 +345,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}
 		}
 		connectorID := "whatsapp_uc"
-		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", eventURL); err != nil {
 			h.log.Warn("callback: imconnector.register failed", zap.Error(err))
 		}
 		lineID := h.cfg.Bitrix.OpenLineID
@@ -380,7 +380,7 @@ func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bit
 			}
 		}
 	}
-	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", eventURL); err != nil {
 		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
 	}
 	if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
@@ -714,7 +714,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
 		eventURL := appBase + "/bitrix/connector/event"
-		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
@@ -814,7 +814,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 
 	eventURL := appBase + "/bitrix/connector/event"
 	// Register
-	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase, eventURL); err != nil {
+	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
 		steps["register"] = "erro: " + err.Error()
 	} else {
 		steps["register"] = "ok"
