@@ -149,7 +149,9 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		creds := h.portalToCreds(portal)
 		appBaseURL := h.cfg.App.BaseURL()
 		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL+"/bitrix-connect"); err != nil {
-			h.log.Warn("partner install: imconnector.register failed", zap.String("domain", domain), zap.Error(err))
+			// APPLICATION_REGISTRATION_ERROR significa que o conector já está registrado
+			// por este app — pode continuar com activate normalmente.
+			h.log.Warn("partner install: imconnector.register failed (may already exist)", zap.String("domain", domain), zap.Error(err))
 		}
 		lineID := portal.OpenLineID
 		if lineID == 0 {
