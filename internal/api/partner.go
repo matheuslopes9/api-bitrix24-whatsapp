@@ -134,7 +134,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		RefreshToken: refreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
 		MemberID:     memberID,
-		ConnectorID:  "whatsapp_uc",
+		ConnectorID:  "whatsapp_uc_v2",
 		OpenLineID:   0,
 	}
 
@@ -219,7 +219,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		existing = &db.BitrixPortal{
 			ID:          uuid.New(),
 			Domain:      domain,
-			ConnectorID: "whatsapp_uc",
+			ConnectorID: "whatsapp_uc_v2",
 			OpenLineID:  0,
 		}
 	}
@@ -306,7 +306,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		// Cria portal mínimo para não bloquear
 		portal = &db.BitrixPortal{
 			Domain:      domain,
-			ConnectorID: "whatsapp_uc",
+			ConnectorID: "whatsapp_uc_v2",
 			OpenLineID:  1,
 		}
 	}
