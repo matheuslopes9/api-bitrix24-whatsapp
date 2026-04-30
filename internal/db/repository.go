@@ -24,8 +24,10 @@ func (r *Repository) UpsertSession(ctx context.Context, s *WhatsAppSession) erro
 		INSERT INTO whatsapp_sessions (id, jid, phone, display_name, status, session_file)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (jid) DO UPDATE SET
+			id           = EXCLUDED.id,
 			display_name = EXCLUDED.display_name,
 			status       = EXCLUDED.status,
+			session_file = EXCLUDED.session_file,
 			last_seen    = NOW()
 	`, s.ID, s.JID, s.Phone, s.DisplayName, s.Status, s.SessionFile)
 	return err
