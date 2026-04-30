@@ -719,9 +719,9 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		eventURL := appBase + "/bitrix/connector/event"
-		// Usa as creds do portal (Partner App instalado com INSTALLED:true no cliente)
-		// para register, activate e event.bind.
+		// Apenas register+activate — o event.bind é gerenciado exclusivamente pelo
+		// ONAPPINSTALL do app Local (INSTALLED:true). Fazer bind aqui com o token do
+		// Partner App (INSTALLED:false) cria um binding inválido que o Bitrix ignora.
 		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
@@ -730,11 +730,6 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
-		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("uiLinkQueue: event.bind failed", zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("uiLinkQueue: event.bind ok", zap.String("url", eventURL))
 		}
 		h.log.Info("uiLinkQueue: connector activated",
 			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
@@ -838,13 +833,9 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// event.bind com o token do portal (Partner App tem INSTALLED:true no portal do cliente).
-	eventURL := appBase + "/bitrix/connector/event"
-	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-		steps["bind_event"] = "erro: " + err.Error()
-	} else {
-		steps["bind_event"] = "ok"
-	}
+	// event.bind é gerenciado exclusivamente pelo ONAPPINSTALL do app Local (INSTALLED:true).
+	// Fazer bind aqui com o token do Partner App (INSTALLED:false) cria binding inválido.
+	steps["bind_event"] = "gerenciado pelo ONAPPINSTALL (app Local, INSTALLED:true)"
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
