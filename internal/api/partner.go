@@ -168,7 +168,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 
 	// Redireciona para /bitrix-connect — o Bitrix exibe essa página dentro do iframe
 	// imediatamente após a instalação, mostrando ao cliente o fluxo de conexão do WhatsApp.
-	return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect", fiber.StatusFound)
+	return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect?install=1", fiber.StatusFound)
 }
 
 // ─── POST /bitrix/auth ───────────────────────────────────────────────────────
@@ -469,7 +469,7 @@ p{font-size:14px;color:#555}
 <script>
 function getQueryParam(n){return new URLSearchParams(window.location.search).get(n)||'';}
 
-function salvarERedirecionarAdmin(auth) {
+function salvarERedirecionarAdmin(auth, isInstall) {
   var domain       = (auth.domain        || '').replace(/^https?:\/\//,'').replace(/\/$/,'');
   var accessToken  = auth.access_token   || '';
   var refreshToken = auth.refresh_token  || '';
@@ -492,21 +492,18 @@ function salvarERedirecionarAdmin(auth) {
   })
   .then(function(r){return r.json();})
   .then(function(){
-    document.getElementById('msg').textContent = 'Finalizando instalação...';
-    // Sinaliza ao Bitrix que a instalação foi concluída — muda INSTALLED para true
-    // e libera a entrega de eventos via event.bind (ONIMCONNECTORMESSAGEADD).
-    if (typeof BX24 !== 'undefined' && BX24.installFinish) {
+    // Se é fluxo de instalação, chama installFinish para marcar INSTALLED:true
+    // Isso libera event.bind e demais funcionalidades do app no Bitrix.
+    if (isInstall && typeof BX24 !== 'undefined' && BX24.installFinish) {
+      document.getElementById('msg').textContent = 'Finalizando instalação...';
       BX24.installFinish();
     } else {
+      document.getElementById('msg').textContent = 'Abrindo painel...';
       window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
     }
   })
   .catch(function(){
-    if (typeof BX24 !== 'undefined' && BX24.installFinish) {
-      BX24.installFinish();
-    } else {
-      window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
-    }
+    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
   });
 }
 
@@ -516,17 +513,18 @@ var t = setTimeout(function(){
   var qsToken  = getQueryParam('AUTH_ID') || getQueryParam('access_token');
   if (qsDomain && qsToken) {
     salvarERedirecionarAdmin({domain:qsDomain, access_token:qsToken,
-      refresh_token:getQueryParam('REFRESH_ID'), member_id:getQueryParam('member_id')});
+      refresh_token:getQueryParam('REFRESH_ID'), member_id:getQueryParam('member_id')}, false);
     return;
   }
-  // Sem credenciais — vai para o dashboard sem filtro (admin)
   window.location.href = '/dashboard';
 }, 3000);
 
 if (typeof BX24 !== 'undefined') {
   BX24.init(function(){
     clearTimeout(t);
-    salvarERedirecionarAdmin(BX24.getAuth());
+    // isInstall=true quando a página abre via fluxo de instalação (PLACEMENT=DEFAULT)
+    var isInstall = (getQueryParam('PLACEMENT') === 'DEFAULT' || getQueryParam('install') === '1');
+    salvarERedirecionarAdmin(BX24.getAuth(), isInstall);
   });
 }
 </script>
