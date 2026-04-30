@@ -263,12 +263,45 @@ func (m *Manager) TypingDelay(text string) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
+// resolveSession encontra a sessão pelo JID exato. Se não encontrar, tenta por prefixo
+// de número de telefone — necessário quando o JID do banco (ex: :19) difere do JID real
+// da sessão em memória após reconexão (ex: :44).
+func (m *Manager) resolveSession(sessionJID string) (*Session, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if sess, ok := m.sessions[sessionJID]; ok {
+		return sess, true
+	}
+	// Extrai o número base: "5519910001772:19@s.whatsapp.net" → "5519910001772"
+	phone := sessionJID
+	if at := strings.Index(phone, "@"); at > 0 {
+		phone = phone[:at]
+	}
+	if colon := strings.Index(phone, ":"); colon > 0 {
+		phone = phone[:colon]
+	}
+	if phone == "" {
+		return nil, false
+	}
+	for jid, sess := range m.sessions {
+		base := jid
+		if at := strings.Index(base, "@"); at > 0 {
+			base = base[:at]
+		}
+		if colon := strings.Index(base, ":"); colon > 0 {
+			base = base[:colon]
+		}
+		if base == phone {
+			return sess, true
+		}
+	}
+	return nil, false
+}
+
 // SendTyping envia o indicador de "digitando..." para o contato e para automaticamente
 // quando a mensagem for enviada. Deve ser chamado logo antes de SendMessage/SendDocument/SendAudio.
 func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, duration time.Duration) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return
 	}
@@ -286,10 +319,7 @@ func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, dura
 
 // Send envia uma mensagem de texto.
 func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (string, error) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
-
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
@@ -311,10 +341,7 @@ func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (str
 // SendAudio envia um arquivo de áudio no WhatsApp como mensagem de áudio reproduzível inline.
 // ptt=true faz aparecer como voice note com botão de play; ptt=false como áudio normal.
 func (m *Manager) SendAudio(ctx context.Context, sessionJID, toJID string, data []byte, mime string, ptt bool) (string, error) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
-
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
@@ -353,10 +380,7 @@ func (m *Manager) SendAudio(ctx context.Context, sessionJID, toJID string, data 
 
 // SendDocument envia um arquivo como documento no WhatsApp e retorna o WA message ID.
 func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, data []byte, mime, fileName string) (string, error) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
-
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
