@@ -490,12 +490,21 @@ function salvarERedirecionarAdmin(auth) {
   })
   .then(function(r){return r.json();})
   .then(function(){
-    document.getElementById('msg').textContent = 'Abrindo painel...';
-    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+    document.getElementById('msg').textContent = 'Finalizando instalação...';
+    // Sinaliza ao Bitrix que a instalação foi concluída — muda INSTALLED para true
+    // e libera a entrega de eventos via event.bind (ONIMCONNECTORMESSAGEADD).
+    if (typeof BX24 !== 'undefined' && BX24.installFinish) {
+      BX24.installFinish();
+    } else {
+      window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+    }
   })
   .catch(function(){
-    // mesmo com erro, redireciona com portal para manter isolamento
-    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+    if (typeof BX24 !== 'undefined' && BX24.installFinish) {
+      BX24.installFinish();
+    } else {
+      window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+    }
   });
 }
 
