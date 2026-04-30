@@ -1047,16 +1047,12 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	cleanText := stripBBCode(text)
 	ctx := context.Background()
 
-	// Busca o contato pelo JID normalizado — tem o WAPhone real (número de telefone)
-	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
-
-	// toJID: usa o número de telefone real do contato quando disponível.
-	// chatID pode ser "@lid" (LID do WhatsApp) que o whatsmeow não consegue enviar diretamente.
-	// WAPhone tem o número real (ex: "5519910001772") → enviamos para "5519910001772@s.whatsapp.net".
+	// toJID: usa o chatID normalizado diretamente.
+	// Se for @lid, o whatsmeow resolve internamente — não converter para @s.whatsapp.net
+	// pois o LID (127586399207476) não é um número de telefone real.
 	toJID := chatID
-	if err == nil && contact.WAPhone != "" {
-		toJID = contact.WAPhone + "@s.whatsapp.net"
-	}
+
+	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
 
 	if err != nil {
 		h.log.Warn("connector event: contact not found by normalized JID, trying sessions directly",
