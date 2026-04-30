@@ -378,6 +378,9 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		}
 		h.log.Info("partner link: connector activated",
 			zap.String("jid", sessionJID), zap.String("domain", domain))
+		// Refaz o event.bind com o app Local (INSTALLED:true) — o activate acima pode
+		// ter resetado os handlers do Bitrix para este conector.
+		h.rebindEventWithLocalApp(ctx, domain)
 	}()
 
 	h.log.Info("partner link: session linked to portal",
