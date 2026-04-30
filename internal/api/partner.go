@@ -31,6 +31,11 @@ import (
 // Payload form-encoded com: event, auth[access_token], auth[refresh_token],
 // auth[domain], auth[expires_in], auth[member_id].
 func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
+	// Bitrix faz GET para validar a URL antes de salvar no vendors.bitrix24.com
+	if c.Method() == "GET" {
+		return c.SendStatus(fiber.StatusOK)
+	}
+
 	// Loga tudo para diagnóstico — body bruto, headers, query string
 	h.log.Info("partner install received",
 		zap.String("method", c.Method()),
@@ -378,9 +383,6 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		}
 		h.log.Info("partner link: connector activated",
 			zap.String("jid", sessionJID), zap.String("domain", domain))
-		// Refaz o event.bind com o app Local (INSTALLED:true) — o activate acima pode
-		// ter resetado os handlers do Bitrix para este conector.
-		h.rebindEventWithLocalApp(ctx, domain)
 	}()
 
 	h.log.Info("partner link: session linked to portal",

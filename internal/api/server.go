@@ -102,6 +102,7 @@ func New(
 
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
+	bx.Get("/install", h.bitrixInstall)               // Bitrix valida a URL com GET antes de salvar
 	bx.Post("/install", h.bitrixInstall)              // Application Installer URL (ONAPPINSTALL)
 	bx.Post("/auth", h.bitrixPartnerAuth)             // Token do BX24.js enviado pela página /bitrix-connect
 	bx.Post("/partner/link", h.bitrixPartnerLink)     // Vincula sessão WA ao portal após QR scan
