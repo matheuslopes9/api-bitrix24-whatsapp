@@ -473,24 +473,28 @@ func (c *Client) ConnectorSetDelivery(ctx context.Context, creds TenantCreds, co
 }
 
 // ConnectorSetOutboundDelivery confirma entrega de mensagem outbound ao operador.
+// O campo STATUS é obrigatório para o Bitrix parar de mostrar o spinner "girando".
+// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-send-status-delivery.html
 func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, waMessageID, chatExtID string) error {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	raw, err := c.call(ctx, creds, "imconnector.send.status.delivery", map[string]interface{}{
 		"CONNECTOR": connectorID,
-		"LINE":      fmt.Sprintf("%d", lineID),
+		"LINE":      lineID,
 		"MESSAGES": []map[string]interface{}{
 			{
-				"im": map[string]string{
+				"im": map[string]interface{}{
 					"chat_id":    imChatID,
 					"message_id": imMsgID,
 				},
 				"message": map[string]interface{}{
-					"id":   []string{waMessageID},
-					"date": ts,
+					"id":     waMessageID,
+					"date":   ts,
+					"status": "delivered",
 				},
-				"chat": map[string]string{
+				"chat": map[string]interface{}{
 					"id": chatExtID,
 				},
+				"status": "delivered",
 			},
 		},
 	})
