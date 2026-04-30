@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -121,6 +122,12 @@ func (m *Manager) LoadAll(ctx context.Context) error {
 		if err := m.connectSession(ctx, &s); err != nil {
 			m.log.Warn("failed to reconnect session", zap.String("jid", s.JID), zap.Error(err))
 			_ = m.repo.UpdateSessionStatus(ctx, s.JID, db.SessionDisconnected)
+			// Se o arquivo SQLite sumiu (volume remontado, rebuild etc.), recria o arquivo
+			// via AddSession para que o usuário possa escanear o QR novamente.
+			if strings.Contains(err.Error(), "session file not found") {
+				m.log.Info("session file missing — reinitializing to allow QR rescan", zap.String("phone", s.Phone))
+				go m.initSession(s.Phone, filepath.Join(m.cfg.SessionsDir, s.Phone+".db"))
+			}
 		} else {
 			connected++
 		}
@@ -458,7 +465,7 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 		return fmt.Errorf("session file not found: %s", s.SessionFile)
 	}
 
-	container, err := sqlstore.New(ctx, "sqlite3", "file:"+s.SessionFile+"?_foreign_keys=on", waLog.Noop)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:"+s.SessionFile+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", waLog.Noop)
 	if err != nil {
 		return err
 	}
