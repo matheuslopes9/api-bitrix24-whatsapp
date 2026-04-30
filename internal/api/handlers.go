@@ -345,18 +345,18 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}
 		}
 		connectorID := "whatsapp_uc"
-		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("callback: imconnector.register failed", zap.Error(err))
 		}
 		lineID := h.cfg.Bitrix.OpenLineID
 		if lineID <= 0 {
 			lineID = 1
 		}
+		if err := h.bitrixClient.SetConnectorData(ctx, callbackCreds, connectorID, lineID, eventURL); err != nil {
+			h.log.Warn("callback: connector.data.set failed", zap.Error(err))
+		}
 		if err := h.bitrixClient.ActivateConnector(ctx, callbackCreds, connectorID, lineID, true); err != nil {
 			h.log.Warn("callback: imconnector.activate failed", zap.Error(err))
-		}
-		if err := h.bitrixClient.BindEvent(ctx, callbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("callback: event.bind failed", zap.Error(err))
 		}
 		h.log.Info("callback: connector activated via domain fallback", zap.String("domain", domain))
 	}()

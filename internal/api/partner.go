@@ -145,19 +145,24 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		appBaseURL := h.cfg.App.BaseURL()
 		eventURL := appBaseURL + "/bitrix/connector/event"
 
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
+		// PLACEMENT_HANDLER = URL da UI de configuração (abre em slider no Bitrix)
+		// NÃO é a URL que recebe mensagens do operador
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL+"/bitrix-connect"); err != nil {
 			h.log.Warn("partner install: imconnector.register failed", zap.String("domain", domain), zap.Error(err))
 		}
-		// open_line_id=0 → ativa com linha padrão 1; o admin pode ajustar depois
 		lineID := portal.OpenLineID
 		if lineID == 0 {
 			lineID = 1
 		}
+		// send_message: webhook que o Bitrix chama quando operador responde
+		// Funciona independente de INSTALLED:true/false
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, eventURL); err != nil {
+			h.log.Warn("partner install: connector.data.set failed", zap.String("domain", domain), zap.Error(err))
+		} else {
+			h.log.Info("partner install: send_message webhook set", zap.String("url", eventURL))
+		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
-		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("partner install: event.bind failed", zap.String("domain", domain), zap.Error(err))
 		}
 		h.log.Info("partner install: connector activated", zap.String("domain", domain))
 	}()
