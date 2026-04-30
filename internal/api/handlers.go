@@ -838,10 +838,13 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// event.bind NÃO é feito aqui — é feito automaticamente no ONAPPINSTALL
-	// com o token que tem INSTALLED:true. Fazer unbind+rebind aqui destruiria
-	// o bind correto e substituiria por um com INSTALLED:false.
-	steps["bind_event"] = "gerenciado pelo ONAPPINSTALL"
+	// event.bind com o token do portal (Partner App tem INSTALLED:true no portal do cliente).
+	eventURL := appBase + "/bitrix/connector/event"
+	if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+		steps["bind_event"] = "erro: " + err.Error()
+	} else {
+		steps["bind_event"] = "ok"
+	}
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
