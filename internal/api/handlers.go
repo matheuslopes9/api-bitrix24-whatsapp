@@ -358,6 +358,13 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, callbackCreds, connectorID, lineID, true); err != nil {
 			h.log.Warn("callback: imconnector.activate failed", zap.Error(err))
 		}
+		// event.bind com o token do ONAPPINSTALL — neste momento o app está INSTALLED:true
+		// e o Bitrix vai de fato disparar o evento quando o operador responder
+		if err := h.bitrixClient.BindEvent(ctx, callbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("callback: event.bind failed", zap.Error(err))
+		} else {
+			h.log.Info("callback: event.bind ok", zap.String("domain", domain))
+		}
 		h.log.Info("callback: connector activated via domain fallback", zap.String("domain", domain))
 	}()
 
