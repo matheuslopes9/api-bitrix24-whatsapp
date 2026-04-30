@@ -143,7 +143,7 @@ func (m *Manager) AddSession(_ context.Context, phone string) error {
 
 func (m *Manager) initSession(phone, dbPath string) {
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:"+dbPath+"?_foreign_keys=on", waLog.Noop)
+	container, err := sqlstore.New(ctx, "sqlite3", "file:"+dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", waLog.Noop)
 	if err != nil {
 		m.log.Error("open sqlite store", zap.String("phone", phone), zap.Error(err))
 		return
