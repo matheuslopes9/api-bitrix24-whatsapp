@@ -388,25 +388,13 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 }
 
 // activateConnectorForAccount faz register+activate+bind em background para um account específico.
+// Chamado no ONAPPINSTALL do app local (INSTALLED:true) — o event.bind aqui é válido.
 func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bitrix.TenantCreds, appBase, eventURL string) {
 	ctx := context.Background()
-	if existing, err := h.bitrixClient.ListEventBindings(ctx, creds); err == nil {
-		var bindings []struct {
-			Event   string `json:"event"`
-			Handler string `json:"handler"`
-		}
-		if json.Unmarshal(existing, &bindings) == nil {
-			for _, b := range bindings {
-				if b.Event == "ONIMCONNECTORMESSAGEADD" {
-					_ = h.bitrixClient.UnbindEvent(ctx, creds, b.Event, b.Handler)
-				}
-			}
-		}
-	}
 	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
 	}
-	if err := h.bitrixClient.SetConnectorData(ctx, creds, acct.ConnectorID, acct.OpenLineID, eventURL); err != nil {
+	if err := h.bitrixClient.SetConnectorData(ctx, creds, acct.ConnectorID, acct.OpenLineID, ""); err != nil {
 		h.log.Warn("activateConnectorForAccount: set connector data failed", zap.Error(err))
 	}
 	if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
@@ -739,15 +727,11 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		eventURL := appBase + "/bitrix/connector/event"
 		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
-		// send_message: webhook direto para mensagens do operador → WA (independe de INSTALLED)
-		if err := h.bitrixClient.SetConnectorData(ctx, localCreds, portal.ConnectorID, body.OpenLineID, eventURL); err != nil {
+		if err := h.bitrixClient.SetConnectorData(ctx, localCreds, portal.ConnectorID, body.OpenLineID, ""); err != nil {
 			h.log.Warn("uiLinkQueue: set connector data failed", zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("uiLinkQueue: connector send_message webhook set", zap.String("url", eventURL))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
@@ -826,7 +810,6 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["app_info"] = string(appInfo)
 	}
 
-	eventURL := appBase + "/bitrix/connector/event"
 	// Register — PLACEMENT_HANDLER é só a UI de configuração (slider), não o endpoint de mensagens
 	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 		steps["register"] = "erro: " + err.Error()
@@ -838,9 +821,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	lines := h.discoverOpenLines(c.Context(), creds, portal.ConnectorID, lineID)
 	activatedLines := []int{}
 	for _, lid := range lines {
-		// connector.data.set define o webhook direto para mensagens do operador → WA.
-		// Funciona independente de INSTALLED — é um webhook simples, não event.bind.
-		if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lid, eventURL); err != nil {
+		if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lid, ""); err != nil {
 			steps[fmt.Sprintf("set_data_line_%d", lid)] = "erro: " + err.Error()
 		} else {
 			steps[fmt.Sprintf("set_data_line_%d", lid)] = "ok"

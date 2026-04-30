@@ -381,17 +381,17 @@ func (c *Client) RegisterConnector(ctx context.Context, creds TenantCreds, conne
 	return err
 }
 
-// SetConnectorData configura o handler de mensagens outbound (operador → WA).
-// Deve ser chamado ANTES do imconnector.activate.
-// O Bitrix24 usa o campo CONFIG.send_message para saber onde entregar respostas do operador.
-func (c *Client) SetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int, sendMessageURL string) error {
+// SetConnectorData configura os dados do canal externo no Bitrix24.
+// DATA aceita apenas: ID, URL, URL_IM, NAME — não existe send_message aqui.
+// A entrega de mensagens do operador é feita via event.bind (ONIMCONNECTORMESSAGEADD),
+// não via connector.data.set.
+func (c *Client) SetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int, _ string) error {
 	raw, err := c.call(ctx, creds, "imconnector.connector.data.set", map[string]interface{}{
 		"CONNECTOR": connectorID,
 		"LINE":      lineID,
 		"DATA": map[string]interface{}{
-			"CONFIG": map[string]interface{}{
-				"send_message": sendMessageURL,
-			},
+			"ID":   connectorID,
+			"NAME": "WhatsApp UC",
 		},
 	})
 	c.log.Info("imconnector.connector.data.set response", zap.String("raw", string(raw)), zap.Error(err))

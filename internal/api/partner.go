@@ -143,10 +143,6 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
 		appBaseURL := h.cfg.App.BaseURL()
-		eventURL := appBaseURL + "/bitrix/connector/event"
-
-		// PLACEMENT_HANDLER = URL da UI de configuração (abre em slider no Bitrix)
-		// NÃO é a URL que recebe mensagens do operador
 		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBaseURL+"/bitrix-connect"); err != nil {
 			h.log.Warn("partner install: imconnector.register failed", zap.String("domain", domain), zap.Error(err))
 		}
@@ -154,12 +150,8 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		if lineID == 0 {
 			lineID = 1
 		}
-		// send_message: webhook que o Bitrix chama quando operador responde
-		// Funciona independente de INSTALLED:true/false
-		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, eventURL); err != nil {
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
 			h.log.Warn("partner install: connector.data.set failed", zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("partner install: send_message webhook set", zap.String("url", eventURL))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
@@ -368,20 +360,21 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		}
 	}
 
-	// Registra/ativa o connector em background para garantir que está ativo
+	// Registra/ativa o connector em background para garantir que está ativo.
+	// event.bind NÃO é feito aqui — o Partner App tem INSTALLED:false e o Bitrix não entrega eventos.
+	// O bind correto é feito no ONAPPINSTALL (POST /bitrix/callback) com o token do app Local (INSTALLED:true).
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
 		appBase := h.cfg.App.BaseURL()
-		eventURL := appBase + "/bitrix/connector/event"
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("partner link: register connector failed", zap.Error(err))
+		}
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
+			h.log.Warn("partner link: set connector data failed", zap.Error(err))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
 			h.log.Warn("partner link: activate connector failed", zap.Error(err))
-		}
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("partner link: bind event failed", zap.Error(err))
 		}
 		h.log.Info("partner link: connector activated",
 			zap.String("jid", sessionJID), zap.String("domain", domain))
