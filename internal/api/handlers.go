@@ -716,27 +716,26 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		h.log.Warn("uiLinkQueue: save token failed", zap.Error(err))
 	}
 
-	// Registra e ativa o connector em background.
-	// Usa as creds do account recém-criado (app local, INSTALLED:true) para o event.bind.
-	localCreds := bitrix.TenantCreds{
-		Domain:       acct.Domain,
-		ClientID:     acct.ClientID,
-		ClientSecret: acct.ClientSecret,
-		RedirectURI:  acct.RedirectURI,
-	}
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
+		eventURL := appBase + "/bitrix/connector/event"
+		// Usa as creds do portal (Partner App instalado com INSTALLED:true no cliente)
+		// para register, activate e event.bind.
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
-		if err := h.bitrixClient.SetConnectorData(ctx, localCreds, portal.ConnectorID, body.OpenLineID, ""); err != nil {
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, body.OpenLineID, ""); err != nil {
 			h.log.Warn("uiLinkQueue: set connector data failed", zap.String("domain", domain), zap.Error(err))
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		// event.bind NÃO é feito aqui — gerenciado pelo ONAPPINSTALL com token INSTALLED:true
+		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
+			h.log.Warn("uiLinkQueue: event.bind failed", zap.String("domain", domain), zap.Error(err))
+		} else {
+			h.log.Info("uiLinkQueue: event.bind ok", zap.String("url", eventURL))
+		}
 		h.log.Info("uiLinkQueue: connector activated",
 			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
 	}()
