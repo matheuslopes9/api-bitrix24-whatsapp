@@ -139,6 +139,17 @@ func main() {
 
 		if err != nil {
 			metrics.MessagesFailed.Inc()
+			log.Error("outbound send failed",
+				zap.String("session_jid", job.SessionJID),
+				zap.String("to_jid", job.ToJID),
+				zap.String("text_preview", func() string {
+					if len(job.Text) > 80 {
+						return job.Text[:80]
+					}
+					return job.Text
+				}()),
+				zap.Error(err),
+			)
 			return err
 		}
 

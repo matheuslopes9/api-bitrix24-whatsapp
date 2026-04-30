@@ -1022,25 +1022,27 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	}
 
 	cleanText := stripBBCode(text)
-	// toJID para envio WA: @lid mantém como @lid (whatsmeow resolve), @s.whatsapp.net mantém
-	toJID := chatID
-
 	ctx := context.Background()
 
-	// Busca o contato pelo JID normalizado (sem device suffix)
-	// O contato foi salvo em processor.go com normalizeChatID() que também remove o device suffix
+	// Busca o contato pelo JID normalizado — tem o WAPhone real (número de telefone)
 	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
+
+	// toJID: usa o número de telefone real do contato quando disponível.
+	// chatID pode ser "@lid" (LID do WhatsApp) que o whatsmeow não consegue enviar diretamente.
+	// WAPhone tem o número real (ex: "5519910001772") → enviamos para "5519910001772@s.whatsapp.net".
+	toJID := chatID
+	if err == nil && contact.WAPhone != "" {
+		toJID = contact.WAPhone + "@s.whatsapp.net"
+	}
+
 	if err != nil {
 		h.log.Warn("connector event: contact not found by normalized JID, trying sessions directly",
 			zap.String("chat_id", chatID),
 			zap.String("chat_id_raw", chatIDRaw),
 			zap.Error(err),
 		)
-		// Fallback: descobre a sessão pela bitrix_account (connector + line)
-		// útil quando o contato ainda não foi mapeado no banco
 		sessions := h.waManager.ListSessions()
 		if len(sessions) == 1 {
-			// Só uma sessão ativa — usa ela diretamente
 			sessionJID := sessions[0]
 			line := 0
 			fmt.Sscanf(lineStr, "%d", &line)
