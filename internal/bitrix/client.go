@@ -622,6 +622,45 @@ func (c *Client) RawCall(ctx context.Context, creds TenantCreds, method string, 
 	return c.call(ctx, creds, method, params)
 }
 
+// RawHTTPGet faz GET em uma URL completa e retorna o body bruto.
+// Usado para chamar APIs do Bitrix com token direto na URL (sem passar pelo banco).
+func (c *Client) RawHTTPGet(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	// extrai o campo "result" se existir
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Result != nil {
+		return envelope.Result, nil
+	}
+	return body, nil
+}
+
+// RawHTTPPost faz POST em uma URL completa com params JSON e retorna o body bruto.
+func (c *Client) RawHTTPPost(ctx context.Context, url string, params map[string]interface{}) ([]byte, error) {
+	body, _ := json.Marshal(params)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
+
 // GetConnectorData retorna os dados configurados de um connector em uma linha específica.
 // Mostra o campo HANDLER que o Bitrix usa para entregar ONIMCONNECTORMESSAGEADD.
 func (c *Client) GetConnectorData(ctx context.Context, creds TenantCreds, connectorID string, lineID int) (json.RawMessage, error) {

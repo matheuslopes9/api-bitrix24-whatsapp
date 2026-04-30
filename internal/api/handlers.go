@@ -328,44 +328,60 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	}
 	h.log.Info("bitrix callback: token saved by domain", zap.String("domain", domain))
 
+	// Usa o accessToken recebido diretamente no ONAPPINSTALL — não passa pelo banco
+	// para evitar que o Partner App sobrescreva o token antes do event.bind.
+	// Neste momento o app está INSTALLED:true e o event.bind vai funcionar.
+	installToken := accessToken
+	installDomain := callbackCreds.Domain // já normalizado acima
 	go func() {
 		ctx := context.Background()
-		// Faz unbind de qualquer binding antigo e rebind com token fresco do app local
-		if existing, err := h.bitrixClient.ListEventBindings(ctx, callbackCreds); err == nil {
+		reqURL := fmt.Sprintf("%s/rest/event.get.json?auth=%s", installDomain, installToken)
+		if resp, err := h.bitrixClient.RawHTTPGet(ctx, reqURL); err == nil {
 			var bindings []struct {
 				Event   string `json:"event"`
 				Handler string `json:"handler"`
 			}
-			if json.Unmarshal(existing, &bindings) == nil {
+			if json.Unmarshal(resp, &bindings) == nil {
 				for _, b := range bindings {
 					if b.Event == "ONIMCONNECTORMESSAGEADD" {
-						_ = h.bitrixClient.UnbindEvent(ctx, callbackCreds, b.Event, b.Handler)
+						unbindURL := fmt.Sprintf("%s/rest/event.unbind.json?auth=%s", installDomain, installToken)
+						_, _ = h.bitrixClient.RawHTTPPost(ctx, unbindURL, map[string]interface{}{
+							"event":   b.Event,
+							"handler": b.Handler,
+						})
 					}
 				}
 			}
 		}
 		connectorID := "whatsapp_uc"
-		if err := h.bitrixClient.RegisterConnector(ctx, callbackCreds, connectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
-			h.log.Warn("callback: imconnector.register failed", zap.Error(err))
-		}
 		lineID := h.cfg.Bitrix.OpenLineID
 		if lineID <= 0 {
-			lineID = 1
+			lineID = 218
 		}
-		if err := h.bitrixClient.SetConnectorData(ctx, callbackCreds, connectorID, lineID, eventURL); err != nil {
-			h.log.Warn("callback: connector.data.set failed", zap.Error(err))
+		// register, activate, event.bind — tudo com o token fresco do ONAPPINSTALL
+		for _, apiMethod := range []struct {
+			method string
+			params map[string]interface{}
+		}{
+			{"imconnector.register", map[string]interface{}{
+				"ID":   connectorID,
+				"NAME": "WhatsApp UC",
+				"ICON": map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
+				"PLACEMENT_HANDLER": appBase + "/bitrix-connect",
+			}},
+			{"imconnector.activate", map[string]interface{}{
+				"CONNECTOR": connectorID, "LINE": lineID, "ACTIVE": "1",
+			}},
+			{"event.bind", map[string]interface{}{
+				"event":   "ONIMCONNECTORMESSAGEADD",
+				"handler": eventURL,
+			}},
+		} {
+			apiURL := fmt.Sprintf("%s/rest/%s.json?auth=%s", installDomain, apiMethod.method, installToken)
+			raw, err := h.bitrixClient.RawHTTPPost(ctx, apiURL, apiMethod.params)
+			h.log.Info("callback install step", zap.String("method", apiMethod.method), zap.String("raw", string(raw)), zap.Error(err))
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, callbackCreds, connectorID, lineID, true); err != nil {
-			h.log.Warn("callback: imconnector.activate failed", zap.Error(err))
-		}
-		// event.bind com o token do ONAPPINSTALL — neste momento o app está INSTALLED:true
-		// e o Bitrix vai de fato disparar o evento quando o operador responder
-		if err := h.bitrixClient.BindEvent(ctx, callbackCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("callback: event.bind failed", zap.Error(err))
-		} else {
-			h.log.Info("callback: event.bind ok", zap.String("domain", domain))
-		}
-		h.log.Info("callback: connector activated via domain fallback", zap.String("domain", domain))
+		h.log.Info("callback: install complete", zap.String("domain", installDomain))
 	}()
 
 	return c.SendStatus(fiber.StatusOK)
