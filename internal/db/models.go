@@ -81,6 +81,7 @@ type Message struct {
 type BitrixToken struct {
 	ID           uuid.UUID `db:"id"`
 	Domain       string    `db:"domain"`
+	ClientID     string    `db:"client_id"`  // separa tokens do Local App e Partner App
 	AccessToken  string    `db:"access_token"`
 	RefreshToken string    `db:"refresh_token"`
 	ExpiresAt    time.Time `db:"expires_at"`

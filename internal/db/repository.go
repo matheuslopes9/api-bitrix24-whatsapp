@@ -226,24 +226,41 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 
 func (r *Repository) UpsertBitrixToken(ctx context.Context, t *BitrixToken) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO bitrix_tokens (id, domain, access_token, refresh_token, expires_at, scope)
-		VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT (domain) DO UPDATE SET
+		INSERT INTO bitrix_tokens (id, domain, client_id, access_token, refresh_token, expires_at, scope)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT (domain, client_id) DO UPDATE SET
 			access_token  = EXCLUDED.access_token,
 			refresh_token = EXCLUDED.refresh_token,
 			expires_at    = EXCLUDED.expires_at,
 			updated_at    = NOW()
-	`, t.ID, t.Domain, t.AccessToken, t.RefreshToken, t.ExpiresAt, t.Scope)
+	`, t.ID, t.Domain, t.ClientID, t.AccessToken, t.RefreshToken, t.ExpiresAt, t.Scope)
 	return err
 }
 
+// GetBitrixToken retorna o token para um domain+client_id específico.
+// Se client_id for vazio, retorna o token mais recente do domain (compatibilidade).
 func (r *Repository) GetBitrixToken(ctx context.Context, domain string) (*BitrixToken, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, domain, access_token, refresh_token, expires_at, scope, created_at, updated_at
-		 FROM bitrix_tokens WHERE domain = $1`, domain)
+		`SELECT id, domain, client_id, access_token, refresh_token, expires_at, scope, created_at, updated_at
+		 FROM bitrix_tokens WHERE domain = $1
+		 ORDER BY updated_at DESC LIMIT 1`, domain)
 
 	var t BitrixToken
-	err := row.Scan(&t.ID, &t.Domain, &t.AccessToken, &t.RefreshToken, &t.ExpiresAt, &t.Scope, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.Domain, &t.ClientID, &t.AccessToken, &t.RefreshToken, &t.ExpiresAt, &t.Scope, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// GetBitrixTokenByClientID retorna o token para um domain+client_id específico.
+func (r *Repository) GetBitrixTokenByClientID(ctx context.Context, domain, clientID string) (*BitrixToken, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, domain, client_id, access_token, refresh_token, expires_at, scope, created_at, updated_at
+		 FROM bitrix_tokens WHERE domain = $1 AND client_id = $2`, domain, clientID)
+
+	var t BitrixToken
+	err := row.Scan(&t.ID, &t.Domain, &t.ClientID, &t.AccessToken, &t.RefreshToken, &t.ExpiresAt, &t.Scope, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}

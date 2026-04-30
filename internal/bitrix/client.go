@@ -94,6 +94,7 @@ func (c *Client) SaveToken(ctx context.Context, creds TenantCreds, accessToken, 
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
 		Domain:       domain,
+		ClientID:     creds.ClientID, // chave que diferencia Local App do Partner App
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(expiresIn) * time.Second),
@@ -140,12 +141,11 @@ func (c *Client) saveTokenResponse(ctx context.Context, creds TenantCreds, r io.
 	if err := json.NewDecoder(r).Decode(&tr); err != nil {
 		return err
 	}
-	// Sempre usa o domain da creds — a resposta do refresh retorna "oauth.bitrix.info"
-	// como domain, o que quebraria a busca por token.
 	domain := normalizeDomain(creds.Domain)
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
 		Domain:       domain,
+		ClientID:     creds.ClientID,
 		AccessToken:  tr.AccessToken,
 		RefreshToken: tr.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second),
@@ -153,18 +153,33 @@ func (c *Client) saveTokenResponse(ctx context.Context, creds TenantCreds, r io.
 	})
 }
 
-// token retorna um token válido, renovando se necessário.
+// token retorna um token válido para as creds fornecidas, renovando se necessário.
+// Usa (domain, client_id) para buscar — cada app tem seu próprio token isolado.
 func (c *Client) token(ctx context.Context, creds TenantCreds) (*db.BitrixToken, error) {
 	domain := normalizeDomain(creds.Domain)
-	t, err := c.repo.GetBitrixToken(ctx, domain)
-	if err != nil {
-		return nil, fmt.Errorf("get token for %s: %w", domain, err)
+	var t *db.BitrixToken
+	var err error
+
+	if creds.ClientID != "" {
+		t, err = c.repo.GetBitrixTokenByClientID(ctx, domain, creds.ClientID)
 	}
+	if t == nil || err != nil {
+		// Fallback: pega o token mais recente do domain (compatibilidade)
+		t, err = c.repo.GetBitrixToken(ctx, domain)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get token for %s (client_id=%s): %w", domain, creds.ClientID, err)
+	}
+
 	if time.Now().Add(60 * time.Second).After(t.ExpiresAt) {
 		if err := c.refreshToken(ctx, creds, t); err != nil {
 			return nil, fmt.Errorf("refresh token: %w", err)
 		}
-		t, err = c.repo.GetBitrixToken(ctx, domain)
+		if creds.ClientID != "" {
+			t, err = c.repo.GetBitrixTokenByClientID(ctx, domain, creds.ClientID)
+		} else {
+			t, err = c.repo.GetBitrixToken(ctx, domain)
+		}
 		if err != nil {
 			return nil, err
 		}
