@@ -1146,6 +1146,15 @@ func (h *handlers) debugBitrixEvent(c *fiber.Ctx) error {
 	})
 }
 
+// GET /debug/dead-queue — lê até 20 jobs da dead queue para diagnóstico
+func (h *handlers) debugDeadQueue(c *fiber.Ctx) error {
+	items, err := h.q.PeekDead(c.Context(), 20)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"count": len(items), "items": items})
+}
+
 // GET /debug/connector-status?domain=...&line=218&connector=whatsapp_uc
 // Retorna o status real do connector na linha — crítico para diagnosticar
 // por que ONIMCONNECTORMESSAGEADD não dispara.
@@ -1413,7 +1422,6 @@ func (h *handlers) localCredsForDomain(ctx context.Context, domain string, porta
 }
 
 // discoverOpenLines retorna apenas a linha especificada.
-// Não faz varredura — o usuário já escolheu a linha via UI.
 func (h *handlers) discoverOpenLines(_ context.Context, _ bitrix.TenantCreds, _ string, lineID int) []int {
 	if lineID <= 0 {
 		return []int{1}

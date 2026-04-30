@@ -148,6 +148,19 @@ func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob) error {
 	return q.push(ctx, keyOutbound, job)
 }
 
+// PeekDead retorna até n itens da dead queue sem removê-los (para diagnóstico).
+func (q *Queue) PeekDead(ctx context.Context, n int) ([]json.RawMessage, error) {
+	items, err := q.rdb.LRange(ctx, keyDead, 0, int64(n-1)).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(items))
+	for _, s := range items {
+		out = append(out, json.RawMessage(s))
+	}
+	return out, nil
+}
+
 // Lengths retorna o tamanho atual das filas (para telemetria).
 func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	inbound, _ = q.rdb.LLen(ctx, keyInbound).Result()

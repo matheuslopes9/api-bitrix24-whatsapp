@@ -98,6 +98,7 @@ func New(
 	app.Get("/debug/connector-data", h.debugConnectorData)      // ?domain=...&line=...&connector=...
 	app.Post("/debug/rebind-event", h.debugRebindEvent)         // body: {domain, handler_url}
 	app.Post("/debug/bitrix-call", h.debugBitrixCall)           // body: {domain, method, params}
+	app.Get("/debug/dead-queue", h.debugDeadQueue)              // lê jobs da dead queue
 
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
