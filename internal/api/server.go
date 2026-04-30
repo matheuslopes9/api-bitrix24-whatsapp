@@ -107,6 +107,7 @@ func New(
 	bx.Post("/auth", h.bitrixPartnerAuth)             // Token do BX24.js enviado pela página /bitrix-connect
 	bx.Post("/partner/link", h.bitrixPartnerLink)     // Vincula sessão WA ao portal após QR scan
 	app.Get("/bitrix-connect", h.bitrixConnectPage)   // Application URL (abre em iframe no Bitrix24)
+	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
 
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
