@@ -380,8 +380,11 @@ func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bit
 			}
 		}
 	}
-	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", eventURL); err != nil {
+	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
+	}
+	if err := h.bitrixClient.SetConnectorData(ctx, creds, acct.ConnectorID, acct.OpenLineID, eventURL); err != nil {
+		h.log.Warn("activateConnectorForAccount: set connector data failed", zap.Error(err))
 	}
 	if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
 		h.log.Warn("activateConnectorForAccount: activate failed", zap.Error(err))
@@ -714,8 +717,14 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
 		eventURL := appBase + "/bitrix/connector/event"
-		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, localCreds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
+		}
+		// send_message: webhook direto para mensagens do operador → WA (independe de INSTALLED)
+		if err := h.bitrixClient.SetConnectorData(ctx, localCreds, portal.ConnectorID, body.OpenLineID, eventURL); err != nil {
+			h.log.Warn("uiLinkQueue: set connector data failed", zap.String("domain", domain), zap.Error(err))
+		} else {
+			h.log.Info("uiLinkQueue: connector send_message webhook set", zap.String("url", eventURL))
 		}
 		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
@@ -813,18 +822,24 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	}
 
 	eventURL := appBase + "/bitrix/connector/event"
-	// Register
-	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", eventURL); err != nil {
+	// Register — PLACEMENT_HANDLER é só a UI de configuração (slider), não o endpoint de mensagens
+	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
 		steps["register"] = "erro: " + err.Error()
 	} else {
 		steps["register"] = "ok"
 	}
 
 	// Ativa em TODAS as open lines onde o connector já existe ou na lineID especificada.
-	// Resolve o problema de o admin configurar linha 218 mas o chat estar na linha 109.
 	lines := h.discoverOpenLines(c.Context(), creds, portal.ConnectorID, lineID)
 	activatedLines := []int{}
 	for _, lid := range lines {
+		// connector.data.set define o webhook direto para mensagens do operador → WA.
+		// Funciona independente de INSTALLED — é um webhook simples, não event.bind.
+		if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lid, eventURL); err != nil {
+			steps[fmt.Sprintf("set_data_line_%d", lid)] = "erro: " + err.Error()
+		} else {
+			steps[fmt.Sprintf("set_data_line_%d", lid)] = "ok"
+		}
 		if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lid, true); err != nil {
 			steps[fmt.Sprintf("activate_line_%d", lid)] = "erro: " + err.Error()
 		} else {
@@ -910,20 +925,20 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "open_line_id": lineID, "steps": steps})
 }
 
-// POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD do Bitrix24
-// O operador respondeu no Contact Center → encaminha para o WhatsApp correto
+// POST /bitrix/connector/event — recebe ONIMCONNECTORMESSAGEADD ou send_message do Bitrix24
+// O operador respondeu no Contact Center → encaminha para o WhatsApp correto.
+// O Bitrix pode enviar form-encoded (event.bind) ou JSON (connector.data.set send_message).
 func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
-	// Log completo do payload bruto — crítico para diagnóstico
 	h.log.Info("connector event received",
 		zap.String("method", c.Method()),
 		zap.String("content_type", c.Get("Content-Type")),
 		zap.String("raw_body", string(c.Body())),
 	)
 
-	// Bitrix envia form-encoded
+	// Tenta form-encoded primeiro (ONIMCONNECTORMESSAGEADD via event.bind)
 	connector := c.FormValue("data[CONNECTOR]")
 	lineStr := c.FormValue("data[LINE]")
-	chatIDRaw := c.FormValue("data[MESSAGES][0][chat][id]")      // ex: "127586399207476:47@lid"
+	chatIDRaw := c.FormValue("data[MESSAGES][0][chat][id]")
 	imChatID := c.FormValue("data[MESSAGES][0][im][chat_id]")
 	imMsgID := c.FormValue("data[MESSAGES][0][im][message_id]")
 	text := c.FormValue("data[MESSAGES][0][message][text]")
@@ -932,9 +947,51 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	fileName := c.FormValue("data[MESSAGES][0][message][files][0][name]")
 	fileMime := c.FormValue("data[MESSAGES][0][message][files][0][mime]")
 
-	// Normaliza o JID do chat imediatamente — remove device suffix ":47"
-	// "127586399207476:47@lid" → "127586399207476@lid"
-	// "5511999@s.whatsapp.net" → mantém como está
+	// Se não veio form-encoded, tenta JSON (send_message via connector.data.set)
+	if connector == "" && strings.Contains(c.Get("Content-Type"), "application/json") {
+		var payload struct {
+			Connector string `json:"CONNECTOR"`
+			Line      interface{} `json:"LINE"`
+			Messages  []struct {
+				Chat struct {
+					ID string `json:"id"`
+				} `json:"chat"`
+				Im struct {
+					ChatID    interface{} `json:"chat_id"`
+					MessageID interface{} `json:"message_id"`
+				} `json:"im"`
+				Message struct {
+					Text   string      `json:"text"`
+					UserID interface{} `json:"user_id"`
+					Files  []struct {
+						DownloadLink string `json:"downloadLink"`
+						Name         string `json:"name"`
+						Mime         string `json:"mime"`
+					} `json:"files"`
+				} `json:"message"`
+			} `json:"MESSAGES"`
+		}
+		if err := json.Unmarshal(c.Body(), &payload); err == nil && payload.Connector != "" {
+			connector = payload.Connector
+			lineStr = fmt.Sprintf("%v", payload.Line)
+			if len(payload.Messages) > 0 {
+				msg := payload.Messages[0]
+				chatIDRaw = msg.Chat.ID
+				imChatID = fmt.Sprintf("%v", msg.Im.ChatID)
+				imMsgID = fmt.Sprintf("%v", msg.Im.MessageID)
+				text = msg.Message.Text
+				userID = fmt.Sprintf("%v", msg.Message.UserID)
+				if len(msg.Message.Files) > 0 {
+					fileDownloadLink = msg.Message.Files[0].DownloadLink
+					fileName = msg.Message.Files[0].Name
+					fileMime = msg.Message.Files[0].Mime
+				}
+			}
+			h.log.Info("connector event: parsed as JSON")
+		}
+	}
+
+	// Normaliza o JID do chat — remove device suffix ":47"
 	chatID := sanitizeJID(chatIDRaw)
 
 	h.log.Info("connector event parsed",

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -473,32 +474,47 @@ func (c *Client) ConnectorSetDelivery(ctx context.Context, creds TenantCreds, co
 }
 
 // ConnectorSetOutboundDelivery confirma entrega de mensagem outbound ao operador.
-// O campo STATUS é obrigatório para o Bitrix parar de mostrar o spinner "girando".
 // Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-send-status-delivery.html
+// Campos obrigatórios conforme doc:
+//   im.chat_id e im.message_id → integers
+//   message.id → array de strings (mesmo para mensagem única)
+//   message.date → unix timestamp integer
 func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, waMessageID, chatExtID string) error {
-	ts := fmt.Sprintf("%d", time.Now().Unix())
-	raw, err := c.call(ctx, creds, "imconnector.send.status.delivery", map[string]interface{}{
+	// Converte chat_id e message_id para int — a API exige integer, não string
+	chatIDInt, _ := strconv.Atoi(imChatID)
+	msgIDInt, _ := strconv.Atoi(imMsgID)
+
+	payload := map[string]interface{}{
 		"CONNECTOR": connectorID,
 		"LINE":      lineID,
 		"MESSAGES": []map[string]interface{}{
 			{
 				"im": map[string]interface{}{
-					"chat_id":    imChatID,
-					"message_id": imMsgID,
+					"chat_id":    chatIDInt,
+					"message_id": msgIDInt,
 				},
 				"message": map[string]interface{}{
-					"id":     waMessageID,
-					"date":   ts,
-					"status": "delivered",
+					"id":   []string{waMessageID}, // doc: array mesmo para mensagem única
+					"date": time.Now().Unix(),
 				},
 				"chat": map[string]interface{}{
 					"id": chatExtID,
 				},
-				"status": "delivered",
 			},
 		},
-	})
-	c.log.Info("imconnector.send.status.delivery outbound raw", zap.String("raw", string(raw)), zap.Error(err))
+	}
+	c.log.Info("imconnector.send.status.delivery outbound request",
+		zap.String("connector", connectorID),
+		zap.Int("line", lineID),
+		zap.String("im_chat_id", imChatID),
+		zap.String("im_msg_id", imMsgID),
+		zap.String("wa_message_id", waMessageID),
+		zap.String("chat_ext_id", chatExtID),
+		zap.Int("im_chat_id_int", chatIDInt),
+		zap.Int("im_msg_id_int", msgIDInt),
+	)
+	raw, err := c.call(ctx, creds, "imconnector.send.status.delivery", payload)
+	c.log.Info("imconnector.send.status.delivery outbound response", zap.String("raw", string(raw)), zap.Error(err))
 	return err
 }
 
