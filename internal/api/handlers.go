@@ -752,25 +752,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		if err := h.bitrixClient.ActivateConnector(ctx, localCreds, portal.ConnectorID, body.OpenLineID, true); err != nil {
 			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
-		// Unbind qualquer binding antigo antes de fazer o novo
-		if existing, err := h.bitrixClient.ListEventBindings(ctx, localCreds); err == nil {
-			var bindings []struct {
-				Event   string `json:"event"`
-				Handler string `json:"handler"`
-			}
-			if json.Unmarshal(existing, &bindings) == nil {
-				for _, b := range bindings {
-					if b.Event == "ONIMCONNECTORMESSAGEADD" {
-						_ = h.bitrixClient.UnbindEvent(ctx, localCreds, b.Event, b.Handler)
-					}
-				}
-			}
-		}
-		if err := h.bitrixClient.BindEvent(ctx, localCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("uiLinkQueue: bind event failed (app local)", zap.Error(err))
-		} else {
-			h.log.Info("uiLinkQueue: event bound with local app token")
-		}
+		// event.bind NÃO é feito aqui — gerenciado pelo ONAPPINSTALL com token INSTALLED:true
 		h.log.Info("uiLinkQueue: connector activated",
 			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
 	}()
@@ -876,68 +858,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// event.bind deve usar o token do app local (INSTALLED:true).
-	// Busca o account ativo para esse domain — ele tem ClientID/Secret do app local.
-	// Faz unbind+rebind diretamente na API do Bitrix com o access_token do account.
-	bindDone := false
-	for _, activeJID := range h.waManager.ListSessions() {
-		acct, err := h.repo.GetBitrixAccountByJID(c.Context(), activeJID)
-		if err != nil {
-			continue
-		}
-		acctDomain := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(acct.Domain, "https://"), "http://"))
-		if acctDomain != domain {
-			continue
-		}
-		// Usa as creds do app local para buscar o token (ClientID diferente do Partner App)
-		localCreds := bitrix.TenantCreds{
-			Domain:       acct.Domain,
-			ClientID:     acct.ClientID,
-			ClientSecret: acct.ClientSecret,
-			RedirectURI:  acct.RedirectURI,
-		}
-		if existing, err := h.bitrixClient.ListEventBindings(c.Context(), localCreds); err == nil {
-			var bindings []struct {
-				Event   string `json:"event"`
-				Handler string `json:"handler"`
-			}
-			if json.Unmarshal(existing, &bindings) == nil {
-				for _, b := range bindings {
-					if b.Event == "ONIMCONNECTORMESSAGEADD" {
-						_ = h.bitrixClient.UnbindEvent(c.Context(), localCreds, b.Event, b.Handler)
-					}
-				}
-			}
-		}
-		if err := h.bitrixClient.BindEvent(c.Context(), localCreds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			steps["bind_event"] = "erro (app local): " + err.Error()
-		} else {
-			steps["bind_event"] = "ok (app local)"
-			bindDone = true
-		}
-		break
-	}
-	if !bindDone && steps["bind_event"] == "" {
-		// Fallback: usa creds do portal (Partner App)
-		if existing, err := h.bitrixClient.ListEventBindings(c.Context(), creds); err == nil {
-			var bindings []struct {
-				Event   string `json:"event"`
-				Handler string `json:"handler"`
-			}
-			if json.Unmarshal(existing, &bindings) == nil {
-				for _, b := range bindings {
-					if b.Event == "ONIMCONNECTORMESSAGEADD" {
-						_ = h.bitrixClient.UnbindEvent(c.Context(), creds, b.Event, b.Handler)
-					}
-				}
-			}
-		}
-		if err := h.bitrixClient.BindEvent(c.Context(), creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			steps["bind_event"] = "erro (partner): " + err.Error()
-		} else {
-			steps["bind_event"] = "ok (partner app)"
-		}
-	}
+	// event.bind NÃO é feito aqui — é feito automaticamente no ONAPPINSTALL
+	// com o token que tem INSTALLED:true. Fazer unbind+rebind aqui destruiria
+	// o bind correto e substituiria por um com INSTALLED:false.
+	steps["bind_event"] = "gerenciado pelo ONAPPINSTALL"
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
