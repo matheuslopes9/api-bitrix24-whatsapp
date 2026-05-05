@@ -267,30 +267,48 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	}
 	creds := h.portalToCreds(portal)
 
+	// Normaliza entityType para o formato que o Bitrix espera:
+	// "contact"→"CONTACT", "lead"→"LEAD", "deal"→"DEAL"
+	bxEntityType := strings.ToUpper(entityType)
+
 	// 1. Busca os chats do Open Channel vinculados a essa entidade CRM
-	chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, entityType, entityID)
+	chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, entityID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar chats: " + err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":      "erro ao buscar chats: " + err.Error(),
+			"debug_type": bxEntityType,
+			"debug_id":   entityID,
+		})
 	}
 
+	h.log.Info("crm history: chats raw", zap.String("raw", string(chatsRaw)), zap.String("entity_type", bxEntityType), zap.String("entity_id", entityID))
+
 	// Extrai o CHAT_ID do primeiro chat encontrado
-	// Resposta: {"CHAT_ID": 123} ou [{"CHAT_ID":123}] ou {"result":{"CHAT_ID":123}}
 	chatID := extractChatID(chatsRaw)
 	if chatID == "" {
-		// Sem chat aberto ainda — retorna lista vazia sem erro
-		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "chat_id": ""})
+		// Sem chat aberto ainda — retorna debug info
+		return c.JSON(fiber.Map{
+			"messages":   []interface{}{},
+			"count":      0,
+			"chat_id":    "",
+			"debug_raw":  string(chatsRaw),
+			"debug_type": bxEntityType,
+			"debug_id":   entityID,
+		})
 	}
 
 	// 2. Busca as mensagens do chat
 	msgsRaw, err := h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar mensagens: " + err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar mensagens: " + err.Error(), "chat_id": chatID})
 	}
+
+	h.log.Info("crm history: messages raw", zap.String("chat_id", chatID), zap.String("raw", string(msgsRaw)[:min(500, len(msgsRaw))]))
 
 	// 3. Normaliza para o formato do frontend
 	msgs := parseBitrixMessages(msgsRaw, portal.ConnectorID)
 
-	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "chat_id": chatID})
+	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "chat_id": chatID, "debug_raw_msgs": string(msgsRaw)[:min(300, len(msgsRaw))]})
 }
 
 // extractChatID tenta extrair o CHAT_ID de várias estruturas possíveis de resposta.
@@ -936,7 +954,19 @@ function loadHistory() {
           + '&entity_type=' + _entityType + '&entity_id=' + _entityId + '&limit=80';
   fetch(url)
     .then(function(r){ return r.json(); })
-    .then(function(d) { renderHistory(d.messages || [], d.chat_id || ''); })
+    .then(function(d) {
+      if (!d.chat_id && d.debug_raw !== undefined) {
+        // Mostra debug na tela quando não achou o chat
+        document.getElementById('chat-body').innerHTML =
+          '<div class="chat-placeholder" style="font-size:10px;color:#475569;text-align:left;padding:12px;word-break:break-all">'
+          + '<p style="color:#f87171;margin-bottom:6px">Chat não encontrado no Bitrix.<br>Resposta de imopenlines.crm.chat.get:</p>'
+          + esc(d.debug_raw || '(vazio)')
+          + '<p style="margin-top:6px">type=' + esc(d.debug_type||'') + ' id=' + esc(d.debug_id||'') + '</p>'
+          + '</div>';
+        return;
+      }
+      renderHistory(d.messages || [], d.chat_id || '');
+    })
     .catch(function() {
       document.getElementById('chat-body').innerHTML = '<div class="chat-placeholder"><p>Erro ao carregar histórico.</p></div>';
     });
