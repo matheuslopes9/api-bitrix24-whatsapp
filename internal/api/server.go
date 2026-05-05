@@ -109,6 +109,14 @@ func New(
 	app.Get("/bitrix-connect", h.bitrixConnectPage)   // Application URL (abre em iframe no Bitrix24)
 	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
 
+	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
+	bx.Get("/crm/tab", h.bitrixCRMTab)
+	bx.Post("/crm/tab", h.bitrixCRMTab)
+	bx.Get("/crm/entity", h.bitrixCRMEntity)
+	bx.Post("/crm/send", h.bitrixCRMSend)
+	bx.Get("/crm/sessions", h.bitrixCRMSessions)
+	bx.Get("/crm/lines", h.bitrixCRMLines)
+
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
 	stats.Get("/daily", h.dailyStats)

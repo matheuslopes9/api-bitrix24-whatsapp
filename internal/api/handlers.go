@@ -403,6 +403,7 @@ func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bit
 	if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 		h.log.Warn("activateConnectorForAccount: event.bind failed", zap.Error(err))
 	}
+	h.RegisterPlacementsForPortal(ctx, acct.Domain, creds)
 	h.log.Info("activateConnectorForAccount: done", zap.String("domain", acct.Domain), zap.String("jid", acct.SessionJID))
 }
 

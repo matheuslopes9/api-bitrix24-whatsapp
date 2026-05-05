@@ -705,6 +705,70 @@ func (c *Client) FindOrCreateLead(ctx context.Context, creds TenantCreds, phone,
 	return leadID, nil
 }
 
+// GetContact retorna dados de um contato do CRM pelo ID.
+func (c *Client) GetContact(ctx context.Context, creds TenantCreds, contactID string) (json.RawMessage, error) {
+	return c.call(ctx, creds, "crm.contact.get", map[string]interface{}{
+		"id": contactID,
+	})
+}
+
+// GetLead retorna dados de um lead do CRM pelo ID.
+func (c *Client) GetLead(ctx context.Context, creds TenantCreds, leadID string) (json.RawMessage, error) {
+	return c.call(ctx, creds, "crm.lead.get", map[string]interface{}{
+		"id": leadID,
+	})
+}
+
+// GetDeal retorna dados de um deal do CRM pelo ID.
+func (c *Client) GetDeal(ctx context.Context, creds TenantCreds, dealID string) (json.RawMessage, error) {
+	return c.call(ctx, creds, "crm.deal.get", map[string]interface{}{
+		"id": dealID,
+	})
+}
+
+// OpenChatSessionByCode abre ou retorna uma sessão de Open Channel usando USER_CODE.
+// USER_CODE format: "<connector>|<lineID>|<ext_chat_id>|<ext_user_id>"
+// Retorna o CHAT_ID da sessão criada/existente.
+func (c *Client) OpenChatSessionByCode(ctx context.Context, creds TenantCreds, userCode string) (string, error) {
+	raw, err := c.call(ctx, creds, "imopenlines.session.open", map[string]interface{}{
+		"USER_CODE": userCode,
+	})
+	if err != nil {
+		return "", err
+	}
+	// Resposta pode ser o CHAT_ID direto (int) ou objeto {"CHAT_ID": N}
+	var chatID int64
+	if json.Unmarshal(raw, &chatID) == nil && chatID > 0 {
+		return strconv.FormatInt(chatID, 10), nil
+	}
+	var obj struct {
+		ChatID int64 `json:"CHAT_ID"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.ChatID > 0 {
+		return strconv.FormatInt(obj.ChatID, 10), nil
+	}
+	return "", fmt.Errorf("imopenlines.session.open: unexpected response: %s", string(raw))
+}
+
+// GetCRMChats retorna chats do Open Channel vinculados a uma entidade CRM.
+func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType, entityID string) (json.RawMessage, error) {
+	return c.call(ctx, creds, "imopenlines.crm.chat.get", map[string]interface{}{
+		"CRM_ENTITY_TYPE": entityType, // "contact", "lead", "deal"
+		"CRM_ENTITY":      entityID,
+	})
+}
+
+// BindPlacement registra um widget de aba customizada no CRM.
+func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement, handlerURL, title string) error {
+	_, err := c.call(ctx, creds, "placement.bind", map[string]interface{}{
+		"PLACEMENT": placement,
+		"HANDLER":   handlerURL,
+		"TITLE":     title,
+		"DESCRIPTION": "Enviar mensagem WhatsApp diretamente do CRM",
+	})
+	return err
+}
+
 func (c *Client) AddLeadComment(ctx context.Context, creds TenantCreds, leadID int64, text string) error {
 	_, err := c.call(ctx, creds, "crm.activity.add", map[string]interface{}{
 		"fields": map[string]interface{}{

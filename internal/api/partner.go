@@ -164,6 +164,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
 		}
 		h.log.Info("partner install: connector activated", zap.String("domain", domain))
+		h.RegisterPlacementsForPortal(ctx, domain, creds)
 	}()
 
 	// Redireciona para /bitrix-connect — o Bitrix exibe essa página dentro do iframe
