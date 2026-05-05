@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -269,55 +270,16 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 
 	bxEntityType := strings.ToUpper(entityType)
 
-	// Estratégia 1: imopenlines.crm.chat.get (vincula chat à entidade CRM)
-	chatID := ""
-	chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, entityID)
-	if err == nil {
-		chatID = extractChatID(chatsRaw)
-	}
-	h.log.Info("crm history: crm.chat.get", zap.String("entity_type", bxEntityType), zap.String("entity_id", entityID), zap.String("chat_id", chatID), zap.String("raw", string(chatsRaw)))
+	// Estratégia 1: imopenlines.crm.chat.getLastId — retorna o último CHAT_ID direto
+	chatID, _ := h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, entityID)
+	h.log.Info("crm history: getLastId", zap.String("chat_id", chatID), zap.String("entity", entityID))
 
-	// Busca o telefone do contato — usado nas estratégias 2 e 3
-	phone := ""
+	// Estratégia 2: imopenlines.crm.chat.get com ACTIVE_ONLY=N (todos os chats)
 	if chatID == "" {
-		entityRaw, eErr := func() (json.RawMessage, error) {
-			switch entityType {
-			case "lead":
-				return h.bitrixClient.GetLead(c.Context(), creds, entityID)
-			case "deal":
-				return h.bitrixClient.GetDeal(c.Context(), creds, entityID)
-			default:
-				return h.bitrixClient.GetContact(c.Context(), creds, entityID)
-			}
-		}()
-		if eErr == nil {
-			var obj map[string]json.RawMessage
-			if json.Unmarshal(entityRaw, &obj) == nil {
-				phone = normalizeWAPhone(extractPhone(obj))
-			}
-		}
-	}
-
-	// Estratégia 2: imopenlines.session.list filtrando pelo telefone
-	if chatID == "" && phone != "" {
-		h.log.Info("crm history: trying session.list by phone", zap.String("phone", phone))
-		var sessionRaw json.RawMessage
-		chatID, sessionRaw, _ = h.bitrixClient.FindChatByPhone(c.Context(), creds, phone)
-		h.log.Info("crm history: session.list result",
-			zap.String("chat_id", chatID),
-			zap.String("raw", string(sessionRaw)),
-		)
-	}
-
-	// Estratégia 3: im.recent.list — percorre chats recentes procurando pelo telefone
-	if chatID == "" && phone != "" {
-		recentRaw, rErr := h.bitrixClient.GetRecentChats(c.Context(), creds, 100)
-		if rErr == nil {
-			chatID = extractChatIDFromRecent(recentRaw, phone)
-			h.log.Info("crm history: recent.list result",
-				zap.String("chat_id", chatID),
-				zap.String("raw_preview", string(recentRaw)[:min(400, len(recentRaw))]),
-			)
+		chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, entityID)
+		if err == nil {
+			chatID = extractChatID(chatsRaw)
+			h.log.Info("crm history: crm.chat.get", zap.String("chat_id", chatID), zap.String("raw", string(chatsRaw)))
 		}
 	}
 
@@ -325,15 +287,26 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "chat_id": ""})
 	}
 
-	// Busca as mensagens do chat
-	msgsRaw, err := h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
+	// Busca histórico usando imopenlines.session.history.get (método correto para Open Channel)
+	msgsRaw, err := h.bitrixClient.GetSessionHistory(c.Context(), creds, chatID, limit)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar mensagens: " + err.Error(), "chat_id": chatID})
+		// Fallback: im.dialog.messages.get
+		h.log.Warn("crm history: session.history.get failed, trying im.dialog.messages.get", zap.Error(err))
+		msgsRaw, err = h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error(), "chat_id": chatID})
+		}
 	}
 
-	msgs := parseBitrixMessages(msgsRaw, portal.ConnectorID)
-	h.log.Info("crm history: done", zap.String("chat_id", chatID), zap.Int("count", len(msgs)))
+	h.log.Info("crm history: msgs raw preview", zap.String("chat_id", chatID), zap.String("raw", string(msgsRaw)[:min(300, len(msgsRaw))]))
 
+	msgs := parseSessionHistory(msgsRaw, portal.ConnectorID)
+	if len(msgs) == 0 {
+		// Fallback parser para im.dialog.messages.get
+		msgs = parseBitrixMessages(msgsRaw, portal.ConnectorID)
+	}
+
+	h.log.Info("crm history: done", zap.String("chat_id", chatID), zap.Int("count", len(msgs)))
 	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "chat_id": chatID})
 }
 
@@ -409,6 +382,83 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// parseSessionHistory converte a resposta de imopenlines.session.history.get para []crmMessage.
+// Resposta: {"result": {"chatId":"X","message":{"ID":{"id":"X","senderid":"X","date":"...","text":"..."}},"users":{...}}}
+func parseSessionHistory(raw json.RawMessage, connectorID string) []crmMessage {
+	// Desempacota result wrapper
+	var wrapper struct {
+		Result json.RawMessage `json:"result"`
+	}
+	data := raw
+	if json.Unmarshal(raw, &wrapper) == nil && len(wrapper.Result) > 0 {
+		data = wrapper.Result
+	}
+
+	var resp struct {
+		ChatID    interface{}                `json:"chatId"`
+		SessionID interface{}                `json:"sessionId"`
+		Message   map[string]struct {
+			ID       interface{} `json:"id"`
+			SenderID interface{} `json:"senderid"`
+			Date     string      `json:"date"`
+			Text     string      `json:"text"`
+			Params   struct {
+				ConnectorMID string `json:"CONNECTOR_MID"`
+			} `json:"params"`
+		} `json:"message"`
+		Users map[string]struct {
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+
+	if err := json.Unmarshal(data, &resp); err != nil || len(resp.Message) == 0 {
+		return nil
+	}
+
+	// Coleta e ordena por ID numérico
+	type msgEntry struct {
+		numID int64
+		msg   crmMessage
+	}
+	entries := make([]msgEntry, 0, len(resp.Message))
+	for _, m := range resp.Message {
+		senderID := fmt.Sprintf("%v", m.SenderID)
+		direction := "outbound"
+		if m.Params.ConnectorMID != "" {
+			direction = "inbound"
+		}
+		authorName := ""
+		if u, ok := resp.Users[senderID]; ok {
+			authorName = u.Name
+		}
+		numID, _ := strconv.ParseInt(fmt.Sprintf("%v", m.ID), 10, 64)
+		entries = append(entries, msgEntry{
+			numID: numID,
+			msg: crmMessage{
+				ID:         fmt.Sprintf("%v", m.ID),
+				Direction:  direction,
+				Type:       "text",
+				Content:    m.Text,
+				AuthorID:   senderID,
+				AuthorName: authorName,
+				Status:     "delivered",
+				CreatedAt:  m.Date,
+			},
+		})
+	}
+	// Ordena por ID crescente (cronológico)
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].numID < entries[j-1].numID; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+	out := make([]crmMessage, len(entries))
+	for i, e := range entries {
+		out[i] = e.msg
+	}
+	return out
 }
 
 type crmMessage struct {

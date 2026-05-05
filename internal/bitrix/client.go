@@ -751,10 +751,48 @@ func (c *Client) OpenChatSessionByCode(ctx context.Context, creds TenantCreds, u
 }
 
 // GetCRMChats retorna chats do Open Channel vinculados a uma entidade CRM.
+// ACTIVE_ONLY=N retorna todos os chats, inclusive encerrados.
 func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType, entityID string) (json.RawMessage, error) {
 	return c.call(ctx, creds, "imopenlines.crm.chat.get", map[string]interface{}{
-		"CRM_ENTITY_TYPE": entityType, // "contact", "lead", "deal"
+		"CRM_ENTITY_TYPE": entityType, // "CONTACT", "LEAD", "DEAL"
 		"CRM_ENTITY":      entityID,
+		"ACTIVE_ONLY":     "N",
+	})
+}
+
+// GetCRMChatLastID retorna apenas o último CHAT_ID vinculado a uma entidade CRM.
+func (c *Client) GetCRMChatLastID(ctx context.Context, creds TenantCreds, entityType, entityID string) (string, error) {
+	raw, err := c.call(ctx, creds, "imopenlines.crm.chat.getLastId", map[string]interface{}{
+		"CRM_ENTITY_TYPE": entityType,
+		"CRM_ENTITY":      entityID,
+	})
+	if err != nil {
+		return "", err
+	}
+	// Resposta: número direto ou {"result": N}
+	var id int64
+	if json.Unmarshal(raw, &id) == nil && id > 0 {
+		return strconv.FormatInt(id, 10), nil
+	}
+	var obj struct {
+		Result int64 `json:"result"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.Result > 0 {
+		return strconv.FormatInt(obj.Result, 10), nil
+	}
+	return "", nil
+}
+
+// GetSessionHistory retorna o histórico de mensagens de um chat Open Channel.
+// Usa imopenlines.session.history.get que é o método correto para Open Channel.
+func (c *Client) GetSessionHistory(ctx context.Context, creds TenantCreds, chatID string, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	id, _ := strconv.ParseInt(chatID, 10, 64)
+	return c.call(ctx, creds, "imopenlines.session.history.get", map[string]interface{}{
+		"CHAT_ID": id,
+		"LIMIT":   limit,
 	})
 }
 
