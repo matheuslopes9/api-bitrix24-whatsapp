@@ -758,6 +758,17 @@ func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType,
 	})
 }
 
+// GetChatMessages retorna as mensagens de um chat pelo CHAT_ID.
+func (c *Client) GetChatMessages(ctx context.Context, creds TenantCreds, chatID string, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return c.call(ctx, creds, "im.dialog.messages.get", map[string]interface{}{
+		"DIALOG_ID": "chat" + chatID,
+		"LIMIT":     limit,
+	})
+}
+
 // BindPlacement registra um widget de aba customizada no CRM.
 func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement, handlerURL, title string) error {
 	_, err := c.call(ctx, creds, "placement.bind", map[string]interface{}{

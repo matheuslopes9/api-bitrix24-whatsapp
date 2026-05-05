@@ -245,50 +245,185 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "queued", "file": fileHeader.Filename})
 }
 
-// GET /bitrix/crm/history?phone=5511999999999&limit=50 — histórico de mensagens com um número
+// GET /bitrix/crm/history?domain=...&entity_type=contact&entity_id=...&limit=50
+// Busca histórico do Open Channel do Bitrix24 para a entidade CRM.
 func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
-	phone := c.Query("phone")
-	if phone == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "phone obrigatório"})
-	}
-	phone = normalizeWAPhone(phone)
+	domain     := c.Query("domain")
+	entityType := strings.ToLower(c.Query("entity_type", "contact"))
+	entityID   := c.Query("entity_id")
 
-	limit := 50
-	if l := c.QueryInt("limit", 50); l > 0 && l <= 200 {
+	if domain == "" || entityID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e entity_id são obrigatórios"})
+	}
+
+	limit := 80
+	if l := c.QueryInt("limit", 80); l > 0 && l <= 200 {
 		limit = l
 	}
 
-	msgs, err := h.repo.GetMessagesByPhone(c.Context(), phone, limit)
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+
+	// 1. Busca os chats do Open Channel vinculados a essa entidade CRM
+	chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, entityType, entityID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar chats: " + err.Error()})
 	}
 
-	type msgDTO struct {
-		ID          string `json:"id"`
-		Direction   string `json:"direction"`
-		MessageType string `json:"type"`
-		Content     string `json:"content"`
-		MediaURL    string `json:"media_url,omitempty"`
-		MediaMime   string `json:"media_mime,omitempty"`
-		Status      string `json:"status"`
-		CreatedAt   string `json:"created_at"`
+	// Extrai o CHAT_ID do primeiro chat encontrado
+	// Resposta: {"CHAT_ID": 123} ou [{"CHAT_ID":123}] ou {"result":{"CHAT_ID":123}}
+	chatID := extractChatID(chatsRaw)
+	if chatID == "" {
+		// Sem chat aberto ainda — retorna lista vazia sem erro
+		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "chat_id": ""})
 	}
 
-	out := make([]msgDTO, 0, len(msgs))
-	for _, m := range msgs {
-		out = append(out, msgDTO{
-			ID:          m.WAMessageID,
-			Direction:   string(m.Direction),
-			MessageType: string(m.MessageType),
-			Content:     m.Content,
-			MediaURL:    m.MediaURL,
-			MediaMime:   m.MediaMime,
-			Status:      string(m.Status),
-			CreatedAt:   m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	// 2. Busca as mensagens do chat
+	msgsRaw, err := h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao buscar mensagens: " + err.Error()})
+	}
+
+	// 3. Normaliza para o formato do frontend
+	msgs := parseBitrixMessages(msgsRaw, portal.ConnectorID)
+
+	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "chat_id": chatID})
+}
+
+// extractChatID tenta extrair o CHAT_ID de várias estruturas possíveis de resposta.
+func extractChatID(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "false" {
+		return ""
+	}
+	// Tenta objeto direto: {"CHAT_ID": 123}
+	var obj struct {
+		ChatID interface{} `json:"CHAT_ID"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.ChatID != nil {
+		return fmt.Sprintf("%v", obj.ChatID)
+	}
+	// Tenta array: [{"CHAT_ID": 123}]
+	var arr []struct {
+		ChatID interface{} `json:"CHAT_ID"`
+	}
+	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 && arr[0].ChatID != nil {
+		return fmt.Sprintf("%v", arr[0].ChatID)
+	}
+	// Tenta result wrapper: {"result": {"CHAT_ID": 123}}
+	var wrapped struct {
+		Result struct {
+			ChatID interface{} `json:"CHAT_ID"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(raw, &wrapped) == nil && wrapped.Result.ChatID != nil {
+		return fmt.Sprintf("%v", wrapped.Result.ChatID)
+	}
+	return ""
+}
+
+type crmMessage struct {
+	ID        string `json:"id"`
+	Direction string `json:"direction"` // inbound | outbound
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	MediaURL  string `json:"media_url,omitempty"`
+	MediaMime string `json:"media_mime,omitempty"`
+	AuthorID  string `json:"author_id,omitempty"`
+	AuthorName string `json:"author_name,omitempty"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
+// parseBitrixMessages converte a resposta do im.dialog.messages.get para []crmMessage.
+// O Bitrix retorna: {"messages": [{ID, AUTHOR_ID, DATE, MESSAGE, ATTACH, ...}], "users": {...}}
+func parseBitrixMessages(raw json.RawMessage, connectorID string) []crmMessage {
+	var resp struct {
+		Messages []struct {
+			ID       interface{} `json:"ID"`
+			AuthorID interface{} `json:"AUTHOR_ID"`
+			Date     string      `json:"DATE"`
+			Message  string      `json:"MESSAGE"`
+			Attach   interface{} `json:"ATTACH"`
+			IsSystem interface{} `json:"IS_SYSTEM"`
+			Params   struct {
+				ConnectorMID string `json:"CONNECTOR_MID"`
+			} `json:"PARAMS"`
+		} `json:"messages"`
+		Users map[string]struct {
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		// Tenta via result wrapper
+		var wrapper struct {
+			Result json.RawMessage `json:"result"`
+		}
+		if json.Unmarshal(raw, &wrapper) == nil {
+			json.Unmarshal(wrapper.Result, &resp)
+		}
+	}
+
+	out := make([]crmMessage, 0, len(resp.Messages))
+	for _, m := range resp.Messages {
+		// Pula mensagens de sistema
+		if fmt.Sprintf("%v", m.IsSystem) == "true" || fmt.Sprintf("%v", m.IsSystem) == "1" {
+			continue
+		}
+
+		authorID := fmt.Sprintf("%v", m.AuthorID)
+		// Mensagens com CONNECTOR_MID são as que vieram do WhatsApp (inbound do cliente)
+		// Mensagens dos operadores (users do Bitrix) são outbound
+		direction := "outbound"
+		if m.Params.ConnectorMID != "" {
+			direction = "inbound"
+		}
+
+		authorName := ""
+		if u, ok := resp.Users[authorID]; ok {
+			authorName = u.Name
+		}
+
+		// Detecta mídia no ATTACH
+		mediaURL, mediaMime, msgType := "", "", "text"
+		if m.Attach != nil {
+			attachJSON, _ := json.Marshal(m.Attach)
+			var attaches []struct {
+				Type  string `json:"type"`
+				Link  string `json:"link"`
+				Value string `json:"value"`
+			}
+			if json.Unmarshal(attachJSON, &attaches) == nil {
+				for _, a := range attaches {
+					if a.Type == "image" || a.Type == "file" || a.Type == "video" || a.Type == "audio" {
+						mediaURL = a.Link
+						if a.Type == "image" { mediaMime = "image/jpeg"; msgType = "image" }
+						if a.Type == "video" { mediaMime = "video/mp4";  msgType = "video" }
+						if a.Type == "audio" { mediaMime = "audio/ogg";  msgType = "audio" }
+						if a.Type == "file"  { msgType = "document" }
+						break
+					}
+				}
+			}
+		}
+
+		out = append(out, crmMessage{
+			ID:         fmt.Sprintf("%v", m.ID),
+			Direction:  direction,
+			Type:       msgType,
+			Content:    m.Message,
+			MediaURL:   mediaURL,
+			MediaMime:  mediaMime,
+			AuthorID:   authorID,
+			AuthorName: authorName,
+			Status:     "delivered",
+			CreatedAt:  m.Date,
 		})
 	}
-
-	return c.JSON(fiber.Map{"messages": out, "count": len(out)})
+	return out
 }
 
 // GET /bitrix/crm/sessions — lista sessões WA disponíveis (para o select do iframe)
@@ -764,33 +899,35 @@ function openChat(name, phone) {
 
 function reloadChat() { if (_contactPhone) loadHistory(); }
 
-// ── Histórico ─────────────────────────────────────────────────────────────
+// ── Histórico (busca do Open Channel do Bitrix) ───────────────────────────
 function loadHistory() {
-  if (!_contactPhone) return;
-  var ph = _contactPhone.replace(/\D/g,'');
+  if (!_entityId || !_domain) return;
   document.getElementById('chat-body').innerHTML = '<div class="chat-placeholder"><div class="spinner"></div></div>';
-  fetch(_baseUrl + '/bitrix/crm/history?phone=' + ph + '&limit=80')
-    .then(r => r.json())
-    .then(function(d) { renderHistory(d.messages || []); })
+  var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
+          + '&entity_type=' + _entityType + '&entity_id=' + _entityId + '&limit=80';
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(d) { renderHistory(d.messages || [], d.chat_id || ''); })
     .catch(function() {
       document.getElementById('chat-body').innerHTML = '<div class="chat-placeholder"><p>Erro ao carregar histórico.</p></div>';
     });
   if (_pollTimer) clearInterval(_pollTimer);
-  _pollTimer = setInterval(pollHistory, 6000);
+  _pollTimer = setInterval(pollHistory, 8000);
 }
 
 function pollHistory() {
-  if (!_contactPhone) return;
-  var ph = _contactPhone.replace(/\D/g,'');
-  fetch(_baseUrl + '/bitrix/crm/history?phone=' + ph + '&limit=3')
-    .then(r => r.json())
+  if (!_entityId || !_domain) return;
+  var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
+          + '&entity_type=' + _entityType + '&entity_id=' + _entityId + '&limit=3';
+  fetch(url)
+    .then(function(r){ return r.json(); })
     .then(function(d) {
       var msgs = d.messages || [];
       if (msgs.length && msgs[msgs.length-1].id !== _lastMsgId) loadHistory();
     }).catch(function(){});
 }
 
-function renderHistory(msgs) {
+function renderHistory(msgs, chatID) {
   var body = document.getElementById('chat-body');
   if (!msgs.length) {
     body.innerHTML = '<div class="chat-placeholder"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><p>Nenhuma mensagem ainda</p><span class="sub">Envie a primeira mensagem abaixo</span></div>';
@@ -798,26 +935,29 @@ function renderHistory(msgs) {
   }
   var html = '', lastDay = '';
   msgs.forEach(function(m) {
-    var dt = new Date(m.created_at);
+    // O Bitrix retorna datas no formato "DD.MM.YYYY HH:MM:SS" ou ISO
+    var dt = parseDate(m.created_at);
     var day = dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
     if (day !== lastDay) { html += '<div class="day-div"><span>' + day + '</span></div>'; lastDay = day; }
     var isOut = m.direction === 'outbound';
     var time  = dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    var st = '';
-    if (isOut) {
-      if      (m.status==='delivered') st = '<span class="bst delivered">✓✓</span>';
-      else if (m.status==='failed')    st = '<span class="bst failed">!</span>';
-      else                             st = '<span class="bst sent">✓</span>';
-    }
+    var st = isOut ? '<span class="bst delivered">✓✓</span>' : '';
     var content = '';
     if (m.type && m.type !== 'text') {
-      content = '<div class="bmedia">' + mediaIcon(m.type) + ' ' + mediaLabel(m.type) + '</div>';
-      if (m.content) content += esc(m.content);
+      var icon = mediaIcon(m.type);
+      if (m.media_url) {
+        content = '<a href="' + esc(m.media_url) + '" target="_blank" style="display:flex;align-items:center;gap:5px;color:#60a5fa;text-decoration:none;">' + icon + ' ' + mediaLabel(m.type) + '</a>';
+      } else {
+        content = '<div class="bmedia">' + icon + ' ' + mediaLabel(m.type) + '</div>';
+      }
+      if (m.content) content += '<div style="margin-top:3px">' + esc(m.content) + '</div>';
     } else {
       content = esc(m.content || '');
     }
+    // Nome do autor apenas em mensagens outbound (operador)
+    var authorLabel = (isOut && m.author_name) ? '<div style="font-size:10px;color:#4ade80;margin-bottom:2px;font-weight:600">' + esc(m.author_name) + '</div>' : '';
     html += '<div class="bw ' + (isOut?'out':'in') + '"><div class="bubble ' + (isOut?'out':'in') + '">'
-          + content
+          + authorLabel + content
           + '<div class="bmeta"><span class="btime">' + time + '</span>' + st + '</div>'
           + '</div></div>';
   });
@@ -829,9 +969,17 @@ function renderHistory(msgs) {
   var idx = _allConvs.findIndex(function(c){ return c.phone === _contactPhone; });
   if (idx >= 0) {
     _allConvs[idx].preview = last.content || mediaLabel(last.type);
-    _allConvs[idx].time    = new Date(last.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    _allConvs[idx].time    = last.created_at ? parseDate(last.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '';
     renderConvList();
   }
+}
+
+function parseDate(s) {
+  if (!s) return new Date();
+  // "DD.MM.YYYY HH:MM:SS"
+  var m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$/);
+  if (m) return new Date(m[3]+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':'+m[6]);
+  return new Date(s);
 }
 
 // ── Arquivo ───────────────────────────────────────────────────────────────
