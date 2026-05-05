@@ -1841,9 +1841,14 @@ function setCSelectPlaceholder(id, text) {
   if (opts) opts.innerHTML = '<div class="cselect-empty">' + text + '</div>';
 }
 
-// Fecha dropdown ao clicar fora
-document.addEventListener('click', function(e) {
-  if (!e.target.closest('.cselect')) {
+// Usa mousedown para fechar — dispara ANTES do click, mas não interfere com onclick
+// das opções porque o onclick só executa no mouseup+mousedown no mesmo elemento.
+// position:fixed faz o dropdown sair do DOM tree do .cselect, por isso verificamos
+// também .cselect-dropdown e .cselect-option.
+document.addEventListener('mousedown', function(e) {
+  var inSelect   = e.target.closest('.cselect');
+  var inDropdown = e.target.closest('.cselect-dropdown');
+  if (!inSelect && !inDropdown) {
     document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
     document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
   }
