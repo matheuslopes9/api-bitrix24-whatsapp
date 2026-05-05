@@ -113,6 +113,10 @@ func New(
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
 	stats.Get("/daily", h.dailyStats)
 	stats.Get("/queues", h.queueStats)
+	stats.Get("/sessions", h.sessionStats)
+	stats.Get("/types", h.typeStats)
+	stats.Get("/hours", h.hourStats)
+	stats.Get("/contacts", h.contactStats)
 
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())

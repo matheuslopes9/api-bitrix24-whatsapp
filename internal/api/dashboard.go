@@ -114,6 +114,9 @@ html,body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;min-he
 .inp:focus{border-color:rgba(37,211,102,.5);background:rgba(255,255,255,.07);}
 .inp::placeholder{color:#475569;}
 .inp:disabled{color:#475569;cursor:default;}
+select.inp{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:34px;cursor:pointer;}
+select.inp option{background:#1e293b;color:#e2e8f0;padding:8px;}
+select.inp:focus{border-color:rgba(37,211,102,.5);}
 .inp-group{display:flex;flex-direction:column;gap:6px;}
 .inp-label{font-size:11.5px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
 
@@ -501,7 +504,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div class="section-hdr">
       <div>
         <div class="section-title">Relatórios</div>
-        <div class="section-sub">Análise de atendimentos via WhatsApp</div>
+        <div class="section-sub">Análise detalhada de atendimentos via WhatsApp</div>
       </div>
       <div class="tab-bar">
         <button class="tab active" onclick="setPeriodo(7,this)">7 dias</button>
@@ -511,21 +514,27 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
     </div>
 
-    <div class="grid-3" style="margin-bottom:14px;">
+    <!-- Totais -->
+    <div class="grid-4" style="margin-bottom:14px;">
       <div class="card" style="padding:18px;">
         <div class="metric-lbl" style="margin-bottom:8px;">Total de Mensagens</div>
         <div class="metric-val" id="r-total">--</div>
       </div>
       <div class="card" style="padding:18px;">
-        <div class="metric-lbl" style="margin-bottom:8px;">Recebidas (Inbound)</div>
+        <div class="metric-lbl" style="margin-bottom:8px;">Recebidas</div>
         <div class="metric-val" style="color:#60a5fa;" id="r-recebidas">--</div>
       </div>
       <div class="card" style="padding:18px;">
-        <div class="metric-lbl" style="margin-bottom:8px;">Enviadas (Outbound)</div>
+        <div class="metric-lbl" style="margin-bottom:8px;">Enviadas</div>
         <div class="metric-val" style="color:#c084fc;" id="r-enviadas">--</div>
+      </div>
+      <div class="card" style="padding:18px;">
+        <div class="metric-lbl" style="margin-bottom:8px;">Falhas</div>
+        <div class="metric-val" style="color:#f87171;" id="r-falhas">--</div>
       </div>
     </div>
 
+    <!-- Gráficos principais -->
     <div class="grid-21" style="margin-bottom:14px;">
       <div class="card" style="padding:18px;">
         <div class="card-title">Volume Diário de Mensagens</div>
@@ -537,12 +546,51 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
     </div>
 
+    <!-- Gráficos secundários -->
+    <div class="grid-2" style="margin-bottom:14px;">
+      <div class="card" style="padding:18px;">
+        <div class="card-title">Volume por Hora do Dia</div>
+        <canvas id="chart-horas" height="110"></canvas>
+      </div>
+      <div class="card" style="padding:18px;">
+        <div class="card-title">Tipos de Mensagem</div>
+        <canvas id="chart-tipos" height="110"></canvas>
+      </div>
+    </div>
+
+    <!-- Por número WA -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div class="card-title">Por Número WhatsApp (Fila)</div>
+      <div style="overflow-x:auto;">
+        <table class="tbl">
+          <thead><tr>
+            <th>Número</th><th>Total</th><th style="color:#60a5fa;">Recebidas</th><th style="color:#c084fc;">Enviadas</th><th style="color:#f87171;">Falhas</th>
+          </tr></thead>
+          <tbody id="r-sessoes"><tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Top contatos -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div class="card-title">Top 20 Contatos</div>
+      <div style="overflow-x:auto;">
+        <table class="tbl">
+          <thead><tr>
+            <th>Contato</th><th>Telefone</th><th>Total</th><th style="color:#60a5fa;">Recebidas</th><th style="color:#c084fc;">Enviadas</th>
+          </tr></thead>
+          <tbody id="r-contatos"><tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Histórico diário -->
     <div class="card" style="padding:18px;">
       <div class="card-title">Histórico por Dia</div>
       <div style="overflow-x:auto;">
         <table class="tbl">
           <thead><tr>
-            <th>Data</th><th>Total</th><th>Recebidas</th><th>Enviadas</th>
+            <th>Data</th><th>Total</th><th style="color:#60a5fa;">Recebidas</th><th style="color:#c084fc;">Enviadas</th>
           </tr></thead>
           <tbody id="r-tabela"><tr><td colspan="4" style="text-align:center;padding:24px;color:#334155;">Carregando...</td></tr></tbody>
         </table>
@@ -1088,77 +1136,150 @@ function setPeriodo(dias, btn) {
   carregarRelatorios(dias);
 }
 
+var chartHoras = null, chartTipos = null;
+
 function carregarRelatorios(dias) {
-  fetch('/stats/daily?days=' + dias)
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (!Array.isArray(data)) data = [];
-    var totalIn = 0, totalOut = 0, totalAll = 0;
-    data.forEach(function(row) {
-      totalIn += row.inbound_count || 0;
+  // Busca todos os dados em paralelo
+  Promise.all([
+    fetch('/stats/daily?days='    + dias).then(function(r){return r.json();}),
+    fetch('/stats/sessions?days=' + dias).then(function(r){return r.json();}),
+    fetch('/stats/types?days='    + dias).then(function(r){return r.json();}),
+    fetch('/stats/hours?days='    + dias).then(function(r){return r.json();}),
+    fetch('/stats/contacts?days=' + dias + '&limit=20').then(function(r){return r.json();})
+  ]).then(function(results) {
+    var daily    = Array.isArray(results[0]) ? results[0] : [];
+    var sessions = Array.isArray(results[1]) ? results[1] : [];
+    var types    = Array.isArray(results[2]) ? results[2] : [];
+    var hours    = Array.isArray(results[3]) ? results[3] : [];
+    var contacts = Array.isArray(results[4]) ? results[4] : [];
+
+    // ── Totais ──
+    var totalIn = 0, totalOut = 0, totalAll = 0, totalFailed = 0;
+    daily.forEach(function(row) {
+      totalIn  += row.inbound_count  || 0;
       totalOut += row.outbound_count || 0;
       totalAll += row.total_messages || 0;
     });
-    setText('r-total', totalAll);
+    sessions.forEach(function(row) { totalFailed += row.failed_count || 0; });
+    setText('r-total',    totalAll);
     setText('r-recebidas', totalIn);
-    setText('r-enviadas', totalOut);
+    setText('r-enviadas',  totalOut);
+    setText('r-falhas',    totalFailed);
 
-    // Tabela
+    // ── Histórico diário ──
     var tbody = document.getElementById('r-tabela');
-    if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#334155;">Sem dados no período selecionado</td></tr>';
+    if (daily.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#334155;">Sem dados no período</td></tr>';
     } else {
-      tbody.innerHTML = data.map(function(row) {
-        var data_fmt = new Date(row.date).toLocaleDateString('pt-BR');
+      tbody.innerHTML = daily.map(function(row) {
         return '<tr>'
-          + '<td>' + data_fmt + '</td>'
-          + '<td style="color:#e2e8f0;font-weight:500;">' + (row.total_messages || 0) + '</td>'
-          + '<td style="color:#60a5fa;">' + (row.inbound_count || 0) + '</td>'
-          + '<td style="color:#c084fc;">' + (row.outbound_count || 0) + '</td>'
+          + '<td>' + new Date(row.date).toLocaleDateString('pt-BR') + '</td>'
+          + '<td style="color:#e2e8f0;font-weight:500;">' + (row.total_messages||0) + '</td>'
+          + '<td style="color:#60a5fa;">' + (row.inbound_count||0) + '</td>'
+          + '<td style="color:#c084fc;">' + (row.outbound_count||0) + '</td>'
           + '</tr>';
       }).join('');
     }
 
-    // Gráficos
-    var labels = data.map(function(r) { return new Date(r.date).toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit'}); }).reverse();
-    var inData = data.map(function(r) { return r.inbound_count || 0; }).reverse();
-    var outData = data.map(function(r) { return r.outbound_count || 0; }).reverse();
+    // ── Por sessão/número ──
+    var tbodySess = document.getElementById('r-sessoes');
+    if (sessions.length === 0) {
+      tbodySess.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Sem dados no período</td></tr>';
+    } else {
+      tbodySess.innerHTML = sessions.map(function(row) {
+        var tel = row.phone ? '+' + row.phone : row.session_jid;
+        return '<tr>'
+          + '<td style="font-weight:600;color:#e2e8f0;">' + tel + '</td>'
+          + '<td style="font-weight:500;">' + (row.total_messages||0) + '</td>'
+          + '<td style="color:#60a5fa;">' + (row.inbound_count||0) + '</td>'
+          + '<td style="color:#c084fc;">' + (row.outbound_count||0) + '</td>'
+          + '<td style="color:#f87171;">' + (row.failed_count||0) + '</td>'
+          + '</tr>';
+      }).join('');
+    }
 
+    // ── Top contatos ──
+    var tbodyC = document.getElementById('r-contatos');
+    if (contacts.length === 0) {
+      tbodyC.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Sem dados no período</td></tr>';
+    } else {
+      tbodyC.innerHTML = contacts.map(function(row) {
+        var nome = row.wa_name || row.wa_jid || '—';
+        var tel  = row.wa_phone ? '+' + row.wa_phone : '—';
+        return '<tr>'
+          + '<td style="font-weight:600;color:#e2e8f0;">' + nome + '</td>'
+          + '<td style="color:#64748b;font-size:12px;">' + tel + '</td>'
+          + '<td style="font-weight:500;">' + (row.total_messages||0) + '</td>'
+          + '<td style="color:#60a5fa;">' + (row.inbound_count||0) + '</td>'
+          + '<td style="color:#c084fc;">' + (row.outbound_count||0) + '</td>'
+          + '</tr>';
+      }).join('');
+    }
+
+    // ── Gráfico diário ──
+    var labels  = daily.map(function(r){ return new Date(r.date).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}); }).reverse();
+    var inData  = daily.map(function(r){ return r.inbound_count||0; }).reverse();
+    var outData = daily.map(function(r){ return r.outbound_count||0; }).reverse();
     var ctxD = document.getElementById('chart-diario');
     if (chartDiario) chartDiario.destroy();
     chartDiario = new Chart(ctxD, {
       type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [
-          { label: 'Recebidas', data: inData, backgroundColor: 'rgba(96,165,250,.75)', borderRadius: 4, borderSkipped: false },
-          { label: 'Enviadas', data: outData, backgroundColor: 'rgba(192,132,252,.75)', borderRadius: 4, borderSkipped: false }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: true,
-        plugins: { legend: { labels: { color: chartLegendColor(), font: { size: 11 }, boxWidth: 10 } } },
-        scales: {
-          x: { grid: { display: false }, ticks: { color: chartTickColor(), font: { size: 10 }, maxTicksLimit: 10 } },
-          y: { grid: { color: chartGridColor() }, ticks: { color: chartTickColor(), font: { size: 10 } }, beginAtZero: true }
-        }
-      }
+      data: { labels: labels, datasets: [
+        { label:'Recebidas', data:inData,  backgroundColor:'rgba(96,165,250,.75)', borderRadius:4, borderSkipped:false },
+        { label:'Enviadas',  data:outData, backgroundColor:'rgba(192,132,252,.75)', borderRadius:4, borderSkipped:false }
+      ]},
+      options: { responsive:true, maintainAspectRatio:true,
+        plugins:{ legend:{ labels:{ color:chartLegendColor(), font:{size:11}, boxWidth:10 } } },
+        scales:{ x:{ grid:{display:false}, ticks:{color:chartTickColor(),font:{size:10},maxTicksLimit:10} },
+                 y:{ grid:{color:chartGridColor()}, ticks:{color:chartTickColor(),font:{size:10}}, beginAtZero:true } } }
     });
 
+    // ── Gráfico distribuição ──
     var ctxPie = document.getElementById('chart-dist');
     if (chartDist) chartDist.destroy();
     chartDist = new Chart(ctxPie, {
       type: 'doughnut',
-      data: {
-        labels: ['Recebidas', 'Enviadas'],
-        datasets: [{ data: [totalIn || 1, totalOut || 1], backgroundColor: ['rgba(96,165,250,.8)', 'rgba(192,132,252,.8)'], borderWidth: 0, hoverOffset: 6 }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: true, cutout: '65%',
-        plugins: { legend: { position: 'bottom', labels: { color: chartLegendColor(), font: { size: 11 }, boxWidth: 10, padding: 14 } } }
-      }
+      data: { labels:['Recebidas','Enviadas'],
+        datasets:[{ data:[totalIn||1, totalOut||1], backgroundColor:['rgba(96,165,250,.8)','rgba(192,132,252,.8)'], borderWidth:0, hoverOffset:6 }] },
+      options: { responsive:true, maintainAspectRatio:true, cutout:'65%',
+        plugins:{ legend:{ position:'bottom', labels:{ color:chartLegendColor(), font:{size:11}, boxWidth:10, padding:14 } } } }
     });
-  }).catch(function() {});
+
+    // ── Gráfico por hora ──
+    var hoursLabels = [], hoursData = [];
+    for (var h = 0; h < 24; h++) {
+      hoursLabels.push(h + 'h');
+      var found = hours.find(function(r){ return r.hour === h; });
+      hoursData.push(found ? (found.total_messages||0) : 0);
+    }
+    var ctxH = document.getElementById('chart-horas');
+    if (chartHoras) chartHoras.destroy();
+    chartHoras = new Chart(ctxH, {
+      type: 'bar',
+      data: { labels:hoursLabels, datasets:[
+        { label:'Mensagens', data:hoursData, backgroundColor:'rgba(52,211,153,.7)', borderRadius:3, borderSkipped:false }
+      ]},
+      options: { responsive:true, maintainAspectRatio:true,
+        plugins:{ legend:{ display:false } },
+        scales:{ x:{ grid:{display:false}, ticks:{color:chartTickColor(),font:{size:9},maxTicksLimit:24} },
+                 y:{ grid:{color:chartGridColor()}, ticks:{color:chartTickColor(),font:{size:10}}, beginAtZero:true } } }
+    });
+
+    // ── Gráfico por tipo ──
+    var tipoLabels = types.map(function(r){ return r.message_type||'outro'; });
+    var tipoData   = types.map(function(r){ return r.total_messages||0; });
+    var tipoCores  = ['rgba(96,165,250,.8)','rgba(192,132,252,.8)','rgba(52,211,153,.8)','rgba(251,191,36,.8)','rgba(248,113,113,.8)','rgba(167,243,208,.8)'];
+    var ctxT = document.getElementById('chart-tipos');
+    if (chartTipos) chartTipos.destroy();
+    chartTipos = new Chart(ctxT, {
+      type: 'doughnut',
+      data: { labels:tipoLabels,
+        datasets:[{ data:tipoData.length ? tipoData : [1], backgroundColor:tipoLabels.length ? tipoCores.slice(0,tipoLabels.length) : ['rgba(71,85,105,.5)'], borderWidth:0, hoverOffset:6 }] },
+      options: { responsive:true, maintainAspectRatio:true, cutout:'60%',
+        plugins:{ legend:{ position:'bottom', labels:{ color:chartLegendColor(), font:{size:11}, boxWidth:10, padding:12 } } } }
+    });
+
+  }).catch(function(e){ console.error('relatorios error', e); });
 }
 
 

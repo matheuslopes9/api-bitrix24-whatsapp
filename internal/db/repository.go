@@ -224,6 +224,153 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 	return stats, nil
 }
 
+// StatsSessionRow — mensagens agrupadas por sessão (número WA)
+type StatsSessionRow struct {
+	SessionJID    string  `db:"session_jid"`
+	Phone         string  `db:"phone"`
+	TotalMessages int64   `db:"total_messages"`
+	InboundCount  int64   `db:"inbound_count"`
+	OutboundCount int64   `db:"outbound_count"`
+	FailedCount   int64   `db:"failed_count"`
+}
+
+// StatsTypeRow — mensagens agrupadas por tipo (text, image, audio…)
+type StatsTypeRow struct {
+	MessageType   string `db:"message_type"`
+	TotalMessages int64  `db:"total_messages"`
+	InboundCount  int64  `db:"inbound_count"`
+	OutboundCount int64  `db:"outbound_count"`
+}
+
+// StatsHourRow — volume por hora do dia
+type StatsHourRow struct {
+	Hour          int   `db:"hour"`
+	TotalMessages int64 `db:"total_messages"`
+}
+
+// StatsContactRow — top contatos por volume
+type StatsContactRow struct {
+	WAJID         string `db:"wa_jid"`
+	WAPhone       string `db:"wa_phone"`
+	WAName        string `db:"wa_name"`
+	TotalMessages int64  `db:"total_messages"`
+	InboundCount  int64  `db:"inbound_count"`
+	OutboundCount int64  `db:"outbound_count"`
+}
+
+func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSessionRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			COALESCE(s.jid, 'desconhecido')    AS session_jid,
+			COALESCE(s.phone, 'desconhecido')  AS phone,
+			COUNT(*)                           AS total_messages,
+			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
+			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count,
+			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END) AS failed_count
+		FROM messages m
+		LEFT JOIN whatsapp_sessions s ON s.id = m.session_id
+		WHERE m.created_at >= NOW() - ($1 || ' days')::interval
+		GROUP BY s.jid, s.phone
+		ORDER BY total_messages DESC
+	`, fmt.Sprintf("%d", days))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StatsSessionRow
+	for rows.Next() {
+		var row StatsSessionRow
+		if err := rows.Scan(&row.SessionJID, &row.Phone, &row.TotalMessages, &row.InboundCount, &row.OutboundCount, &row.FailedCount); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (r *Repository) GetStatsByType(ctx context.Context, days int) ([]StatsTypeRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			message_type,
+			COUNT(*)                           AS total_messages,
+			SUM(CASE WHEN direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
+			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count
+		FROM messages
+		WHERE created_at >= NOW() - ($1 || ' days')::interval
+		GROUP BY message_type
+		ORDER BY total_messages DESC
+	`, fmt.Sprintf("%d", days))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StatsTypeRow
+	for rows.Next() {
+		var row StatsTypeRow
+		if err := rows.Scan(&row.MessageType, &row.TotalMessages, &row.InboundCount, &row.OutboundCount); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (r *Repository) GetStatsByHour(ctx context.Context, days int) ([]StatsHourRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			EXTRACT(HOUR FROM created_at)::int AS hour,
+			COUNT(*)                           AS total_messages
+		FROM messages
+		WHERE created_at >= NOW() - ($1 || ' days')::interval
+		GROUP BY hour
+		ORDER BY hour
+	`, fmt.Sprintf("%d", days))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StatsHourRow
+	for rows.Next() {
+		var row StatsHourRow
+		if err := rows.Scan(&row.Hour, &row.TotalMessages); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]StatsContactRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			COALESCE(c.wa_jid, 'desconhecido')   AS wa_jid,
+			COALESCE(c.wa_phone, '')              AS wa_phone,
+			COALESCE(c.wa_name, '')               AS wa_name,
+			COUNT(*)                              AS total_messages,
+			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
+			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count
+		FROM messages m
+		LEFT JOIN contact_mapping c ON c.id = m.contact_id
+		WHERE m.created_at >= NOW() - ($1 || ' days')::interval
+		GROUP BY c.wa_jid, c.wa_phone, c.wa_name
+		ORDER BY total_messages DESC
+		LIMIT $2
+	`, fmt.Sprintf("%d", days), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StatsContactRow
+	for rows.Next() {
+		var row StatsContactRow
+		if err := rows.Scan(&row.WAJID, &row.WAPhone, &row.WAName, &row.TotalMessages, &row.InboundCount, &row.OutboundCount); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
 // ─── Bitrix Tokens ────────────────────────────────────────────────────────
 
 func (r *Repository) UpsertBitrixToken(ctx context.Context, t *BitrixToken) error {

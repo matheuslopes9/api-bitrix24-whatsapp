@@ -85,7 +85,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 			p.log.Warn("upload media to disk failed, sending text only",
 				zap.String("file", job.MediaName), zap.Error(err))
 			if job.Text == "" {
-				msgBody.Text = "[" + job.MediaName + "]"
+				msgBody.Text = "📎 Arquivo recebido: " + job.MediaName + "\n⚠️ Não foi possível transferir o arquivo (pode ser muito grande para o Bitrix24 ou o upload expirou)."
 			}
 		} else {
 			msgBody.Files = []ConnectorFile{{Name: job.MediaName, URL: downloadURL}}

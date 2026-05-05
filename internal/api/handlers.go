@@ -733,9 +733,6 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		}
 		h.log.Info("uiLinkQueue: connector activated",
 			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
-		// Refaz o event.bind com o app Local (INSTALLED:true) — o activate acima pode
-		// ter resetado os handlers do Bitrix para este conector.
-		h.rebindEventWithLocalApp(ctx, domain)
 	}()
 
 	h.log.Info("queue link created", zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
@@ -836,13 +833,9 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["activate"] = "nenhuma linha ativada"
 	}
 
-	// Refaz o event.bind com o app Local (INSTALLED:true) — o activate acima pode
-	// ter resetado os handlers do Bitrix para este conector.
-	if h.rebindEventWithLocalApp(c.Context(), domain) {
-		steps["bind_event"] = "ok (app local)"
-	} else {
-		steps["bind_event"] = "falhou ou app local não encontrado"
-	}
+	// event.bind é gerenciado exclusivamente pelo ONAPPINSTALL do app Local (INSTALLED:true).
+	// Fazer bind aqui com o token do Partner App (INSTALLED:false) cria binding inválido.
+	steps["bind_event"] = "gerenciado pelo ONAPPINSTALL (app Local, INSTALLED:true)"
 
 	h.log.Info("uiActivateConnector result", zap.String("domain", domain), zap.Any("steps", steps))
 
@@ -1347,58 +1340,6 @@ func (h *handlers) localCredsForDomain(ctx context.Context, domain string, porta
 	return h.portalToCreds(portal)
 }
 
-// rebindEventWithLocalApp faz unbind de todos os ONIMCONNECTORMESSAGEADD existentes e
-// refaz o bind usando o token do app Local (INSTALLED:true). Deve ser chamado após
-// qualquer imconnector.activate feito com o Partner App, pois o Bitrix resetar os
-// event handlers ao trocar o app ativo de uma Open Line.
-// Retorna true se o bind foi feito com sucesso com o app local, false caso contrário.
-func (h *handlers) rebindEventWithLocalApp(ctx context.Context, domain string) bool {
-	eventURL := h.cfg.App.BaseURL() + "/bitrix/connector/event"
-
-	// Busca as credenciais do app local para este domínio.
-	// Se não encontrar um account local com client_id/secret próprios, o Bitrix
-	// não tem um app INSTALLED:true — o bind não vai funcionar.
-	localCreds := h.localCredsForDomain(ctx, domain, nil)
-	if localCreds.ClientID == "" || localCreds.ClientID == h.cfg.Bitrix.ClientID {
-		// Não há app local distinto — tenta com as creds globais mesmo assim
-		localCreds = bitrix.TenantCreds{
-			Domain:       "https://" + domain,
-			ClientID:     h.cfg.Bitrix.ClientID,
-			ClientSecret: h.cfg.Bitrix.ClientSecret,
-			RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
-		}
-	}
-
-	// Remove todos os bindings antigos de ONIMCONNECTORMESSAGEADD
-	existing, err := h.bitrixClient.ListEventBindings(ctx, localCreds)
-	removed := 0
-	if err == nil && existing != nil {
-		var bindings []struct {
-			Event   string `json:"event"`
-			Handler string `json:"handler"`
-		}
-		if jsonErr := json.Unmarshal(existing, &bindings); jsonErr == nil {
-			for _, b := range bindings {
-				if b.Event == "ONIMCONNECTORMESSAGEADD" {
-					if unbindErr := h.bitrixClient.UnbindEvent(ctx, localCreds, b.Event, b.Handler); unbindErr == nil {
-						removed++
-					}
-				}
-			}
-		}
-	}
-
-	// Faz o bind com o token do app local
-	bindErr := h.bitrixClient.BindEvent(ctx, localCreds, "ONIMCONNECTORMESSAGEADD", eventURL)
-	h.log.Info("rebindEventWithLocalApp",
-		zap.String("domain", domain),
-		zap.String("event_url", eventURL),
-		zap.Int("removed_old_bindings", removed),
-		zap.Error(bindErr),
-	)
-	return bindErr == nil
-}
-
 // discoverOpenLines retorna apenas a linha especificada.
 func (h *handlers) discoverOpenLines(_ context.Context, _ bitrix.TenantCreds, _ string, lineID int) []int {
 	if lineID <= 0 {
@@ -1526,4 +1467,60 @@ func (h *handlers) queueStats(c *fiber.Ctx) error {
 		"outbound": out,
 		"dead":     dead,
 	})
+}
+
+// GET /stats/sessions?days=7
+func (h *handlers) sessionStats(c *fiber.Ctx) error {
+	days, _ := strconv.Atoi(c.Query("days", "7"))
+	if days < 1 || days > 90 {
+		days = 7
+	}
+	data, err := h.repo.GetStatsBySession(c.Context(), days)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(data)
+}
+
+// GET /stats/types?days=7
+func (h *handlers) typeStats(c *fiber.Ctx) error {
+	days, _ := strconv.Atoi(c.Query("days", "7"))
+	if days < 1 || days > 90 {
+		days = 7
+	}
+	data, err := h.repo.GetStatsByType(c.Context(), days)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(data)
+}
+
+// GET /stats/hours?days=7
+func (h *handlers) hourStats(c *fiber.Ctx) error {
+	days, _ := strconv.Atoi(c.Query("days", "7"))
+	if days < 1 || days > 90 {
+		days = 7
+	}
+	data, err := h.repo.GetStatsByHour(c.Context(), days)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(data)
+}
+
+// GET /stats/contacts?days=7&limit=20
+func (h *handlers) contactStats(c *fiber.Ctx) error {
+	days, _ := strconv.Atoi(c.Query("days", "7"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	if days < 1 || days > 90 {
+		days = 7
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	data, err := h.repo.GetTopContacts(c.Context(), days, limit)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	}
+	return c.JSON(data)
 }
