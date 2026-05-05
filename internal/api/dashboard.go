@@ -1763,9 +1763,9 @@ var _cselectData = {}; // id → [{value, label, color}]
 function toggleCSelect(id) {
   var trigger  = document.getElementById(id + '-trigger');
   var dropdown = document.getElementById(id + '-dropdown');
-  var search   = document.getElementById(id + '-search');
-  var isOpen   = dropdown.classList.contains('open');
-  // fecha todos os outros
+  if (!trigger || !dropdown) return;
+  var search = document.getElementById(id + '-search');
+  var isOpen = dropdown.classList.contains('open');
   document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
   document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
   if (!isOpen) {
@@ -1777,6 +1777,7 @@ function toggleCSelect(id) {
 
 function filtrarCSelect(id, q) {
   var opts = document.getElementById(id + '-options');
+  if (!opts) return;
   var items = _cselectData[id] || [];
   q = (q||'').toLowerCase();
   var filtered = q ? items.filter(function(i){ return i.label.toLowerCase().indexOf(q) >= 0; }) : items;
@@ -1784,36 +1785,41 @@ function filtrarCSelect(id, q) {
     opts.innerHTML = '<div class="cselect-empty">Nenhum resultado encontrado</div>';
     return;
   }
+  var hiddenInput = document.getElementById(id);
+  var selVal = hiddenInput ? hiddenInput.value : '';
   opts.innerHTML = filtered.map(function(item) {
-    var selVal = document.getElementById(id).value;
     var cls = 'cselect-option' + (String(item.value) === String(selVal) ? ' selected' : '');
     var color = item.color ? 'color:' + item.color + ';' : '';
+    var check = item.color === '#4ade80'
+      ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<span style="width:12px;display:inline-block;"></span>';
     return '<div class="' + cls + '" style="' + color + '" onclick="selecionarCSelect(\'' + id + '\',' + JSON.stringify(item.value) + ',' + JSON.stringify(item.label) + ')">'
-      + (item.color === '#4ade80' ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' : '<span style="width:12px;display:inline-block;"></span>')
-      + item.label
-      + '</div>';
+      + check + item.label + '</div>';
   }).join('');
 }
 
 function selecionarCSelect(id, value, label) {
-  document.getElementById(id).value = value;
-  var lbl = document.getElementById(id + '-label');
+  var hidden = document.getElementById(id);
+  var lbl    = document.getElementById(id + '-label');
+  var dd     = document.getElementById(id + '-dropdown');
+  var tr     = document.getElementById(id + '-trigger');
+  if (!hidden || !lbl) return;
+  hidden.value = value;
   lbl.textContent = label;
   lbl.classList.remove('cselect-placeholder');
-  document.getElementById(id + '-dropdown').classList.remove('open');
-  document.getElementById(id + '-trigger').classList.remove('open');
-  // dispara evento change para compatibilidade
+  if (dd) dd.classList.remove('open');
+  if (tr) tr.classList.remove('open');
   var ev = new Event('change');
-  document.getElementById(id).dispatchEvent(ev);
+  hidden.dispatchEvent(ev);
 }
 
 function setCSelectPlaceholder(id, text) {
-  var lbl = document.getElementById(id + '-label');
-  lbl.textContent = text;
-  lbl.classList.add('cselect-placeholder');
-  document.getElementById(id).value = '';
+  var lbl    = document.getElementById(id + '-label');
+  var hidden = document.getElementById(id);
+  var opts   = document.getElementById(id + '-options');
+  if (lbl) { lbl.textContent = text; lbl.classList.add('cselect-placeholder'); }
+  if (hidden) hidden.value = '';
   _cselectData[id] = [];
-  var opts = document.getElementById(id + '-options');
   if (opts) opts.innerHTML = '<div class="cselect-empty">' + text + '</div>';
 }
 
