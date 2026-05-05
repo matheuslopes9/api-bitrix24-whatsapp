@@ -127,6 +127,28 @@ select.inp:focus{border-color:rgba(37,211,102,.55);box-shadow:0 0 0 3px rgba(37,
 /* ── Modal ── */
 .modal-box{background:#111827;border:1.5px solid rgba(255,255,255,.1);border-radius:20px;padding:28px;box-shadow:0 24px 64px rgba(0,0,0,.6);}
 
+/* ── Custom Select (dropdown 100% CSS/JS, sem nativo) ── */
+.cselect{position:relative;width:100%;}
+.cselect-trigger{width:100%;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.1);border-radius:12px;padding:11px 38px 11px 15px;color:#e2e8f0;font-size:13.5px;font-weight:500;font-family:'Plus Jakarta Sans',system-ui,sans-serif;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;transition:border-color .2s,background .2s,box-shadow .2s;user-select:none;}
+.cselect-trigger:hover{background:rgba(255,255,255,.08);}
+.cselect-trigger.open,.cselect-trigger:focus{border-color:rgba(37,211,102,.55);background:rgba(255,255,255,.08);box-shadow:0 0 0 3px rgba(37,211,102,.1);outline:none;}
+.cselect-trigger .cselect-placeholder{color:#3d4f66;font-weight:400;}
+.cselect-trigger .cselect-arrow{flex-shrink:0;transition:transform .2s;color:#64748b;}
+.cselect-trigger.open .cselect-arrow{transform:rotate(180deg);}
+.cselect-dropdown{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:200;overflow:hidden;max-height:260px;overflow-y:auto;}
+.cselect-dropdown.open{display:block;}
+.cselect-search{padding:10px 12px 6px;position:sticky;top:0;background:#131929;z-index:1;}
+.cselect-search input{width:100%;background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.1);border-radius:9px;padding:8px 12px;color:#e2e8f0;font-size:13px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;outline:none;}
+.cselect-search input:focus{border-color:rgba(37,211,102,.5);}
+.cselect-option{padding:10px 15px;font-size:13.5px;font-weight:500;color:#cbd5e1;cursor:pointer;transition:background .12s,color .12s;display:flex;align-items:center;gap:8px;}
+.cselect-option:hover{background:rgba(255,255,255,.07);color:#f1f5f9;}
+.cselect-option.selected{background:rgba(37,211,102,.12);color:#25D366;}
+.cselect-option.highlighted{background:rgba(37,211,102,.08);}
+.cselect-empty{padding:16px 15px;font-size:13px;color:#475569;text-align:center;}
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:4px;}
+
 /* ── Table ── */
 .tbl{width:100%;border-collapse:collapse;font-size:13px;}
 .tbl th{padding:9px 13px;border-bottom:1px solid rgba(255,255,255,.07);color:#475569;font-weight:500;text-align:left;white-space:nowrap;}
@@ -697,16 +719,24 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
       <div class="inp-group">
         <label class="inp-label">Open Line (Fila de Atendimento)</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <select class="inp" id="fila-openline" style="flex:1;">
-            <option value="">Selecione o portal primeiro...</option>
-          </select>
-          <button type="button" class="btn btn-ghost btn-sm" id="fila-buscar-linhas-btn" onclick="buscarLinhasBitrix()" style="white-space:nowrap;padding:0 12px;height:38px;" disabled>
+        <div style="display:flex;gap:8px;align-items:flex-start;">
+          <div class="cselect" id="fila-openline-wrap" style="flex:1;">
+            <div class="cselect-trigger" id="fila-openline-trigger" tabindex="0" onclick="toggleCSelect('fila-openline')" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCSelect('fila-openline')">
+              <span class="cselect-placeholder" id="fila-openline-label">Selecione o portal primeiro...</span>
+              <svg class="cselect-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="cselect-dropdown" id="fila-openline-dropdown">
+              <div class="cselect-search"><input type="text" placeholder="Buscar linha..." id="fila-openline-search" oninput="filtrarCSelect('fila-openline',this.value)" onclick="event.stopPropagation()"/></div>
+              <div id="fila-openline-options"><div class="cselect-empty">Selecione o portal primeiro...</div></div>
+            </div>
+            <input type="hidden" id="fila-openline" value=""/>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" id="fila-buscar-linhas-btn" onclick="buscarLinhasBitrix()" style="white-space:nowrap;padding:0 14px;height:46px;flex-shrink:0;" disabled>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            Buscar Linhas
+            Buscar
           </button>
         </div>
-        <span style="font-size:11px;color:#475569;margin-top:4px;display:block;" id="fila-linhas-hint">Selecione o portal e clique em "Buscar Linhas" para listar as Open Lines disponíveis.</span>
+        <span style="font-size:11px;color:#475569;margin-top:4px;display:block;" id="fila-linhas-hint">Selecione o portal e clique em "Buscar" para listar as Open Lines disponíveis.</span>
       </div>
     </div>
 
@@ -1688,22 +1718,20 @@ function abrirModalFila(prePortal) {
   });
   selPortal.disabled = !!PORTAL;
 
-  // Quando muda o portal, limpa as linhas e habilita o botão buscar
+  // Quando muda o portal, limpa o custom select e habilita o botão buscar
   selPortal.onchange = function() {
-    document.getElementById('fila-openline').innerHTML = '<option value="">Clique em "Buscar Linhas"...</option>';
     var hasDomain = !!selPortal.value;
     document.getElementById('fila-buscar-linhas-btn').disabled = !hasDomain;
+    setCSelectPlaceholder('fila-openline', hasDomain ? 'Clique em "Buscar" para carregar...' : 'Selecione o portal primeiro...');
     document.getElementById('fila-linhas-hint').textContent = hasDomain
-      ? 'Clique em "Buscar Linhas" para carregar as Open Lines disponíveis no portal.'
-      : 'Selecione o portal e clique em "Buscar Linhas".';
+      ? 'Clique em "Buscar" para carregar as Open Lines disponíveis no portal.'
+      : 'Selecione o portal e clique em "Buscar".';
   };
 
   // Se portal já veio pré-selecionado, habilita botão e dispara busca automaticamente
   var temPortal = !!selPortal.value;
   document.getElementById('fila-buscar-linhas-btn').disabled = !temPortal;
-  document.getElementById('fila-openline').innerHTML = '<option value="">'
-    + (temPortal ? 'Clique em "Buscar Linhas"...' : 'Selecione o portal primeiro...')
-    + '</option>';
+  setCSelectPlaceholder('fila-openline', temPortal ? 'Clique em "Buscar"...' : 'Selecione o portal primeiro...');
   if (temPortal) { buscarLinhasBitrix(); }
 
   // Popula select de sessões
@@ -1729,51 +1757,116 @@ function abrirModalFila(prePortal) {
   document.getElementById('fila-modal').style.display = 'flex';
 }
 
+// ─── Custom Select ────────────────────────────────────────────────────────────
+var _cselectData = {}; // id → [{value, label, color}]
+
+function toggleCSelect(id) {
+  var trigger  = document.getElementById(id + '-trigger');
+  var dropdown = document.getElementById(id + '-dropdown');
+  var search   = document.getElementById(id + '-search');
+  var isOpen   = dropdown.classList.contains('open');
+  // fecha todos os outros
+  document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
+  document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
+  if (!isOpen) {
+    dropdown.classList.add('open');
+    trigger.classList.add('open');
+    if (search) { search.value = ''; filtrarCSelect(id, ''); setTimeout(function(){ search.focus(); }, 50); }
+  }
+}
+
+function filtrarCSelect(id, q) {
+  var opts = document.getElementById(id + '-options');
+  var items = _cselectData[id] || [];
+  q = (q||'').toLowerCase();
+  var filtered = q ? items.filter(function(i){ return i.label.toLowerCase().indexOf(q) >= 0; }) : items;
+  if (filtered.length === 0) {
+    opts.innerHTML = '<div class="cselect-empty">Nenhum resultado encontrado</div>';
+    return;
+  }
+  opts.innerHTML = filtered.map(function(item) {
+    var selVal = document.getElementById(id).value;
+    var cls = 'cselect-option' + (String(item.value) === String(selVal) ? ' selected' : '');
+    var color = item.color ? 'color:' + item.color + ';' : '';
+    return '<div class="' + cls + '" style="' + color + '" onclick="selecionarCSelect(\'' + id + '\',' + JSON.stringify(item.value) + ',' + JSON.stringify(item.label) + ')">'
+      + (item.color === '#4ade80' ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>' : '<span style="width:12px;display:inline-block;"></span>')
+      + item.label
+      + '</div>';
+  }).join('');
+}
+
+function selecionarCSelect(id, value, label) {
+  document.getElementById(id).value = value;
+  var lbl = document.getElementById(id + '-label');
+  lbl.textContent = label;
+  lbl.classList.remove('cselect-placeholder');
+  document.getElementById(id + '-dropdown').classList.remove('open');
+  document.getElementById(id + '-trigger').classList.remove('open');
+  // dispara evento change para compatibilidade
+  var ev = new Event('change');
+  document.getElementById(id).dispatchEvent(ev);
+}
+
+function setCSelectPlaceholder(id, text) {
+  var lbl = document.getElementById(id + '-label');
+  lbl.textContent = text;
+  lbl.classList.add('cselect-placeholder');
+  document.getElementById(id).value = '';
+  _cselectData[id] = [];
+  var opts = document.getElementById(id + '-options');
+  if (opts) opts.innerHTML = '<div class="cselect-empty">' + text + '</div>';
+}
+
+// Fecha dropdown ao clicar fora
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.cselect')) {
+    document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
+    document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
+  }
+});
+
 function buscarLinhasBitrix() {
   var domain = document.getElementById('fila-portal').value.trim();
   if (!domain) { toast('Selecione o portal primeiro', 'error'); return; }
 
-  var btn = document.getElementById('fila-buscar-linhas-btn');
-  var sel = document.getElementById('fila-openline');
+  var btn  = document.getElementById('fila-buscar-linhas-btn');
   var hint = document.getElementById('fila-linhas-hint');
 
   btn.disabled = true;
-  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Buscando...';
-  sel.innerHTML = '<option value="">Buscando linhas...</option>';
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
+  setCSelectPlaceholder('fila-openline', 'Buscando linhas...');
   hint.textContent = 'Varrendo Open Lines no portal, aguarde...';
 
   fetch(apiUrl('/ui/bitrix/lines?domain=' + encodeURIComponent(domain)))
   .then(function(r){ return r.json(); })
   .then(function(d) {
     btn.disabled = false;
-    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar Linhas';
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar';
 
     var lines = d.lines || [];
     if (lines.length === 0) {
-      sel.innerHTML = '<option value="">Nenhuma Open Line encontrada</option>';
-      hint.textContent = 'Nenhuma Open Line encontrada no portal. Verifique se o app tem permissão de acesso.';
+      setCSelectPlaceholder('fila-openline', 'Nenhuma Open Line encontrada');
+      hint.textContent = 'Nenhuma Open Line encontrada. Verifique as permissões do app.';
       return;
     }
 
-    sel.innerHTML = '<option value="">Selecione a Open Line...</option>';
-    lines.forEach(function(l) {
-      var opt = document.createElement('option');
-      opt.value = l.id;
-      var status = l.connector_ok ? ' ✓' : '';
-      opt.textContent = l.name + ' (ID: ' + l.id + ')' + status;
-      if (l.connector_ok) { opt.style.color = '#4ade80'; }
-      sel.appendChild(opt);
+    // Popula o custom select
+    _cselectData['fila-openline'] = lines.map(function(l) {
+      return { value: l.id, label: l.name + ' (ID: ' + l.id + ')', color: l.connector_ok ? '#4ade80' : '' };
     });
+    setCSelectPlaceholder('fila-openline', 'Selecione a Open Line...');
 
     var ativos = lines.filter(function(l){ return l.connector_ok; });
     hint.textContent = lines.length + ' linhas encontradas'
       + (ativos.length > 0 ? ' · ' + ativos.length + ' já com connector ativo (✓)' : '')
       + '. Selecione a linha desejada.';
+
+    filtrarCSelect('fila-openline', '');
   })
   .catch(function() {
     btn.disabled = false;
-    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar Linhas';
-    sel.innerHTML = '<option value="">Erro ao buscar linhas</option>';
+    btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar';
+    setCSelectPlaceholder('fila-openline', 'Erro ao buscar linhas');
     hint.textContent = 'Erro ao buscar linhas. Verifique se o token do portal é válido.';
   });
 }
