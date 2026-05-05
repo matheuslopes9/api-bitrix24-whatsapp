@@ -277,9 +277,9 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	}
 	h.log.Info("crm history: crm.chat.get", zap.String("entity_type", bxEntityType), zap.String("entity_id", entityID), zap.String("chat_id", chatID), zap.String("raw", string(chatsRaw)))
 
-	// Estratégia 2: busca o telefone do contato e procura pelo número no session.list
+	// Busca o telefone do contato — usado nas estratégias 2 e 3
+	phone := ""
 	if chatID == "" {
-		phone := ""
 		entityRaw, eErr := func() (json.RawMessage, error) {
 			switch entityType {
 			case "lead":
@@ -296,11 +296,28 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 				phone = normalizeWAPhone(extractPhone(obj))
 			}
 		}
+	}
 
-		if phone != "" {
-			h.log.Info("crm history: trying session.list by phone", zap.String("phone", phone))
-			chatID, _ = h.bitrixClient.FindChatByPhone(c.Context(), creds, phone)
-			h.log.Info("crm history: session.list result", zap.String("chat_id", chatID))
+	// Estratégia 2: imopenlines.session.list filtrando pelo telefone
+	if chatID == "" && phone != "" {
+		h.log.Info("crm history: trying session.list by phone", zap.String("phone", phone))
+		var sessionRaw json.RawMessage
+		chatID, sessionRaw, _ = h.bitrixClient.FindChatByPhone(c.Context(), creds, phone)
+		h.log.Info("crm history: session.list result",
+			zap.String("chat_id", chatID),
+			zap.String("raw", string(sessionRaw)),
+		)
+	}
+
+	// Estratégia 3: im.recent.list — percorre chats recentes procurando pelo telefone
+	if chatID == "" && phone != "" {
+		recentRaw, rErr := h.bitrixClient.GetRecentChats(c.Context(), creds, 100)
+		if rErr == nil {
+			chatID = extractChatIDFromRecent(recentRaw, phone)
+			h.log.Info("crm history: recent.list result",
+				zap.String("chat_id", chatID),
+				zap.String("raw_preview", string(recentRaw)[:min(400, len(recentRaw))]),
+			)
 		}
 	}
 
@@ -349,6 +366,49 @@ func extractChatID(raw json.RawMessage) string {
 		return fmt.Sprintf("%v", wrapped.Result.ChatID)
 	}
 	return ""
+}
+
+// extractChatIDFromRecent percorre im.recent.list procurando um chat cujo título/nome contém o telefone.
+func extractChatIDFromRecent(raw json.RawMessage, phone string) string {
+	var items []struct {
+		ID    interface{} `json:"ID"`
+		Title string      `json:"TITLE"`
+		Name  string      `json:"NAME"`
+		Type  string      `json:"TYPE"`
+	}
+	// Tenta array direto
+	if json.Unmarshal(raw, &items) != nil {
+		// Tenta {result: [...]}
+		var w struct {
+			Result []struct {
+				ID    interface{} `json:"ID"`
+				Title string      `json:"TITLE"`
+				Name  string      `json:"NAME"`
+				Type  string      `json:"TYPE"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(raw, &w) == nil {
+			for _, it := range w.Result {
+				if strings.Contains(it.Title, phone) || strings.Contains(it.Name, phone) {
+					return fmt.Sprintf("%v", it.ID)
+				}
+			}
+		}
+		return ""
+	}
+	for _, it := range items {
+		if strings.Contains(it.Title, phone) || strings.Contains(it.Name, phone) {
+			return fmt.Sprintf("%v", it.ID)
+		}
+	}
+	return ""
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 type crmMessage struct {

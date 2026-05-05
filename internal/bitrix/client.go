@@ -759,50 +759,83 @@ func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType,
 }
 
 // FindChatByPhone busca o CHAT_ID de uma sessão Open Channel pelo número de telefone.
-// Usa imopenlines.session.list filtrando pelo USER_CODE que contém o telefone.
-func (c *Client) FindChatByPhone(ctx context.Context, creds TenantCreds, phone string) (string, error) {
+// USER_CODE no Bitrix tem formato: "<connector>|<lineID>|<phone>|<phone>"
+// Busca as sessões recentes e filtra pelo telefone no USER_CODE.
+func (c *Client) FindChatByPhone(ctx context.Context, creds TenantCreds, phone string) (string, json.RawMessage, error) {
+	// Tenta buscar pelo USER_CODE parcial (apenas o número)
 	raw, err := c.call(ctx, creds, "imopenlines.session.list", map[string]interface{}{
 		"FILTER": map[string]interface{}{
-			"USER_CODE": phone,
+			"=USER_CODE": "%" + phone + "%",
 		},
-		"LIMIT": 10,
+		"ORDER": map[string]string{"DATE_CREATE": "DESC"},
+		"LIMIT": 50,
 	})
 	if err != nil {
-		return "", err
+		// Fallback: sem filtro, pega as 50 mais recentes
+		raw, err = c.call(ctx, creds, "imopenlines.session.list", map[string]interface{}{
+			"ORDER": map[string]string{"DATE_CREATE": "DESC"},
+			"LIMIT": 50,
+		})
+		if err != nil {
+			return "", nil, err
+		}
 	}
-	// Tenta extrair CHAT_ID de várias estruturas
-	var result struct {
-		Sessions []struct {
-			ChatID  interface{} `json:"CHAT_ID"`
-			UserCode string     `json:"USER_CODE"`
-		} `json:"sessions"`
+
+	chatID := extractSessionChatID(raw, phone)
+	return chatID, raw, nil
+}
+
+// extractSessionChatID percorre a lista de sessões e retorna o CHAT_ID
+// da sessão cujo USER_CODE contém o número de telefone.
+func extractSessionChatID(raw json.RawMessage, phone string) string {
+	type session struct {
+		ID       interface{} `json:"ID"`
+		ChatID   interface{} `json:"CHAT_ID"`
+		UserCode string      `json:"USER_CODE"`
 	}
-	if json.Unmarshal(raw, &result) == nil {
-		for _, s := range result.Sessions {
-			if s.ChatID != nil {
+
+	// Tenta estrutura {sessions: [...]}
+	var wrapped struct {
+		Sessions []session `json:"sessions"`
+	}
+	if json.Unmarshal(raw, &wrapped) == nil && len(wrapped.Sessions) > 0 {
+		for _, s := range wrapped.Sessions {
+			if strings.Contains(s.UserCode, phone) {
 				id := fmt.Sprintf("%v", s.ChatID)
-				if id != "0" && id != "" {
-					return id, nil
+				if id != "0" && id != "" && id != "<nil>" {
+					return id
 				}
 			}
 		}
 	}
-	// Fallback: array direto
-	var arr []struct {
-		ChatID  interface{} `json:"CHAT_ID"`
-		UserCode string     `json:"USER_CODE"`
-	}
+
+	// Tenta array direto [...]
+	var arr []session
 	if json.Unmarshal(raw, &arr) == nil {
 		for _, s := range arr {
-			if s.ChatID != nil {
+			if strings.Contains(s.UserCode, phone) {
 				id := fmt.Sprintf("%v", s.ChatID)
-				if id != "0" && id != "" {
-					return id, nil
+				if id != "0" && id != "" && id != "<nil>" {
+					return id
 				}
 			}
 		}
+		// Se não achou por telefone mas tem sessões, retorna a mais recente
+		if len(arr) > 0 && phone == "" {
+			return fmt.Sprintf("%v", arr[0].ChatID)
+		}
 	}
-	return "", nil
+	return ""
+}
+
+// GetRecentChats retorna os chats recentes do Open Channel (im.recent.list).
+func (c *Client) GetRecentChats(ctx context.Context, creds TenantCreds, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return c.call(ctx, creds, "im.recent.list", map[string]interface{}{
+		"LIMIT": limit,
+	})
 }
 
 // GetChatMessages retorna as mensagens de um chat pelo CHAT_ID.
