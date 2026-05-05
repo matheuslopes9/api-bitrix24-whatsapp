@@ -11,8 +11,10 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -97,10 +99,13 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
-	if body.Domain == "" || body.Phone == "" || body.SessionJID == "" || body.Message == "" {
+	if body.Domain == "" || body.Phone == "" || body.SessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "domain, phone, session_jid e message são obrigatórios",
+			"error": "domain, phone e session_jid são obrigatórios",
 		})
+	}
+	if body.Message == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message é obrigatório"})
 	}
 
 	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(body.Domain))
@@ -160,6 +165,84 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		"to_jid":  toJID,
 		"chat_id": chatID,
 	})
+}
+
+// POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
+// Form fields: domain, phone, session_jid + file (multipart)
+func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
+	domain     := c.FormValue("domain")
+	phone      := c.FormValue("phone")
+	sessionJID := c.FormValue("session_jid")
+	caption    := c.FormValue("caption") // texto opcional junto ao arquivo
+
+	if domain == "" || phone == "" || sessionJID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "arquivo obrigatório"})
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
+	}
+
+	phone = normalizeWAPhone(phone)
+	toJID := phone + "@s.whatsapp.net"
+
+	connectorID := portal.ConnectorID
+	if connectorID == "" {
+		connectorID = "whatsapp_uc_v2"
+	}
+	lineID := portal.OpenLineID
+	if lineID == 0 {
+		lineID = 1
+	}
+
+	// Lê bytes do arquivo
+	f, err := fileHeader.Open()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "erro ao ler arquivo"})
+	}
+	defer f.Close()
+
+	// Detecta MIME pelo Content-Type do campo ou pelo nome
+	mime := fileHeader.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = guessMime(fileHeader.Filename)
+	}
+
+	job := &queue.OutboundJob{
+		SessionJID:      sessionJID,
+		ToJID:           toJID,
+		Text:            caption,
+		FileName:        fileHeader.Filename,
+		FileMime:        mime,
+		BitrixConnector: connectorID,
+		BitrixLine:      lineID,
+	}
+
+	// Para arquivos pequenos (<= 64 MB) embute os bytes na fila via MediaURL data URI
+	const maxEmbed = 64 << 20
+	if fileHeader.Size <= maxEmbed {
+		buf := make([]byte, fileHeader.Size)
+		if _, rerr := f.Read(buf); rerr == nil {
+			job.MediaURL = "data:" + mime + ";base64," + b64Encode(buf)
+		}
+	}
+
+	if err := h.q.PushOutbound(c.Context(), job); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	h.log.Info("crm upload queued",
+		zap.String("file", fileHeader.Filename),
+		zap.String("to", toJID),
+		zap.String("session", sessionJID),
+	)
+	return c.JSON(fiber.Map{"status": "queued", "file": fileHeader.Filename})
 }
 
 // GET /bitrix/crm/history?phone=5511999999999&limit=50 — histórico de mensagens com um número
@@ -261,6 +344,30 @@ func extractPhone(obj map[string]json.RawMessage) string {
 	return phones[0].Value
 }
 
+func b64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+func guessMime(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	m := map[string]string{
+		".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+		".gif": "image/gif", ".webp": "image/webp",
+		".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo",
+		".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+		".pdf": "application/pdf",
+		".doc": "application/msword",
+		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".xls": "application/vnd.ms-excel",
+		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		".zip": "application/zip",
+	}
+	if v, ok := m[ext]; ok {
+		return v
+	}
+	return "application/octet-stream"
+}
+
 func normalizeWAPhone(phone string) string {
 	var out strings.Builder
 	for _, r := range phone {
@@ -286,7 +393,7 @@ var crmTabHTML = `<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;overflow:hidden}
-body{font-family:'Plus Jakarta Sans',sans-serif;background:#1e2736;color:#e2e8f0;font-size:13px;display:flex;flex-direction:column;height:100%}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0;font-size:13px;display:flex;flex-direction:column;height:100%}
 
 /* ══ TOPO: operador + seletor de número ══ */
 .topbar{background:#252f3e;border-bottom:1px solid #2d3a4e;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-shrink:0;min-height:52px}
@@ -373,14 +480,23 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1e2736;color:#e2e8f0
 .bmedia{display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:11px;font-style:italic;margin-bottom:2px}
 
 /* compositor */
-.composer{background:#1e2736;border-top:1px solid #2d3a4e;padding:10px 14px;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+.composer{background:#1e2736;border-top:1px solid #2d3a4e;padding:8px 12px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.composer-row{display:flex;gap:8px;align-items:flex-end}
 .composer textarea{flex:1;background:#252f3e;border:1px solid #334155;border-radius:12px;padding:9px 12px;color:#f1f5f9;font-size:13px;font-family:inherit;outline:none;resize:none;max-height:120px;min-height:38px;line-height:1.4;transition:border-color .2s}
 .composer textarea:focus{border-color:#25D366}
 .composer textarea::placeholder{color:#475569}
 .composer textarea:disabled{opacity:.4}
+.btn-attach{background:none;border:1px solid #334155;border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;color:#64748b;transition:all .15s}
+.btn-attach:hover{border-color:#25D366;color:#25D366}
+.btn-attach:disabled{opacity:.3;cursor:not-allowed}
 .btn-send{background:#25D366;border:none;border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:opacity .15s}
 .btn-send:hover{opacity:.85}
 .btn-send:disabled{opacity:.4;cursor:not-allowed}
+.file-preview{display:none;align-items:center;gap:8px;background:#252f3e;border:1px solid #334155;border-radius:10px;padding:7px 10px;font-size:12px;color:#94a3b8}
+.file-preview.show{display:flex}
+.file-preview-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#e2e8f0}
+.file-preview-rm{background:none;border:none;color:#64748b;cursor:pointer;padding:0;display:flex;align-items:center}
+.file-preview-rm:hover{color:#f87171}
 /* spinner */
 .spinner{width:22px;height:22px;border:2px solid #2d3a4e;border-top-color:#25D366;border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -459,11 +575,25 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1e2736;color:#e2e8f0
 
     <!-- compositor -->
     <div class="composer">
-      <textarea id="msg-input" placeholder="Mensagem..." rows="1" disabled
-        onkeydown="onKey(event)" oninput="autoResize(this)"></textarea>
-      <button class="btn-send" id="btn-send" onclick="sendMsg()" title="Enviar" disabled>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
-      </button>
+      <!-- preview do arquivo selecionado -->
+      <div class="file-preview" id="file-preview">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span class="file-preview-name" id="file-preview-name"></span>
+        <button class="file-preview-rm" onclick="clearFile()" title="Remover arquivo">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="composer-row">
+        <input type="file" id="file-input" style="display:none" onchange="onFileSelected(this)">
+        <button class="btn-attach" id="btn-attach" onclick="document.getElementById('file-input').click()" title="Anexar arquivo" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <textarea id="msg-input" placeholder="Mensagem..." rows="1" disabled
+          onkeydown="onKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="btn-send" id="btn-send" onclick="sendOrUpload()" title="Enviar" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+        </button>
+      </div>
     </div>
 
   </div>
@@ -561,29 +691,33 @@ document.addEventListener('click', function(e) {
 
 // ── Entidade CRM (contato/lead/deal) ─────────────────────────────────────
 function loadEntity() {
-  if (!_entityId) { showConvOnly(); return; }
+  // Mostra spinner na sidebar enquanto carrega
+  document.getElementById('conv-list').innerHTML = '<div style="padding:16px;text-align:center"><div class="spinner" style="margin:auto"></div></div>';
+
+  if (!_entityId) {
+    document.getElementById('conv-list').innerHTML = '<div class="conv-empty">Abra um Contato,<br>Lead ou Deal para<br>ver o histórico.</div>';
+    return;
+  }
   var url = _baseUrl + '/bitrix/crm/entity?domain=' + enc(_domain) + '&entity_type=' + _entityType + '&entity_id=' + _entityId;
-  fetch(url).then(r => r.json()).then(function(d) {
-    _contactName   = d.name  || 'Contato';
-    _contactPhone  = d.phone || '';
+  fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+    _contactName     = d.name  || 'Contato';
+    _contactPhone    = d.phone || '';
     _contactInitials = initials(_contactName);
 
-    // Popula o contato atual no topo da lista (conversa ativa)
-    var convs = [];
-    if (_contactPhone) {
-      convs.push({ name: _contactName, phone: _contactPhone, preview: '', time: '', unread: 0, current: true });
+    if (!_contactPhone) {
+      document.getElementById('conv-list').innerHTML = '<div class="conv-empty">Nenhum telefone<br>cadastrado neste contato.</div>';
+      document.getElementById('chat-hdr-name').textContent  = _contactName;
+      document.getElementById('chat-hdr-avatar').textContent = _contactInitials;
+      return;
     }
-    _allConvs = convs;
-    renderConvList();
-    if (_contactPhone) openChat(_contactName, _contactPhone);
-  }).catch(function() {
-    document.getElementById('op-name').textContent = 'Erro ao carregar';
-  });
-}
 
-function showConvOnly() {
-  // Sem entidade — mostra lista vazia
-  renderConvList();
+    // Adiciona o contato na lista e abre o chat imediatamente
+    _allConvs = [{ name: _contactName, phone: _contactPhone, preview: 'Carregando...', time: '', unread: 0, active: true }];
+    renderConvList();
+    openChat(_contactName, _contactPhone);
+  }).catch(function() {
+    document.getElementById('conv-list').innerHTML = '<div class="conv-empty" style="color:#f87171">Erro ao carregar contato.</div>';
+  });
 }
 
 // ── Lista de conversas ────────────────────────────────────────────────────
@@ -597,8 +731,9 @@ function renderConvList() {
   }
   list.innerHTML = items.map(function(c) {
     var av = initials(c.name);
+    var isActive = c.active || c.phone === _contactPhone;
     var badge = c.unread ? '<span class="conv-badge">' + c.unread + '</span>' : '';
-    return '<div class="conv-item' + (c.current ? ' active' : '') + '" onclick="openChat(' + JSON.stringify(c.name) + ',' + JSON.stringify(c.phone) + ')">'
+    return '<div class="conv-item' + (isActive ? ' active' : '') + '" data-phone="' + esc(c.phone) + '" onclick="openChat(' + JSON.stringify(c.name) + ',' + JSON.stringify(c.phone) + ')">'
       + '<div class="conv-avatar">' + av + '</div>'
       + '<div class="conv-body"><div class="conv-name">' + esc(c.name) + '</div>'
       + '<div class="conv-preview">' + esc(c.preview || c.phone) + '</div></div>'
@@ -614,15 +749,17 @@ function openChat(name, phone) {
   _contactName  = name;
   _contactPhone = phone;
   document.getElementById('chat-hdr-name').textContent   = name;
-  document.getElementById('chat-hdr-phone').textContent  = phone;
+  document.getElementById('chat-hdr-phone').textContent  = phone ? ('📱 ' + phone) : '';
   document.getElementById('chat-hdr-avatar').textContent = initials(name);
   document.getElementById('msg-input').disabled  = false;
   document.getElementById('btn-send').disabled   = false;
+  document.getElementById('btn-attach').disabled = false;
   hideAlert();
   loadHistory();
-  // marca conversa ativa
+  // marca conversa ativa na sidebar
   document.querySelectorAll('.conv-item').forEach(function(el){ el.classList.remove('active'); });
-  event && event.currentTarget && event.currentTarget.classList && event.currentTarget.classList.add('active');
+  var items = document.querySelectorAll('.conv-item');
+  items.forEach(function(el){ if (el.dataset.phone === phone) el.classList.add('active'); });
 }
 
 function reloadChat() { if (_contactPhone) loadHistory(); }
@@ -697,44 +834,104 @@ function renderHistory(msgs) {
   }
 }
 
-// ── Envio ─────────────────────────────────────────────────────────────────
+// ── Arquivo ───────────────────────────────────────────────────────────────
+var _pendingFile = null;
+
+function onFileSelected(input) {
+  if (!input.files || !input.files[0]) return;
+  _pendingFile = input.files[0];
+  document.getElementById('file-preview-name').textContent = _pendingFile.name;
+  document.getElementById('file-preview').classList.add('show');
+  document.getElementById('msg-input').placeholder = 'Legenda (opcional)...';
+}
+
+function clearFile() {
+  _pendingFile = null;
+  document.getElementById('file-input').value = '';
+  document.getElementById('file-preview').classList.remove('show');
+  document.getElementById('msg-input').placeholder = 'Mensagem...';
+}
+
+// ── Envio (texto ou arquivo) ───────────────────────────────────────────────
+function sendOrUpload() {
+  if (_pendingFile) { uploadFile(); } else { sendMsg(); }
+}
+
 function sendMsg() {
   var msg = document.getElementById('msg-input').value.trim();
   if (!_contactPhone) { showAlert('error','Selecione um contato.'); return; }
   if (!_activeSession){ showAlert('error','Selecione um número WhatsApp no topo.'); return; }
-  if (!msg)            return;
+  if (!msg) return;
 
-  var btn = document.getElementById('btn-send');
-  btn.disabled = true;
+  setBtnLoading(true);
   fetch(_baseUrl + '/bitrix/crm/send', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ domain:_domain, entity_type:_entityType, entity_id:_entityId,
                            phone:_contactPhone, session_jid:_activeSession, message:msg })
   })
-  .then(r => r.json())
+  .then(function(r){ return r.json(); })
   .then(function(d) {
-    btn.disabled = false;
+    setBtnLoading(false);
     if (d.status === 'queued') {
       document.getElementById('msg-input').value = '';
       autoResize(document.getElementById('msg-input'));
       hideAlert();
-      appendOptimistic(msg);
+      appendOptimistic(msg, null);
     } else {
       showAlert('error', d.error || 'Erro ao enviar.');
     }
   })
-  .catch(function(e){ btn.disabled = false; showAlert('error','Falha: ' + e); });
+  .catch(function(e){ setBtnLoading(false); showAlert('error','Falha: ' + e); });
 }
 
-function appendOptimistic(text) {
+function uploadFile() {
+  if (!_pendingFile) return;
+  if (!_contactPhone) { showAlert('error','Selecione um contato.'); return; }
+  if (!_activeSession){ showAlert('error','Selecione um número WhatsApp no topo.'); return; }
+
+  var caption = document.getElementById('msg-input').value.trim();
+  var fd = new FormData();
+  fd.append('domain',      _domain);
+  fd.append('phone',       _contactPhone);
+  fd.append('session_jid', _activeSession);
+  fd.append('caption',     caption);
+  fd.append('file',        _pendingFile, _pendingFile.name);
+
+  setBtnLoading(true);
+  fetch(_baseUrl + '/bitrix/crm/upload', { method:'POST', body: fd })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    setBtnLoading(false);
+    if (d.status === 'queued') {
+      appendOptimistic(caption || _pendingFile.name, _pendingFile.name);
+      clearFile();
+      document.getElementById('msg-input').value = '';
+      autoResize(document.getElementById('msg-input'));
+      hideAlert();
+    } else {
+      showAlert('error', d.error || 'Erro ao enviar arquivo.');
+    }
+  })
+  .catch(function(e){ setBtnLoading(false); showAlert('error','Falha: ' + e); });
+}
+
+function setBtnLoading(on) {
+  document.getElementById('btn-send').disabled   = on;
+  document.getElementById('btn-attach').disabled = on;
+}
+
+function appendOptimistic(text, filename) {
   var body = document.getElementById('chat-body');
   var ph = body.querySelector('.chat-placeholder');
   if (ph) ph.remove();
   var now  = new Date();
   var time = now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  var content = filename
+    ? '<div class="bmedia">📎 ' + esc(filename) + '</div>' + (text ? '<div>' + esc(text) + '</div>' : '')
+    : esc(text);
   var el = document.createElement('div');
   el.className = 'bw out';
-  el.innerHTML = '<div class="bubble out">' + esc(text) + '<div class="bmeta"><span class="btime">' + time + '</span><span class="bst sent">✓</span></div></div>';
+  el.innerHTML = '<div class="bubble out">' + content + '<div class="bmeta"><span class="btime">' + time + '</span><span class="bst sent">✓</span></div></div>';
   body.appendChild(el);
   body.scrollTop = body.scrollHeight;
 }

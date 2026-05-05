@@ -117,6 +117,7 @@ func New(
 	bx.Get("/crm/sessions", h.bitrixCRMSessions)
 	bx.Get("/crm/lines", h.bitrixCRMLines)
 	bx.Get("/crm/history", h.bitrixCRMHistory)
+	bx.Post("/crm/upload", h.bitrixCRMUpload)
 
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
