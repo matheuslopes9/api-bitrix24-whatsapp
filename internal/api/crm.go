@@ -381,11 +381,6 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1e2736;color:#e2e8f0
 .btn-send{background:#25D366;border:none;border-radius:50%;width:38px;height:38px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:opacity .15s}
 .btn-send:hover{opacity:.85}
 .btn-send:disabled{opacity:.4;cursor:not-allowed}
-.fila-row{padding:0 14px 8px;display:flex;align-items:center;gap:8px;flex-shrink:0;background:#1e2736}
-.fila-row select{flex:1;background:#252f3e;border:1px solid #334155;border-radius:8px;padding:5px 8px;color:#f1f5f9;font-size:12px;font-family:inherit;outline:none}
-.fila-row select:focus{border-color:#25D366}
-.fila-label{font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
-
 /* spinner */
 .spinner{width:22px;height:22px;border:2px solid #2d3a4e;border-top-color:#25D366;border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -462,12 +457,6 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1e2736;color:#e2e8f0
     <!-- alerta inline -->
     <div class="inline-alert" id="inline-alert"></div>
 
-    <!-- fila -->
-    <div class="fila-row">
-      <span class="fila-label">Fila:</span>
-      <select id="sel-line"><option value="">Padrão</option></select>
-    </div>
-
     <!-- compositor -->
     <div class="composer">
       <textarea id="msg-input" placeholder="Mensagem..." rows="1" disabled
@@ -511,7 +500,6 @@ function init() {
 
     loadSessions();
     loadEntity();
-    loadLines();
   });
 }
 
@@ -711,8 +699,7 @@ function renderHistory(msgs) {
 
 // ── Envio ─────────────────────────────────────────────────────────────────
 function sendMsg() {
-  var msg    = document.getElementById('msg-input').value.trim();
-  var lineID = parseInt(document.getElementById('sel-line').value) || 0;
+  var msg = document.getElementById('msg-input').value.trim();
   if (!_contactPhone) { showAlert('error','Selecione um contato.'); return; }
   if (!_activeSession){ showAlert('error','Selecione um número WhatsApp no topo.'); return; }
   if (!msg)            return;
@@ -722,7 +709,7 @@ function sendMsg() {
   fetch(_baseUrl + '/bitrix/crm/send', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ domain:_domain, entity_type:_entityType, entity_id:_entityId,
-                           phone:_contactPhone, session_jid:_activeSession, message:msg, line_id:lineID })
+                           phone:_contactPhone, session_jid:_activeSession, message:msg })
   })
   .then(r => r.json())
   .then(function(d) {
@@ -750,22 +737,6 @@ function appendOptimistic(text) {
   el.innerHTML = '<div class="bubble out">' + esc(text) + '<div class="bmeta"><span class="btime">' + time + '</span><span class="bst sent">✓</span></div></div>';
   body.appendChild(el);
   body.scrollTop = body.scrollHeight;
-}
-
-// ── Open Lines ────────────────────────────────────────────────────────────
-function loadLines() {
-  if (!_domain) return;
-  fetch(_baseUrl + '/bitrix/crm/lines?domain=' + enc(_domain)).then(r => r.json()).then(function(d) {
-    var sel = document.getElementById('sel-line');
-    sel.innerHTML = '<option value="">Padrão</option>';
-    var lines = Array.isArray(d) ? d : (d.result || []);
-    lines.forEach(function(l) {
-      var id = l.ID||l.id, name = l.LINE_NAME||l.name||('Fila '+id);
-      var opt = document.createElement('option');
-      opt.value = id; opt.textContent = name;
-      sel.appendChild(opt);
-    });
-  }).catch(function(){});
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
