@@ -234,7 +234,7 @@ var crmTabHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WhatsApp</title>
+<title>UC Talk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -270,7 +270,7 @@ textarea{resize:vertical;min-height:90px}
 <div class="card">
   <div class="logo">
     <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#25D366"/><path d="M16 6C10.477 6 6 10.477 6 16c0 1.822.487 3.53 1.338 5.003L6 26l5.147-1.318A9.958 9.958 0 0016 26c5.523 0 10-4.477 10-10S21.523 6 16 6zm0 18a7.964 7.964 0 01-4.062-1.113l-.29-.173-3.057.783.811-2.978-.19-.306A7.96 7.96 0 018 16c0-4.411 3.589-8 8-8s8 3.589 8 8-3.589 8-8 8zm4.39-5.995c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.014-.374-1.932-1.192-.714-.636-1.196-1.422-1.337-1.662-.14-.24-.015-.37.106-.49.108-.108.24-.282.36-.423.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.195-.468-.393-.404-.54-.412l-.46-.008c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.7 2.595 4.12 3.64.576.248 1.025.396 1.374.507.578.183 1.103.157 1.52.095.463-.069 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28z" fill="#fff"/></svg>
-    <span>WhatsApp UC</span>
+    <span>UC Talk</span>
   </div>
 
   <div id="loading" class="loading-txt">Carregando informações...</div>
@@ -458,7 +458,7 @@ func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain strin
 		"CRM_DEAL_DETAIL_TAB",
 	}
 	for _, p := range placements {
-		if err := h.bitrixClient.BindPlacement(ctx, creds, p, tabURL, "WhatsApp"); err != nil {
+		if err := h.bitrixClient.BindPlacement(ctx, creds, p, tabURL, "UC Talk"); err != nil {
 			h.log.Warn("placement.bind failed",
 				zap.String("placement", p),
 				zap.String("domain", domain),

@@ -365,7 +365,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		}{
 			{"imconnector.register", map[string]interface{}{
 				"ID":   connectorID,
-				"NAME": "WhatsApp UC",
+				"NAME": "UC Talk",
 				"ICON": map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
 				"PLACEMENT_HANDLER": appBase + "/bitrix-connect",
 			}},
@@ -391,7 +391,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 // Chamado no ONAPPINSTALL do app local (INSTALLED:true) — o event.bind aqui é válido.
 func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bitrix.TenantCreds, appBase, eventURL string) {
 	ctx := context.Background()
-	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
+	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
 		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
 	}
 	if err := h.bitrixClient.SetConnectorData(ctx, creds, acct.ConnectorID, acct.OpenLineID, ""); err != nil {
@@ -723,7 +723,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		// Apenas register+activate — o event.bind é gerenciado exclusivamente pelo
 		// ONAPPINSTALL do app Local (INSTALLED:true). Fazer bind aqui com o token do
 		// Partner App (INSTALLED:false) cria um binding inválido que o Bitrix ignora.
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
 			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
 		}
 		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, body.OpenLineID, ""); err != nil {
@@ -806,7 +806,7 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	}
 
 	// Register — PLACEMENT_HANDLER é só a UI de configuração (slider), não o endpoint de mensagens
-	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "WhatsApp UC", appBase+"/bitrix-connect"); err != nil {
+	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
 		steps["register"] = "erro: " + err.Error()
 	} else {
 		steps["register"] = "ok"

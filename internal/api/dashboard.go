@@ -38,7 +38,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>WA Connector — Painel</title>
+<title>UC Talk — Painel</title>
 <script src="/assets/chart.js"></script>
 <link rel="icon" type="image/png" href="/assets/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -333,7 +333,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
   <div style="padding:6px 10px;margin-bottom:20px;display:flex;flex-direction:column;align-items:center;text-align:center;">
     <img src="/assets/logo.png" alt="UC Technology" style="max-width:100px;height:auto;display:block;"/>
     <div style="margin-top:7px;">
-      <div style="font-size:13px;font-weight:700;color:#f1f5f9;">WA Connector</div>
+      <div style="font-size:13px;font-weight:700;color:#f1f5f9;">UC Talk</div>
       <div style="font-size:11px;color:#334155;">UC Technology</div>
     </div>
   </div>
