@@ -758,6 +758,53 @@ func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType,
 	})
 }
 
+// FindChatByPhone busca o CHAT_ID de uma sessão Open Channel pelo número de telefone.
+// Usa imopenlines.session.list filtrando pelo USER_CODE que contém o telefone.
+func (c *Client) FindChatByPhone(ctx context.Context, creds TenantCreds, phone string) (string, error) {
+	raw, err := c.call(ctx, creds, "imopenlines.session.list", map[string]interface{}{
+		"FILTER": map[string]interface{}{
+			"USER_CODE": phone,
+		},
+		"LIMIT": 10,
+	})
+	if err != nil {
+		return "", err
+	}
+	// Tenta extrair CHAT_ID de várias estruturas
+	var result struct {
+		Sessions []struct {
+			ChatID  interface{} `json:"CHAT_ID"`
+			UserCode string     `json:"USER_CODE"`
+		} `json:"sessions"`
+	}
+	if json.Unmarshal(raw, &result) == nil {
+		for _, s := range result.Sessions {
+			if s.ChatID != nil {
+				id := fmt.Sprintf("%v", s.ChatID)
+				if id != "0" && id != "" {
+					return id, nil
+				}
+			}
+		}
+	}
+	// Fallback: array direto
+	var arr []struct {
+		ChatID  interface{} `json:"CHAT_ID"`
+		UserCode string     `json:"USER_CODE"`
+	}
+	if json.Unmarshal(raw, &arr) == nil {
+		for _, s := range arr {
+			if s.ChatID != nil {
+				id := fmt.Sprintf("%v", s.ChatID)
+				if id != "0" && id != "" {
+					return id, nil
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
 // GetChatMessages retorna as mensagens de um chat pelo CHAT_ID.
 func (c *Client) GetChatMessages(ctx context.Context, creds TenantCreds, chatID string, limit int) (json.RawMessage, error) {
 	if limit <= 0 {
