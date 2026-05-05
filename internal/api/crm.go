@@ -739,27 +739,56 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 var _domain = '', _entityType = 'contact', _entityId = '';
 var _contactName = '', _contactPhone = '', _contactInitials = '?';
 var _baseUrl = window.location.origin;
-var _sessions = [];       // [{jid, phone}]
-var _activeSession = '';  // jid selecionado
+var _sessions = [];
+var _activeSession = '';
 var _pollTimer = null;
 var _lastMsgId = '';
-var _allConvs = [];       // [{name, phone, preview, time, unread}]
+var _allConvs = [];
+var _placementRaw = null;
 
 // ── Inicialização ────────────────────────────────────────────────────────
 function init() {
   BX24.init(function() {
     var p = BX24.placement.info();
-    _entityType = (p.options && p.options.entityTypeName) ? p.options.entityTypeName.toLowerCase() : 'contact';
-    _entityId   = (p.options && p.options.id) ? String(p.options.id) : '';
-    _domain     = BX24.getDomain ? BX24.getDomain() : (p.domain || '');
+
+    // Salva raw para debug
+    _placementRaw = p;
+
+    // Tenta extrair entity_id de todas as formas que o Bitrix pode enviar
+    var opts = p.options || {};
+
+    // 1. CRM_CONTACT_DETAIL_TAB → opts.ID (maiúsculo)
+    // 2. CRM_CONTACT_DETAIL_TAB → opts.id (minúsculo)
+    // 3. opts.entityTypeName + opts.id (formato antigo)
+    // 4. p.ID direto
+    _entityId = String(opts.ID || opts.id || opts.ENTITY_ID || p.ID || '').replace(/\D/g,'');
+
+    // entityTypeName pode vir como "contact", "CONTACT", "CRM_CONTACT" etc.
+    var rawType = (opts.entityTypeName || opts.ENTITY_TYPE_NAME || opts.CRM_ENTITY_TYPE || p.placement || '').toLowerCase();
+    if      (rawType.indexOf('lead')    >= 0) _entityType = 'lead';
+    else if (rawType.indexOf('deal')    >= 0) _entityType = 'deal';
+    else if (rawType.indexOf('contact') >= 0) _entityType = 'contact';
+    else _entityType = 'contact'; // default
+
+    // Domain
+    _domain = (BX24.getDomain ? BX24.getDomain() : '') || opts.domain || p.domain || '';
+
+    // Mostra debug discreto na sidebar se entity_id estiver vazio
+    if (!_entityId) {
+      document.getElementById('conv-list').innerHTML =
+        '<div class="conv-empty" style="font-size:10px;color:#334155;text-align:left;padding:10px 12px;word-break:break-all">'
+        + 'placement: ' + (p.placement||'—') + '<br>'
+        + 'options: ' + JSON.stringify(opts).slice(0,200)
+        + '</div>';
+    }
 
     // Info do operador logado via BX24.js
     BX24.callMethod('profile', {}, function(res) {
       var u = res.data() || {};
       var name  = [u.NAME, u.LAST_NAME].filter(Boolean).join(' ') || u.ID || 'Operador';
       var email = u.EMAIL || '';
-      document.getElementById('op-name').textContent    = name;
-      document.getElementById('op-email').textContent   = email;
+      document.getElementById('op-name').textContent     = name;
+      document.getElementById('op-email').textContent    = email;
       document.getElementById('op-initials').textContent = initials(name);
     });
 
