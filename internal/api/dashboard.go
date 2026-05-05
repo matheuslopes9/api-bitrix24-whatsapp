@@ -135,7 +135,7 @@ select.inp:focus{border-color:rgba(37,211,102,.55);box-shadow:0 0 0 3px rgba(37,
 .cselect-trigger .cselect-placeholder{color:#3d4f66;font-weight:400;}
 .cselect-trigger .cselect-arrow{flex-shrink:0;transition:transform .2s;color:#64748b;}
 .cselect-trigger.open .cselect-arrow{transform:rotate(180deg);}
-.cselect-dropdown{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:200;overflow:hidden;}
+.cselect-dropdown{display:none;position:fixed;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:9999;overflow:hidden;}
 .cselect-dropdown.open{display:flex;flex-direction:column;max-height:260px;}
 .cselect-search{padding:10px 12px 6px;flex-shrink:0;background:#131929;}
 #fila-openline-options{overflow-y:auto;flex:1;}
@@ -1781,6 +1781,12 @@ function toggleCSelect(id) {
   document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
   document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
   if (!isOpen) {
+    // Calcula posição baseada no trigger (position:fixed escapa do stacking context do modal)
+    var rect = trigger.getBoundingClientRect();
+    dropdown.style.left  = rect.left + 'px';
+    dropdown.style.width = rect.width + 'px';
+    dropdown.style.top   = (rect.bottom + 6) + 'px';
+    dropdown.style.maxHeight = Math.min(260, window.innerHeight - rect.bottom - 20) + 'px';
     dropdown.classList.add('open');
     trigger.classList.add('open');
     if (search) { search.value = ''; filtrarCSelect(id, ''); setTimeout(function(){ search.focus(); }, 50); }
