@@ -135,9 +135,10 @@ select.inp:focus{border-color:rgba(37,211,102,.55);box-shadow:0 0 0 3px rgba(37,
 .cselect-trigger .cselect-placeholder{color:#3d4f66;font-weight:400;}
 .cselect-trigger .cselect-arrow{flex-shrink:0;transition:transform .2s;color:#64748b;}
 .cselect-trigger.open .cselect-arrow{transform:rotate(180deg);}
-.cselect-dropdown{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:200;overflow:hidden;max-height:260px;overflow-y:auto;}
-.cselect-dropdown.open{display:block;}
-.cselect-search{padding:10px 12px 6px;position:sticky;top:0;background:#131929;z-index:1;}
+.cselect-dropdown{display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:200;overflow:hidden;}
+.cselect-dropdown.open{display:flex;flex-direction:column;max-height:260px;}
+.cselect-search{padding:10px 12px 6px;flex-shrink:0;background:#131929;}
+#fila-openline-options{overflow-y:auto;flex:1;}
 .cselect-search input{width:100%;background:rgba(255,255,255,.07);border:1.5px solid rgba(255,255,255,.1);border-radius:9px;padding:8px 12px;color:#e2e8f0;font-size:13px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;outline:none;}
 .cselect-search input:focus{border-color:rgba(37,211,102,.5);}
 .cselect-option{padding:10px 15px;font-size:13.5px;font-weight:500;color:#cbd5e1;cursor:pointer;transition:background .12s,color .12s;display:flex;align-items:center;gap:8px;}
@@ -259,7 +260,7 @@ body.tema-claro .cselect-trigger:hover{background:rgba(0,0,0,.07);}
 body.tema-claro .cselect-trigger.open{border-color:rgba(37,211,102,.5);background:#fff;}
 body.tema-claro .cselect-placeholder{color:#94a3b8;}
 body.tema-claro .cselect-dropdown{background:#fff;border-color:rgba(0,0,0,.1);box-shadow:0 16px 48px rgba(0,0,0,.12);}
-body.tema-claro .cselect-search{background:#fff;}
+body.tema-claro .cselect-search{background:#fff;border-bottom:1px solid rgba(0,0,0,.06);}
 body.tema-claro .cselect-search input{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.1);color:#0f172a;}
 body.tema-claro .cselect-option{color:#334155;}
 body.tema-claro .cselect-option:hover{background:rgba(0,0,0,.05);color:#0f172a;}
