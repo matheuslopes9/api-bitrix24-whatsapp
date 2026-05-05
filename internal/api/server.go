@@ -117,6 +117,7 @@ func New(
 	stats.Get("/types", h.typeStats)
 	stats.Get("/hours", h.hourStats)
 	stats.Get("/contacts", h.contactStats)
+	stats.Get("/export", h.exportStats)
 
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())

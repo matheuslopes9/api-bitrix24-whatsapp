@@ -118,6 +118,8 @@ select.inp{appearance:none;-webkit-appearance:none;background-image:url("data:im
 select.inp option{background:#1e293b;color:#e2e8f0;padding:8px;}
 select.inp:focus{border-color:rgba(37,211,102,.5);}
 .inp-group{display:flex;flex-direction:column;gap:6px;}
+.export-item{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:7px;background:none;border:none;color:#cbd5e1;font-size:12.5px;font-family:'Inter',sans-serif;cursor:pointer;text-align:left;transition:background .15s,color .15s;}
+.export-item:hover{background:rgba(255,255,255,.07);color:#f1f5f9;}
 .inp-label{font-size:11.5px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.05em;}
 
 /* ── Table ── */
@@ -506,11 +508,45 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div class="section-title">Relatórios</div>
         <div class="section-sub">Análise detalhada de atendimentos via WhatsApp</div>
       </div>
-      <div class="tab-bar">
-        <button class="tab active" onclick="setPeriodo(7,this)">7 dias</button>
-        <button class="tab" onclick="setPeriodo(14,this)">14 dias</button>
-        <button class="tab" onclick="setPeriodo(30,this)">30 dias</button>
-        <button class="tab" onclick="setPeriodo(90,this)">90 dias</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div class="tab-bar">
+          <button class="tab active" onclick="setPeriodo(7,this)">7 dias</button>
+          <button class="tab" onclick="setPeriodo(14,this)">14 dias</button>
+          <button class="tab" onclick="setPeriodo(30,this)">30 dias</button>
+          <button class="tab" onclick="setPeriodo(90,this)">90 dias</button>
+        </div>
+        <div style="position:relative;" id="export-menu-wrap">
+          <button class="btn btn-ghost btn-sm" onclick="toggleExportMenu()" style="gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="export-dropdown" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#1e293b;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;min-width:220px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4);">
+            <div style="font-size:10px;color:#475569;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:4px 10px 6px;">Relatório atual</div>
+            <button class="export-item" onclick="exportar('csv')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              CSV (separado por ponto-vírgula)
+            </button>
+            <button class="export-item" onclick="exportar('xlsx')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              Excel XLSX (moderno)
+            </button>
+            <button class="export-item" onclick="exportar('xls')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#6ee7b7" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              Excel XLS (legado)
+            </button>
+            <button class="export-item" onclick="exportar('xml')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              XML
+            </button>
+            <div style="border-top:1px solid rgba(255,255,255,.06);margin:6px 0;"></div>
+            <div style="font-size:10px;color:#475569;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:4px 10px 6px;">Exportar tudo</div>
+            <button class="export-item" onclick="exportarTodos('xlsx')">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Todos os relatórios (XLSX)
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1137,6 +1173,50 @@ function setPeriodo(dias, btn) {
 }
 
 var chartHoras = null, chartTipos = null;
+var exportMenuOpen = false;
+
+// Relatório atualmente visível — mapeado pelo tab ativo
+var reportAtual = 'daily';
+
+function toggleExportMenu() {
+  exportMenuOpen = !exportMenuOpen;
+  document.getElementById('export-dropdown').style.display = exportMenuOpen ? 'block' : 'none';
+}
+
+// Fecha o menu ao clicar fora
+document.addEventListener('click', function(e) {
+  var wrap = document.getElementById('export-menu-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    exportMenuOpen = false;
+    var dd = document.getElementById('export-dropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
+
+function exportar(format) {
+  exportMenuOpen = false;
+  document.getElementById('export-dropdown').style.display = 'none';
+  var url = '/stats/export?days=' + periodoRelatorio + '&report=' + reportAtual + '&format=' + format;
+  window.location.href = url;
+}
+
+function exportarTodos(format) {
+  exportMenuOpen = false;
+  document.getElementById('export-dropdown').style.display = 'none';
+  var reports = ['daily', 'sessions', 'types', 'hours', 'contacts'];
+  // Baixa cada relatório com delay de 500ms entre eles para não bloquear o browser
+  reports.forEach(function(r, i) {
+    setTimeout(function() {
+      var url = '/stats/export?days=' + periodoRelatorio + '&report=' + r + '&format=' + format;
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }, i * 600);
+  });
+}
 
 function carregarRelatorios(dias) {
   // Busca todos os dados em paralelo
