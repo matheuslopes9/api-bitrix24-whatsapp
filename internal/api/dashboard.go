@@ -254,6 +254,17 @@ body.tema-claro .inp::placeholder{color:#94a3b8;}
 body.tema-claro select.inp{background-color:rgba(0,0,0,.04);}
 body.tema-claro select.inp option{background:#fff;color:#0f172a;}
 body.tema-claro .modal-box{background:#f8fafc;border-color:rgba(0,0,0,.1);}
+body.tema-claro .cselect-trigger{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.14);color:#0f172a;}
+body.tema-claro .cselect-trigger:hover{background:rgba(0,0,0,.07);}
+body.tema-claro .cselect-trigger.open{border-color:rgba(37,211,102,.5);background:#fff;}
+body.tema-claro .cselect-placeholder{color:#94a3b8;}
+body.tema-claro .cselect-dropdown{background:#fff;border-color:rgba(0,0,0,.1);box-shadow:0 16px 48px rgba(0,0,0,.12);}
+body.tema-claro .cselect-search{background:#fff;}
+body.tema-claro .cselect-search input{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.1);color:#0f172a;}
+body.tema-claro .cselect-option{color:#334155;}
+body.tema-claro .cselect-option:hover{background:rgba(0,0,0,.05);color:#0f172a;}
+body.tema-claro .cselect-option.selected{background:rgba(37,211,102,.1);color:#16a34a;}
+body.tema-claro .cselect-empty{color:#94a3b8;}
 body.tema-claro .btn-ghost{background:rgba(0,0,0,.05);color:#475569;border-color:rgba(0,0,0,.1);}
 body.tema-claro .btn-ghost:hover{background:rgba(0,0,0,.09);color:#0f172a;}
 body.tema-claro .tbl th{color:#64748b;border-color:rgba(0,0,0,.08);}
@@ -1856,18 +1867,32 @@ function buscarLinhasBitrix() {
       return;
     }
 
-    // Popula o custom select
+    // Popula o custom select — atualiza label ANTES de limpar dados
+    var lbl = document.getElementById('fila-openline-label');
+    if (lbl) { lbl.textContent = 'Selecione a Open Line...'; lbl.classList.add('cselect-placeholder'); }
+    var hidden = document.getElementById('fila-openline');
+    if (hidden) hidden.value = '';
     _cselectData['fila-openline'] = lines.map(function(l) {
       return { value: l.id, label: l.name + ' (ID: ' + l.id + ')', color: l.connector_ok ? '#4ade80' : '' };
     });
-    setCSelectPlaceholder('fila-openline', 'Selecione a Open Line...');
 
     var ativos = lines.filter(function(l){ return l.connector_ok; });
     hint.textContent = lines.length + ' linhas encontradas'
       + (ativos.length > 0 ? ' · ' + ativos.length + ' já com connector ativo (✓)' : '')
       + '. Selecione a linha desejada.';
 
-    filtrarCSelect('fila-openline', '');
+    // Renderiza as opções sem abrir o dropdown
+    var opts = document.getElementById('fila-openline-options');
+    if (opts) {
+      opts.innerHTML = _cselectData['fila-openline'].map(function(item) {
+        var color = item.color ? 'color:' + item.color + ';' : '';
+        var check = item.color === '#4ade80'
+          ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" style="flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>'
+          : '<span style="width:12px;display:inline-block;flex-shrink:0;"></span>';
+        return '<div class="cselect-option" style="' + color + '" onclick="selecionarCSelect(\'fila-openline\',' + JSON.stringify(item.value) + ',' + JSON.stringify(item.label) + ')">'
+          + check + item.label + '</div>';
+      }).join('');
+    }
   })
   .catch(function() {
     btn.disabled = false;
