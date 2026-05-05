@@ -185,6 +185,45 @@ func (r *Repository) IncrementRetry(ctx context.Context, waMessageID string) err
 	return err
 }
 
+// GetMessagesByPhone retorna as últimas N mensagens trocadas com um telefone específico.
+// Busca via contact_mappings para encontrar o contact_id correspondente ao número.
+func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.id, m.wa_message_id, m.session_id, m.contact_id, m.direction, m.message_type,
+		       m.content, m.media_url, m.media_mime, m.media_size, m.status,
+		       m.retry_count, m.error_msg, m.sent_at, m.delivered_at, m.created_at
+		FROM messages m
+		JOIN contact_mappings cm ON cm.id = m.contact_id
+		WHERE cm.wa_phone = $1
+		ORDER BY m.created_at DESC
+		LIMIT $2
+	`, phone, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
+			&m.Direction, &m.MessageType, &m.Content, &m.MediaURL, &m.MediaMime,
+			&m.MediaSize, &m.Status, &m.RetryCount, &m.ErrorMsg,
+			&m.SentAt, &m.DeliveredAt, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	// Retorna em ordem cronológica (mais antigas primeiro)
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, rows.Err()
+}
+
 // ─── Relatórios ───────────────────────────────────────────────────────────
 
 type StatsRow struct {
