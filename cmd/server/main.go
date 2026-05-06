@@ -231,6 +231,25 @@ func main() {
 	wd := watchdog.New(waManager, repo, &cfg.Watchdog, log)
 	wd.Start(ctx)
 
+	// ─── Limpeza de mensagens antigas (retenção 90 dias) ─────────────────
+	go func() {
+		const retentionDays = 90
+		// Roda imediatamente na inicialização, depois a cada 24h
+		for {
+			n, err := repo.DeleteOldMessages(context.Background(), retentionDays)
+			if err != nil {
+				log.Warn("cleanup: delete old messages failed", zap.Error(err))
+			} else if n > 0 {
+				log.Info("cleanup: old messages deleted", zap.Int64("count", n), zap.Int("retention_days", retentionDays))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(24 * time.Hour):
+			}
+		}
+	}()
+
 	// ─── HTTP Server ─────────────────────────────────────────────────────
 	app := api.New(cfg, repo, waManager, bitrixClient, q, metrics, log)
 

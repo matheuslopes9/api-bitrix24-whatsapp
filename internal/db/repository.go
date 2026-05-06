@@ -189,6 +189,18 @@ func (r *Repository) IncrementRetry(ctx context.Context, waMessageID string) err
 	return err
 }
 
+// DeleteOldMessages remove mensagens com mais de retentionDays dias.
+// Retorna o número de registros deletados.
+func (r *Repository) DeleteOldMessages(ctx context.Context, retentionDays int) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM messages WHERE created_at < NOW() - ($1 || ' days')::INTERVAL`,
+		retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // GetMessagesByPhone retorna as últimas N mensagens trocadas com um número de telefone.
 // Busca por from_jid ou to_jid contendo o número — funciona para inbound e outbound.
 func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {
