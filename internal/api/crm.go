@@ -601,6 +601,17 @@ func parseBitrixMessages(raw json.RawMessage, connectorID string) []crmMessage {
 	return out
 }
 
+// GET /bitrix/crm/debug?phone=5519987717792 — diagnóstico: estado do banco e mensagens salvas
+func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
+	phone := normalizeWAPhone(c.Query("phone", ""))
+
+	stats, err := h.repo.DebugMessageStats(c.Context(), phone)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(stats)
+}
+
 // GET /bitrix/crm/sessions — lista sessões WA disponíveis (para o select do iframe)
 func (h *handlers) bitrixCRMSessions(c *fiber.Ctx) error {
 	sessions := h.waManager.ListSessions()

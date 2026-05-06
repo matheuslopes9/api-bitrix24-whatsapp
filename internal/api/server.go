@@ -123,6 +123,7 @@ func New(
 	bx.Get("/crm/lines", h.bitrixCRMLines)
 	bx.Get("/crm/history", h.bitrixCRMHistory)
 	bx.Post("/crm/upload", h.bitrixCRMUpload)
+	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
 
 	// ─── Relatórios ──────────────────────────────────────────────────────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))

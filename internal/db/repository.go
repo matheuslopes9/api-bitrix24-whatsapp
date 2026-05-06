@@ -243,6 +243,64 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	return msgs, rows.Err()
 }
 
+// DebugMessageStats retorna estatísticas do banco para diagnóstico.
+func (r *Repository) DebugMessageStats(ctx context.Context, phone string) (map[string]interface{}, error) {
+	result := map[string]interface{}{}
+
+	// Migration aplicada?
+	var hasCols bool
+	r.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name='messages' AND column_name='from_jid'
+	)`).Scan(&hasCols)
+	result["migration_006_applied"] = hasCols
+
+	// Total de mensagens
+	var total int64
+	r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM messages`).Scan(&total)
+	result["total_messages"] = total
+
+	if !hasCols {
+		return result, nil
+	}
+
+	// Com from_jid preenchido
+	var withJID int64
+	r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM messages WHERE from_jid != ''`).Scan(&withJID)
+	result["messages_with_jid"] = withJID
+
+	// Últimas mensagens do número
+	result["phone_searched"] = phone
+	if phone != "" {
+		pattern := phone + "@%"
+		rows, err := r.pool.Query(ctx, `
+			SELECT wa_message_id, direction, from_jid, to_jid, content, created_at
+			FROM messages WHERE from_jid LIKE $1 OR to_jid LIKE $1
+			ORDER BY created_at DESC LIMIT 10`, pattern)
+		if err == nil {
+			defer rows.Close()
+			type row struct {
+				ID        string `json:"id"`
+				Direction string `json:"direction"`
+				FromJID   string `json:"from_jid"`
+				ToJID     string `json:"to_jid"`
+				Content   string `json:"content"`
+				CreatedAt string `json:"created_at"`
+			}
+			var msgs []row
+			for rows.Next() {
+				var m row
+				var t interface{}
+				rows.Scan(&m.ID, &m.Direction, &m.FromJID, &m.ToJID, &m.Content, &t)
+				m.CreatedAt = fmt.Sprintf("%v", t)
+				msgs = append(msgs, m)
+			}
+			result["recent_messages"] = msgs
+		}
+	}
+	return result, nil
+}
+
 // ─── Relatórios ───────────────────────────────────────────────────────────
 
 type StatsRow struct {
