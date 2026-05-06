@@ -258,7 +258,12 @@ func (r *Repository) DeleteMessagesByJIDPattern(ctx context.Context, pattern str
 }
 
 // GetMessagesByPhone retorna as últimas N mensagens trocadas com um número de telefone.
-// Busca por from_jid ou to_jid contendo o número — funciona para inbound e outbound.
+// Busca de duas formas:
+//   1. JID direto via LIKE "phone@%"  (msgs com @s.whatsapp.net)
+//   2. Via contact_mapping: pega todos os wa_jid (incluindo @lid) onde wa_phone = phone,
+//      e busca msgs que envolvam qualquer um desses JIDs. Necessário porque o WhatsApp
+//      pode usar @lid (LinkedID) em vez de @s.whatsapp.net no Sender — o LID não contém
+//      o telefone real, mas o contact_mapping vincula os dois.
 func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
@@ -273,10 +278,14 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 		       status, retry_count, COALESCE(error_msg,''),
 		       sent_at, delivered_at, created_at
 		FROM messages
-		WHERE from_jid LIKE $1 OR to_jid LIKE $1
+		WHERE from_jid LIKE $1
+		   OR to_jid   LIKE $1
+		   OR from_jid IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		   OR to_jid   IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		   OR contact_id IN (SELECT id FROM contact_mapping WHERE wa_phone = $2)
 		ORDER BY created_at DESC
-		LIMIT $2
-	`, pattern, limit)
+		LIMIT $3
+	`, pattern, phone, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -386,15 +386,20 @@ func buildMessageHandler(
 
 		// Salva mensagem no banco com status "received"
 		ts := evt.Info.Timestamp
-		// from_jid = quem enviou (o cliente WhatsApp)
-		// to_jid   = a sessão que recebeu (nosso número)
+		// from_jid = quem enviou (o cliente WhatsApp).
+		// Quando Sender é @lid (LinkedID), usa SenderAlt que tem o JID com telefone real.
+		// Isso garante que a busca por telefone (LIKE "5519...@%") encontre as msgs no CRM.
+		fromJID := evt.Info.Sender.String()
+		if !evt.Info.SenderAlt.IsEmpty() && evt.Info.Sender.Server == "lid" {
+			fromJID = evt.Info.SenderAlt.String()
+		}
 		msg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
 			SessionID:   &sessionID,
-			FromJID:     evt.Info.Sender.String(), // ex: 5519987717792@s.whatsapp.net
-			ToJID:       sessionJID,               // ex: 5519910001772@s.whatsapp.net
-			AuthorName:  evt.Info.PushName,        // nome do contato no WhatsApp
+			FromJID:     fromJID,           // ex: 5519987717792@s.whatsapp.net
+			ToJID:       sessionJID,        // ex: 5519910001772@s.whatsapp.net
+			AuthorName:  evt.Info.PushName, // nome do contato no WhatsApp
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,
