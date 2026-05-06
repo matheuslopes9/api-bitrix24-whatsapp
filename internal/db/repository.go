@@ -208,7 +208,6 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	if limit <= 0 {
 		limit = 50
 	}
-	// phone sem @s.whatsapp.net — usamos LIKE para casar qualquer JID que comece com o número
 	pattern := phone + "@%"
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, wa_message_id, session_id, contact_id,
@@ -231,6 +230,8 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	var msgs []Message
 	for rows.Next() {
 		var m Message
+		// sent_at e delivered_at são nullable no banco — usar *time.Time intermediário
+		var sentAt, deliveredAt *time.Time
 		if err := rows.Scan(
 			&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
 			&m.FromJID, &m.ToJID, &m.AuthorName,
@@ -238,16 +239,18 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 			&m.Content, &m.MediaURL, &m.MediaMime,
 			&m.MediaSize,
 			&m.Status, &m.RetryCount, &m.ErrorMsg,
-			&m.SentAt, &m.DeliveredAt, &m.CreatedAt,
+			&sentAt, &deliveredAt, &m.CreatedAt,
 		); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan message row: %w", err)
 		}
+		m.SentAt = sentAt
+		m.DeliveredAt = deliveredAt
 		msgs = append(msgs, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Retorna em ordem cronológica (mais antigas primeiro)
+	// Inverte para ordem cronológica (mais antigas primeiro)
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}

@@ -761,29 +761,39 @@ func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType,
 }
 
 // SendOperatorMessage envia uma mensagem do OPERADOR no chat do Open Channel.
-// Usa im.message.add com DIALOG_ID=chatXXX — envia como o usuário autenticado no token.
-// imopenlines.crm.message.add requer USER_ID que nem sempre temos disponível.
+// Tenta im.message.add primeiro; fallback para imopenlines.crm.message.add.
+// Retorna erro se ambos falharem — nunca retorna nil em falha silenciosa.
 func (c *Client) SendOperatorMessage(ctx context.Context, creds TenantCreds, chatID, message string) (string, error) {
 	raw, err := c.call(ctx, creds, "im.message.add", map[string]interface{}{
 		"DIALOG_ID": "chat" + chatID,
 		"MESSAGE":   message,
 	})
 	if err != nil {
-		// Fallback: imopenlines.crm.message.add
+		c.log.Warn("im.message.add failed, trying imopenlines.crm.message.add",
+			zap.String("chat_id", chatID), zap.Error(err))
 		chatIDInt, _ := strconv.ParseInt(chatID, 10, 64)
 		raw, err = c.call(ctx, creds, "imopenlines.crm.message.add", map[string]interface{}{
 			"CHAT_ID": chatIDInt,
 			"MESSAGE": message,
 		})
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("SendOperatorMessage: im.message.add e imopenlines.crm.message.add falharam: %w", err)
 		}
 	}
+	// Resposta pode ser int direto ou {"result": N}
 	var msgID int64
 	if json.Unmarshal(raw, &msgID) == nil && msgID > 0 {
 		return strconv.FormatInt(msgID, 10), nil
 	}
-	return "", nil
+	var obj struct {
+		Result interface{} `json:"result"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.Result != nil {
+		return fmt.Sprintf("%v", obj.Result), nil
+	}
+	// Chegou aqui = API retornou algo mas não é um ID — considera enviado
+	c.log.Warn("SendOperatorMessage: resposta inesperada mas sem erro", zap.String("raw", string(raw)))
+	return "sent", nil
 }
 
 // GetCRMChatLastID retorna apenas o último CHAT_ID vinculado a uma entidade CRM.

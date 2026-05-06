@@ -292,7 +292,6 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	}
 
 	// ── Fonte 1: banco local ──────────────────────────────────────────────
-	// Se o frontend passou o telefone, busca direto no banco
 	if phone != "" {
 		phoneNorm := normalizeWAPhone(phone)
 		localMsgs, dbErr := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
@@ -303,24 +302,15 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 			zap.Error(dbErr),
 		)
 		if dbErr == nil && len(localMsgs) > 0 {
-			h.log.Info("crm history: found in local db", zap.Int("count", len(localMsgs)), zap.String("phone", phoneNorm))
 			return c.JSON(fiber.Map{
-				"messages":   localMsgsToCRM(localMsgs),
-				"count":      len(localMsgs),
-				"source":     "local",
-				"phone_norm": phoneNorm,
+				"messages": localMsgsToCRM(localMsgs),
+				"count":    len(localMsgs),
+				"source":   "local",
 			})
 		}
+		// Se houver erro no banco, loga e faz fallback para Bitrix (nunca retorna erro ao cliente)
 		if dbErr != nil {
-			h.log.Error("crm history: local db error", zap.String("phone", phoneNorm), zap.Error(dbErr))
-			// Retorna o erro para diagnóstico em vez de silenciar
-			return c.JSON(fiber.Map{
-				"messages":   []interface{}{},
-				"count":      0,
-				"source":     "db_error",
-				"phone_norm": phoneNorm,
-				"error":      dbErr.Error(),
-			})
+			h.log.Error("crm history: local db error, falling back to bitrix", zap.String("phone", phoneNorm), zap.Error(dbErr))
 		}
 	}
 
@@ -1177,12 +1167,14 @@ function pollHistory() {
   var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
           + '&entity_type=' + _entityType + '&entity_id=' + _entityId
           + '&phone=' + enc(_contactPhone)
-          + '&limit=3';
+          + '&limit=20';
   fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(d) {
       var msgs = d.messages || [];
-      if (msgs.length && msgs[msgs.length-1].id !== _lastMsgId) loadHistory();
+      if (!msgs.length) return;
+      var lastId = msgs[msgs.length-1].id;
+      if (lastId !== _lastMsgId) loadHistory();
     }).catch(function(){});
 }
 
@@ -1235,10 +1227,13 @@ function renderHistory(msgs, chatID) {
 
 function parseDate(s) {
   if (!s) return new Date();
-  // "DD.MM.YYYY HH:MM:SS"
+  // Formato Bitrix: "DD.MM.YYYY HH:MM:SS"
   var m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$/);
   if (m) return new Date(m[3]+'-'+m[2]+'-'+m[1]+'T'+m[4]+':'+m[5]+':'+m[6]);
-  return new Date(s);
+  // Formato ISO (banco local): "2024-01-15T14:30:00Z"
+  var d = new Date(s);
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d;
+  return new Date();
 }
 
 // ── Arquivo ───────────────────────────────────────────────────────────────
