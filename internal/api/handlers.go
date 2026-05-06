@@ -1041,6 +1041,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		FileURL:         fileDownloadLink,
 		FileName:        fileName,
 		FileMime:        fileMime,
+		ToPhone:         contact.WAPhone, // telefone real do contato — usado para to_jid no banco
 	}); err != nil {
 		h.log.Error("connector event: push outbound failed", zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)

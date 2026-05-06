@@ -165,19 +165,24 @@ func main() {
 			return err
 		}
 
-		// Salva mensagem outbound no banco com JIDs sem device suffix.
-		// from_jid = sessão WA (sem :NN do device — que muda a cada reconexão)
-		// to_jid   = destinatário (sem :NN se vier com device suffix)
+		// Salva mensagem outbound no banco com JIDs limpos.
+		// from_jid = sessão WA (sem :NN do device).
+		// to_jid   = preferencialmente "<telefone>@s.whatsapp.net" (job.ToPhone),
+		//            senão usa job.ToJID limpo (pode ser @lid em alguns fluxos).
 		msgType := db.MsgTypeText
 		if len(fileData) > 0 {
 			msgType = db.MsgTypeDocument
 		}
 		now := time.Now()
+		toJIDForDB := stripDeviceSuffix(job.ToJID)
+		if job.ToPhone != "" {
+			toJIDForDB = job.ToPhone + "@s.whatsapp.net"
+		}
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
 			FromJID:     stripDeviceSuffix(job.SessionJID),
-			ToJID:       stripDeviceSuffix(job.ToJID),
+			ToJID:       toJIDForDB,
 			AuthorName:  job.OperatorName,
 			Direction:   db.DirOutbound,
 			MessageType: msgType,

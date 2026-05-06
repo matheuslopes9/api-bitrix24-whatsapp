@@ -173,6 +173,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		BitrixConnector: connectorID,
 		BitrixLine:      lineID,
 		OperatorName:    operatorName,
+		ToPhone:         phone, // telefone normalizado — usado para to_jid no banco
 	}
 	if err := h.q.PushOutbound(c.Context(), job); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
