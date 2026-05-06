@@ -272,19 +272,45 @@ textarea{resize:vertical;min-height:60px}
     <div class="result" id="b-result">Aguardando...</div>
   </div>
 
-  <!-- VALIDAÇÃO: Leitura do histórico -->
+  <!-- VALIDAÇÃO: Leitura do histórico via banco direto -->
   <div class="card full">
-    <h2>🔍 Validação — Histórico do banco</h2>
-    <p style="font-size:11px;color:#64748b;margin-bottom:8px">Verifica se as mensagens simuladas aparecem corretamente na busca que o CRM tab usa.</p>
+    <h2>🔍 Validação A — Histórico do banco (GetMessagesByPhone)</h2>
+    <p style="font-size:11px;color:#64748b;margin-bottom:8px">Verifica se as msgs simuladas aparecem na busca que o CRM tab usa internamente.</p>
     <div style="display:flex;gap:8px;align-items:flex-end">
       <div style="flex:1">
-        <label>Telefone para buscar</label>
+        <label>Telefone (qualquer formato — ex: +55 19 98771-7792 ou 5519987717792)</label>
         <input id="h-phone" value="5519987717792" placeholder="5519987717792">
       </div>
-      <button class="btn btn-gray" onclick="fetchHistory()" style="margin-top:0">🔍 Buscar histórico</button>
+      <button class="btn btn-gray" onclick="fetchHistory()" style="margin-top:0">🔍 Buscar no banco</button>
       <button class="btn btn-red" onclick="clearHistory()" style="margin-top:0">🗑 Limpar</button>
     </div>
-    <div class="result" id="h-result" style="max-height:400px">Aguardando...</div>
+    <div class="result" id="h-result" style="max-height:300px">Aguardando...</div>
+  </div>
+
+  <!-- VALIDAÇÃO C: endpoint real do CRM history -->
+  <div class="card full">
+    <h2>🔍 Validação B — Endpoint /bitrix/crm/history (igual ao iframe)</h2>
+    <p style="font-size:11px;color:#64748b;margin-bottom:8px">Chama o mesmo endpoint que o CRM tab usa. Se retornar mensagens aqui, o iframe vai mostrar.</p>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div style="flex:1;min-width:140px">
+        <label>Domain do portal Bitrix</label>
+        <input id="c-domain" placeholder="empresa.bitrix24.com.br">
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label>Entity ID (ID do contato)</label>
+        <input id="c-entity" placeholder="123">
+      </div>
+      <div style="flex:1;min-width:130px">
+        <label>Telefone do contato</label>
+        <input id="c-phone" value="5519987717792" placeholder="5519987717792">
+      </div>
+      <div style="min-width:80px">
+        <label>Tipo</label>
+        <input id="c-type" value="contact" placeholder="contact">
+      </div>
+    </div>
+    <button class="btn btn-gray" onclick="testCRMHistory()">🔍 Testar endpoint CRM history</button>
+    <div class="result" id="c-result" style="max-height:300px">Aguardando...</div>
   </div>
 
 </div>
@@ -380,6 +406,38 @@ function clearHistory() {
         ? '<span class="ok">✓ ' + d.deleted + ' mensagem(ns) removida(s)</span>'
         : '<span class="err">✗ ' + d.error + '</span>';
     });
+}
+
+function testCRMHistory() {
+  var domain  = document.getElementById('c-domain').value.trim();
+  var entity  = document.getElementById('c-entity').value.trim();
+  var phone   = document.getElementById('c-phone').value.trim();
+  var etype   = document.getElementById('c-type').value.trim() || 'contact';
+  var el      = document.getElementById('c-result');
+  if (!domain || !entity) { el.innerHTML = '<span class="err">✗ Preencha domain e entity_id</span>'; return; }
+  el.innerHTML = 'Chamando /bitrix/crm/history...';
+  var url = '/bitrix/crm/history?domain=' + encodeURIComponent(domain)
+          + '&entity_type=' + etype
+          + '&entity_id='   + encodeURIComponent(entity)
+          + '&phone='        + encodeURIComponent(phone)
+          + '&limit=20';
+  fetch(url).then(r => r.json()).then(function(d) {
+    var source = d.source || '?';
+    var count  = d.count  || 0;
+    var msgs   = d.messages || [];
+    var icon   = count > 0 ? '<span class="ok">✓</span>' : '<span class="err">✗</span>';
+    var lines  = icon + ' source=' + source + '  count=' + count + (d.chat_id ? '  chat_id=' + d.chat_id : '') + (d.phone_norm ? '  phone_norm=' + d.phone_norm : '') + '\n';
+    if (d.error) lines += '<span class="err">ERRO: ' + d.error + '</span>\n';
+    lines += '\n';
+    msgs.forEach(function(m) {
+      var tag = m.direction === 'inbound'
+        ? '<span class="tag tag-in">IN </span>'
+        : '<span class="tag tag-out">OUT</span>';
+      lines += tag + ' [' + (m.created_at||'').slice(0,19) + '] ' + (m.author_name ? m.author_name + ': ' : '') + (m.content||'[mídia]') + '\n';
+    });
+    if (!count) lines += '\n<span class="err">Nenhuma mensagem — o CRM tab mostraria "Nenhuma mensagem ainda".\nVerifique se o telefone do contato no Bitrix bate com o que está no banco.</span>';
+    el.innerHTML = lines;
+  }).catch(function(e){ el.innerHTML = '<span class="err">✗ Falha: ' + e + '</span>'; });
 }
 
 // Status bar — verifica sessões e portais
