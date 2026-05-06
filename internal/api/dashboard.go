@@ -731,18 +731,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
       <div class="inp-group">
         <label class="inp-label">Open Line (Fila de Atendimento)</label>
-        <div style="display:flex;gap:8px;align-items:flex-start;">
-          <div class="cselect" id="fila-openline-wrap" style="flex:1;">
-            <div class="cselect-trigger" id="fila-openline-trigger" tabindex="0" onclick="toggleCSelect('fila-openline')" onkeydown="if(event.key==='Enter'||event.key===' ')toggleCSelect('fila-openline')">
-              <span class="cselect-placeholder" id="fila-openline-label">Selecione o portal primeiro...</span>
-              <svg class="cselect-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-            </div>
-            <div class="cselect-dropdown" id="fila-openline-dropdown">
-              <div class="cselect-search"><input type="text" placeholder="Buscar linha..." id="fila-openline-search" oninput="filtrarCSelect('fila-openline',this.value)" onclick="event.stopPropagation()"/></div>
-              <div id="fila-openline-options"><div class="cselect-empty">Selecione o portal primeiro...</div></div>
-            </div>
-            <input type="hidden" id="fila-openline" value=""/>
-          </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select class="inp" id="fila-openline" style="flex:1;" disabled>
+            <option value="">Selecione o portal primeiro...</option>
+          </select>
           <button type="button" class="btn btn-ghost btn-sm" id="fila-buscar-linhas-btn" onclick="buscarLinhasBitrix()" style="white-space:nowrap;padding:0 14px;height:46px;flex-shrink:0;" disabled>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             Buscar
@@ -1730,11 +1722,13 @@ function abrirModalFila(prePortal) {
   });
   selPortal.disabled = !!PORTAL;
 
-  // Quando muda o portal, limpa o custom select e habilita o botão buscar
+  // Quando muda o portal, reseta o select de linhas
   selPortal.onchange = function() {
     var hasDomain = !!selPortal.value;
     document.getElementById('fila-buscar-linhas-btn').disabled = !hasDomain;
-    setCSelectPlaceholder('fila-openline', hasDomain ? 'Clique em "Buscar" para carregar...' : 'Selecione o portal primeiro...');
+    var sel = document.getElementById('fila-openline');
+    sel.innerHTML = '<option value="">' + (hasDomain ? 'Clique em "Buscar" para carregar...' : 'Selecione o portal primeiro...') + '</option>';
+    sel.disabled = true;
     document.getElementById('fila-linhas-hint').textContent = hasDomain
       ? 'Clique em "Buscar" para carregar as Open Lines disponíveis no portal.'
       : 'Selecione o portal e clique em "Buscar".';
@@ -1743,7 +1737,9 @@ function abrirModalFila(prePortal) {
   // Se portal já veio pré-selecionado, habilita botão e dispara busca automaticamente
   var temPortal = !!selPortal.value;
   document.getElementById('fila-buscar-linhas-btn').disabled = !temPortal;
-  setCSelectPlaceholder('fila-openline', temPortal ? 'Clique em "Buscar"...' : 'Selecione o portal primeiro...');
+  var selLine = document.getElementById('fila-openline');
+  selLine.innerHTML = '<option value="">' + (temPortal ? 'Clique em "Buscar"...' : 'Selecione o portal primeiro...') + '</option>';
+  selLine.disabled = true;
   if (temPortal) { buscarLinhasBitrix(); }
 
   // Popula select de sessões
@@ -1891,10 +1887,12 @@ function buscarLinhasBitrix() {
 
   var btn  = document.getElementById('fila-buscar-linhas-btn');
   var hint = document.getElementById('fila-linhas-hint');
+  var sel  = document.getElementById('fila-openline');
 
   btn.disabled = true;
   btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin .8s linear infinite"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>';
-  setCSelectPlaceholder('fila-openline', 'Buscando linhas...');
+  sel.innerHTML = '<option value="">Buscando linhas...</option>';
+  sel.disabled = true;
   hint.textContent = 'Varrendo Open Lines no portal, aguarde...';
 
   fetch(apiUrl('/ui/bitrix/lines?domain=' + encodeURIComponent(domain)))
@@ -1905,42 +1903,30 @@ function buscarLinhasBitrix() {
 
     var lines = d.lines || [];
     if (lines.length === 0) {
-      setCSelectPlaceholder('fila-openline', 'Nenhuma Open Line encontrada');
+      sel.innerHTML = '<option value="">Nenhuma Open Line encontrada</option>';
       hint.textContent = 'Nenhuma Open Line encontrada. Verifique as permissões do app.';
       return;
     }
 
-    // Popula o custom select — atualiza label ANTES de limpar dados
-    var lbl = document.getElementById('fila-openline-label');
-    if (lbl) { lbl.textContent = 'Selecione a Open Line...'; lbl.classList.add('cselect-placeholder'); }
-    var hidden = document.getElementById('fila-openline');
-    if (hidden) hidden.value = '';
-    _cselectData['fila-openline'] = lines.map(function(l) {
-      return { value: l.id, label: l.name + ' (ID: ' + l.id + ')', color: l.connector_ok ? '#4ade80' : '' };
+    // Popula o <select> nativo
+    sel.innerHTML = '<option value="">Selecione a Open Line...</option>';
+    lines.forEach(function(l) {
+      var opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = l.name + ' (ID: ' + l.id + ')' + (l.connector_ok ? ' ✓' : '');
+      sel.appendChild(opt);
     });
+    sel.disabled = false;
 
     var ativos = lines.filter(function(l){ return l.connector_ok; });
     hint.textContent = lines.length + ' linhas encontradas'
       + (ativos.length > 0 ? ' · ' + ativos.length + ' já com connector ativo (✓)' : '')
       + '. Selecione a linha desejada.';
-
-    // Renderiza as opções sem abrir o dropdown
-    var opts = document.getElementById('fila-openline-options');
-    if (opts) {
-      opts.innerHTML = _cselectData['fila-openline'].map(function(item) {
-        var color = item.color ? 'color:' + item.color + ';' : '';
-        var check = item.color === '#4ade80'
-          ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" style="flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>'
-          : '<span style="width:12px;display:inline-block;flex-shrink:0;"></span>';
-        return '<div class="cselect-option" style="' + color + '" onclick="selecionarCSelect(\'fila-openline\',' + JSON.stringify(item.value) + ',' + JSON.stringify(item.label) + ')">'
-          + check + item.label + '</div>';
-      }).join('');
-    }
   })
   .catch(function() {
     btn.disabled = false;
     btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Buscar';
-    setCSelectPlaceholder('fila-openline', 'Erro ao buscar linhas');
+    sel.innerHTML = '<option value="">Erro ao buscar linhas</option>';
     hint.textContent = 'Erro ao buscar linhas. Verifique se o token do portal é válido.';
   });
 }
