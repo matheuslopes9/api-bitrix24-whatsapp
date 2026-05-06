@@ -63,11 +63,6 @@ type OutboundJob struct {
 
 	// Nome do operador que enviou (para salvar no histórico)
 	OperatorName string `json:"operator_name,omitempty"`
-
-	// Telefone real do destinatário (sem @lid). Usado para gravar to_jid
-	// no banco como "<telefone>@s.whatsapp.net" — garante que CRM tab
-	// encontre a mensagem ao buscar pelo telefone.
-	ToPhone string `json:"to_phone,omitempty"`
 }
 
 // Queue gerencia as filas via Redis.
