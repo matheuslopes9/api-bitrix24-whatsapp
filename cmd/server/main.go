@@ -387,12 +387,14 @@ func buildMessageHandler(
 		// Salva mensagem no banco com status "received"
 		ts := evt.Info.Timestamp
 		// from_jid = quem enviou (o cliente WhatsApp).
-		// Quando Sender é @lid (LinkedID), usa SenderAlt que tem o JID com telefone real.
-		// Isso garante que a busca por telefone (LIKE "5519...@%") encontre as msgs no CRM.
+		// Prefere SenderAlt quando o Sender é @lid (sem telefone real).
+		// Em qualquer caso, remove o device suffix ":NN" para que o LIKE
+		// "5519987717792@%" bata na busca do CRM tab.
 		fromJID := evt.Info.Sender.String()
 		if !evt.Info.SenderAlt.IsEmpty() && evt.Info.Sender.Server == "lid" {
 			fromJID = evt.Info.SenderAlt.String()
 		}
+		fromJID = stripDeviceSuffix(fromJID)
 		msg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
@@ -433,6 +435,21 @@ func buildMessageHandler(
 
 		log.Info("message queued", zap.String("from", job.FromPhone), zap.String("type", string(msgType)))
 	}
+}
+
+// stripDeviceSuffix remove o device suffix ":NN" do JID, mantendo o servidor.
+// "5519987717792:48@s.whatsapp.net" → "5519987717792@s.whatsapp.net"
+// "127586399207476:48@lid"          → "127586399207476@lid"
+func stripDeviceSuffix(jid string) string {
+	at := strings.Index(jid, "@")
+	if at == -1 {
+		return jid
+	}
+	colon := strings.Index(jid[:at], ":")
+	if colon == -1 {
+		return jid
+	}
+	return jid[:colon] + jid[at:]
 }
 
 // decodeDataURI extrai os bytes e o MIME de um data URI base64.
