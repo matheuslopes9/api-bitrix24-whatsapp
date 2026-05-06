@@ -760,6 +760,26 @@ func (c *Client) GetCRMChats(ctx context.Context, creds TenantCreds, entityType,
 	})
 }
 
+// SendOperatorMessage envia uma mensagem do OPERADOR no chat do Open Channel.
+// Usa imopenlines.crm.message.add — método correto para outbound (operador→cliente).
+// NÃO usar imconnector.send.messages que é para inbound (cliente→Bitrix).
+func (c *Client) SendOperatorMessage(ctx context.Context, creds TenantCreds, chatID, message string) (string, error) {
+	chatIDInt, _ := strconv.ParseInt(chatID, 10, 64)
+	raw, err := c.call(ctx, creds, "imopenlines.crm.message.add", map[string]interface{}{
+		"CHAT_ID": chatIDInt,
+		"MESSAGE": message,
+	})
+	if err != nil {
+		return "", err
+	}
+	// Retorna o ID da mensagem criada
+	var msgID int64
+	if json.Unmarshal(raw, &msgID) == nil && msgID > 0 {
+		return strconv.FormatInt(msgID, 10), nil
+	}
+	return "", nil
+}
+
 // GetCRMChatLastID retorna apenas o último CHAT_ID vinculado a uma entidade CRM.
 func (c *Client) GetCRMChatLastID(ctx context.Context, creds TenantCreds, entityType, entityID string) (string, error) {
 	raw, err := c.call(ctx, creds, "imopenlines.crm.chat.getLastId", map[string]interface{}{

@@ -137,30 +137,22 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	// USER_CODE: "<connector>|<lineID>|<ext_chat_id>|<ext_user_id>"
 	userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
 
-	// 1. Abre/retoma a sessão no Open Channel do Bitrix
+	// 1. Abre/retoma a sessão existente no Open Channel do Bitrix
+	//    Se o chat já existe, imopenlines.session.open retorna o CHAT_ID existente sem criar novo
 	chatID, err := h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
 	if err != nil {
 		h.log.Warn("crm send: session.open failed", zap.Error(err))
 	}
 
-	// 2. Registra a mensagem OUTBOUND no Open Channel do Bitrix via imconnector.send.messages
-	//    Isso faz a mensagem aparecer no histórico do Contact Center como se fosse do operador
-	msgID := fmt.Sprintf("crm-%s-%d", phone, c.Context().Time().UnixMilli())
-	connMsg := bitrix.ConnectorMessage{
-		User: bitrix.ConnectorUser{
-			ID:    phone,
-			Name:  operatorName,
-			Phone: "+" + phone,
-		},
-		Message: bitrix.ConnectorMsgBody{
-			ID:   msgID,
-			Text: body.Message,
-		},
-		Chat: bitrix.ConnectorChat{ID: phone},
-	}
-	if _, sendErr := h.bitrixClient.ConnectorSendMessage(c.Context(), creds, connectorID, lineID, connMsg); sendErr != nil {
-		h.log.Warn("crm send: imconnector.send.messages failed", zap.Error(sendErr))
-		// Não bloqueia — a mensagem WA ainda será enviada
+	// 2. Envia a mensagem no chat do Open Channel como operador
+	//    imopenlines.crm.message.add é o método correto para outbound (operador→cliente)
+	//    NÃO usar imconnector.send.messages que é para inbound (cliente→Bitrix)
+	if chatID != "" {
+		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
+			h.log.Warn("crm send: imopenlines.crm.message.add failed", zap.String("chat_id", chatID), zap.Error(sendErr))
+		} else {
+			h.log.Info("crm send: message registered in Open Channel", zap.String("chat_id", chatID))
+		}
 	}
 
 	// 3. Enfileira mensagem outbound para o WhatsApp
