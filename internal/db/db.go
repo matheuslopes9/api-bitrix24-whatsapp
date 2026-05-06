@@ -70,6 +70,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			   SET wa_jid = REGEXP_REPLACE(wa_jid, ':[0-9]+@', '@')
 			 WHERE wa_jid ~ ':[0-9]+@';
 		`},
+		{"009_drop_lid_contact_mapping", `
+			-- Remove contact_mapping entries cujo wa_phone é um LID em vez de telefone.
+			-- LIDs costumam ter 15+ dígitos (ex: 127586399207476).
+			-- Telefones brasileiros tem 12-13 dígitos (55 + DDD + numero).
+			-- Quando o cliente mandar a próxima msg, ensureContact cria de novo com
+			-- o telefone real (via SenderAlt do whatsmeow).
+			DELETE FROM contact_mapping
+			 WHERE wa_jid LIKE '%@lid'
+			   AND LENGTH(wa_phone) > 14;
+		`},
 	}
 
 	for _, m := range migrations {

@@ -423,11 +423,20 @@ func buildMessageHandler(
 			log.Warn("insert message failed", zap.String("msg_id", evt.Info.ID), zap.Error(err))
 		}
 
+		// Para @lid (LinkedID), usa SenderAlt que tem o JID com telefone real.
+		// Garante que contact_mapping.wa_phone seja o telefone, não o LID.
+		jobFromJID := evt.Info.Sender.String()
+		jobFromPhone := evt.Info.Sender.User
+		if !evt.Info.SenderAlt.IsEmpty() && evt.Info.Sender.Server == "lid" {
+			jobFromJID = evt.Info.SenderAlt.String()
+			jobFromPhone = evt.Info.SenderAlt.User
+		}
+
 		job := &queue.InboundJob{
 			SessionID:   sessionID,
 			SessionJID:  sessionJID,
-			FromJID:     evt.Info.Sender.String(),
-			FromPhone:   evt.Info.Sender.User,
+			FromJID:     jobFromJID,
+			FromPhone:   jobFromPhone,
 			FromName:    evt.Info.PushName,
 			MessageID:   evt.Info.ID,
 			MessageType: string(msgType),
