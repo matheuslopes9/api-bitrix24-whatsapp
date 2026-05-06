@@ -1270,7 +1270,9 @@ function sendMsg() {
   .then(function(r){ return r.json(); })
   .then(function(d) {
     setBtnLoading(false);
-    if (d.status === 'queued') {
+    // Aceita qualquer status de sucesso: queued, queued_direct, sent_via_openlines
+    var ok = d.status && (d.status.indexOf('queued') === 0 || d.status.indexOf('sent') === 0);
+    if (ok) {
       document.getElementById('msg-input').value = '';
       autoResize(document.getElementById('msg-input'));
       hideAlert();
