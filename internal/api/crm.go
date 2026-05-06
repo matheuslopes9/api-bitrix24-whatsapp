@@ -20,6 +20,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"go.uber.org/zap"
 )
@@ -246,12 +247,13 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "queued", "file": fileHeader.Filename})
 }
 
-// GET /bitrix/crm/history?domain=...&entity_type=contact&entity_id=...&limit=50
-// Busca histórico do Open Channel do Bitrix24 para a entidade CRM.
+// GET /bitrix/crm/history?domain=...&entity_type=contact&entity_id=...&phone=...&limit=80
+// Busca histórico do banco local (fonte primária) + fallback Bitrix API.
 func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	domain     := c.Query("domain")
 	entityType := strings.ToLower(c.Query("entity_type", "contact"))
 	entityID   := c.Query("entity_id")
+	phone      := c.Query("phone") // telefone já conhecido pelo frontend
 
 	if domain == "" || entityID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e entity_id são obrigatórios"})
@@ -262,52 +264,79 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 		limit = l
 	}
 
+	// ── Fonte 1: banco local ──────────────────────────────────────────────
+	// Se o frontend passou o telefone, busca direto no banco
+	if phone != "" {
+		phoneNorm := normalizeWAPhone(phone)
+		localMsgs, err := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
+		if err == nil && len(localMsgs) > 0 {
+			h.log.Info("crm history: found in local db", zap.Int("count", len(localMsgs)), zap.String("phone", phoneNorm))
+			return c.JSON(fiber.Map{
+				"messages": localMsgsToCRM(localMsgs),
+				"count":    len(localMsgs),
+				"source":   "local",
+			})
+		}
+	}
+
+	// ── Fonte 2: Bitrix API ───────────────────────────────────────────────
 	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(domain))
 	if err != nil || portal == nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
+		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0})
 	}
 	creds := h.portalToCreds(portal)
-
 	bxEntityType := strings.ToUpper(entityType)
 
-	// Estratégia 1: imopenlines.crm.chat.getLastId — retorna o último CHAT_ID direto
+	// Tenta getLastId primeiro, depois crm.chat.get
 	chatID, _ := h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, entityID)
-	h.log.Info("crm history: getLastId", zap.String("chat_id", chatID), zap.String("entity", entityID))
-
-	// Estratégia 2: imopenlines.crm.chat.get com ACTIVE_ONLY=N (todos os chats)
 	if chatID == "" {
-		chatsRaw, err := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, entityID)
-		if err == nil {
+		if chatsRaw, e := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, entityID); e == nil {
 			chatID = extractChatID(chatsRaw)
-			h.log.Info("crm history: crm.chat.get", zap.String("chat_id", chatID), zap.String("raw", string(chatsRaw)))
 		}
 	}
+	h.log.Info("crm history: bitrix chat_id", zap.String("chat_id", chatID), zap.String("entity", entityID))
 
 	if chatID == "" {
-		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "chat_id": ""})
+		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "source": "none"})
 	}
 
-	// Busca histórico usando imopenlines.session.history.get (método correto para Open Channel)
 	msgsRaw, err := h.bitrixClient.GetSessionHistory(c.Context(), creds, chatID, limit)
 	if err != nil {
-		// Fallback: im.dialog.messages.get
-		h.log.Warn("crm history: session.history.get failed, trying im.dialog.messages.get", zap.Error(err))
 		msgsRaw, err = h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error(), "chat_id": chatID})
+			return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "source": "error"})
 		}
 	}
-
-	h.log.Info("crm history: msgs raw preview", zap.String("chat_id", chatID), zap.String("raw", string(msgsRaw)[:min(300, len(msgsRaw))]))
 
 	msgs := parseSessionHistory(msgsRaw, portal.ConnectorID)
 	if len(msgs) == 0 {
-		// Fallback parser para im.dialog.messages.get
 		msgs = parseBitrixMessages(msgsRaw, portal.ConnectorID)
 	}
 
-	h.log.Info("crm history: done", zap.String("chat_id", chatID), zap.Int("count", len(msgs)))
-	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "chat_id": chatID})
+	h.log.Info("crm history: from bitrix", zap.Int("count", len(msgs)))
+	return c.JSON(fiber.Map{"messages": msgs, "count": len(msgs), "source": "bitrix", "chat_id": chatID})
+}
+
+// localMsgsToCRM converte []db.Message para o formato crmMessage do frontend.
+func localMsgsToCRM(msgs []db.Message) []crmMessage {
+	out := make([]crmMessage, 0, len(msgs))
+	for _, m := range msgs {
+		msgType := string(m.MessageType)
+		if msgType == "" {
+			msgType = "text"
+		}
+		out = append(out, crmMessage{
+			ID:        m.WAMessageID,
+			Direction: string(m.Direction),
+			Type:      msgType,
+			Content:   m.Content,
+			MediaURL:  m.MediaURL,
+			MediaMime: m.MediaMime,
+			Status:    string(m.Status),
+			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+	return out
 }
 
 // extractChatID tenta extrair o CHAT_ID de várias estruturas possíveis de resposta.
@@ -1065,12 +1094,14 @@ function openChat(name, phone) {
 
 function reloadChat() { if (_contactPhone) loadHistory(); }
 
-// ── Histórico (busca do Open Channel do Bitrix) ───────────────────────────
+// ── Histórico (banco local → fallback Bitrix) ─────────────────────────────
 function loadHistory() {
   if (!_entityId || !_domain) return;
   document.getElementById('chat-body').innerHTML = '<div class="chat-placeholder"><div class="spinner"></div></div>';
   var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
-          + '&entity_type=' + _entityType + '&entity_id=' + _entityId + '&limit=80';
+          + '&entity_type=' + _entityType + '&entity_id=' + _entityId
+          + '&phone=' + enc(_contactPhone)
+          + '&limit=80';
   fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(d) { renderHistory(d.messages || [], d.chat_id || ''); })
@@ -1078,13 +1109,15 @@ function loadHistory() {
       document.getElementById('chat-body').innerHTML = '<div class="chat-placeholder"><p>Erro ao carregar histórico.</p></div>';
     });
   if (_pollTimer) clearInterval(_pollTimer);
-  _pollTimer = setInterval(pollHistory, 8000);
+  _pollTimer = setInterval(pollHistory, 5000);
 }
 
 function pollHistory() {
   if (!_entityId || !_domain) return;
   var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
-          + '&entity_type=' + _entityType + '&entity_id=' + _entityId + '&limit=3';
+          + '&entity_type=' + _entityType + '&entity_id=' + _entityId
+          + '&phone=' + enc(_contactPhone)
+          + '&limit=3';
   fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(d) {

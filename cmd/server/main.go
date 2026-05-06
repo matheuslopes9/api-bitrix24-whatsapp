@@ -165,19 +165,21 @@ func main() {
 			return err
 		}
 
-		// Salva mensagem outbound no banco para contabilizar nas estatísticas
+		// Salva mensagem outbound no banco
 		msgType := db.MsgTypeText
-		if job.FileURL != "" {
+		if len(fileData) > 0 {
 			msgType = db.MsgTypeDocument
 		}
 		now := time.Now()
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
+			FromJID:     job.SessionJID, // sessão WA que enviou
+			ToJID:       job.ToJID,      // destinatário
 			Direction:   db.DirOutbound,
 			MessageType: msgType,
 			Content:     job.Text,
-			MediaMime:   job.FileMime,
+			MediaMime:   fileMime,
 			Status:      db.MsgDelivered,
 			SentAt:      &now,
 		}
@@ -364,10 +366,14 @@ func buildMessageHandler(
 
 		// Salva mensagem no banco com status "received"
 		ts := evt.Info.Timestamp
+		// from_jid = quem enviou (o cliente WhatsApp)
+		// to_jid   = a sessão que recebeu (nosso número)
 		msg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
 			SessionID:   &sessionID,
+			FromJID:     evt.Info.Sender.String(), // ex: 5519987717792@s.whatsapp.net
+			ToJID:       sessionJID,               // ex: 5519910001772@s.whatsapp.net
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,

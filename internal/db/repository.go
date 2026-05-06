@@ -157,11 +157,15 @@ func (r *Repository) GetContactByJID(ctx context.Context, jid string, sessionID 
 
 func (r *Repository) InsertMessage(ctx context.Context, m *Message) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO messages (id, wa_message_id, session_id, contact_id, direction, message_type, content,
-		                      media_url, media_mime, media_size, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		ON CONFLICT (wa_message_id) DO NOTHING
-	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.Direction, m.MessageType, m.Content,
+		INSERT INTO messages (id, wa_message_id, session_id, contact_id, from_jid, to_jid,
+		                      direction, message_type, content, media_url, media_mime, media_size, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		ON CONFLICT (wa_message_id) DO UPDATE SET
+			from_jid = EXCLUDED.from_jid,
+			to_jid   = EXCLUDED.to_jid,
+			status   = EXCLUDED.status
+	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.FromJID, m.ToJID,
+		m.Direction, m.MessageType, m.Content,
 		m.MediaURL, m.MediaMime, m.MediaSize, m.Status)
 	return err
 }
@@ -185,22 +189,23 @@ func (r *Repository) IncrementRetry(ctx context.Context, waMessageID string) err
 	return err
 }
 
-// GetMessagesByPhone retorna as últimas N mensagens trocadas com um telefone específico.
-// Busca via contact_mappings para encontrar o contact_id correspondente ao número.
+// GetMessagesByPhone retorna as últimas N mensagens trocadas com um número de telefone.
+// Busca por from_jid ou to_jid contendo o número — funciona para inbound e outbound.
 func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	// phone sem @s.whatsapp.net — usamos LIKE para casar qualquer JID que comece com o número
+	pattern := phone + "@%"
 	rows, err := r.pool.Query(ctx, `
-		SELECT m.id, m.wa_message_id, m.session_id, m.contact_id, m.direction, m.message_type,
-		       m.content, m.media_url, m.media_mime, m.media_size, m.status,
-		       m.retry_count, m.error_msg, m.sent_at, m.delivered_at, m.created_at
-		FROM messages m
-		JOIN contact_mappings cm ON cm.id = m.contact_id
-		WHERE cm.wa_phone = $1
-		ORDER BY m.created_at DESC
+		SELECT id, wa_message_id, session_id, contact_id, from_jid, to_jid,
+		       direction, message_type, content, media_url, media_mime, media_size,
+		       status, retry_count, error_msg, sent_at, delivered_at, created_at
+		FROM messages
+		WHERE from_jid LIKE $1 OR to_jid LIKE $1
+		ORDER BY created_at DESC
 		LIMIT $2
-	`, phone, limit)
+	`, pattern, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +215,7 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	for rows.Next() {
 		var m Message
 		if err := rows.Scan(&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
+			&m.FromJID, &m.ToJID,
 			&m.Direction, &m.MessageType, &m.Content, &m.MediaURL, &m.MediaMime,
 			&m.MediaSize, &m.Status, &m.RetryCount, &m.ErrorMsg,
 			&m.SentAt, &m.DeliveredAt, &m.CreatedAt); err != nil {
