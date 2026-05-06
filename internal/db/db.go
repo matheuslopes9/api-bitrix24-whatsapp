@@ -53,6 +53,9 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			CREATE INDEX IF NOT EXISTS idx_messages_from_jid ON messages (from_jid);
 			CREATE INDEX IF NOT EXISTS idx_messages_to_jid   ON messages (to_jid);
 		`},
+		{"007_messages_author", `
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS author_name TEXT NOT NULL DEFAULT '';
+		`},
 	}
 
 	for _, m := range migrations {

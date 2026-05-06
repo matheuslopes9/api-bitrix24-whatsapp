@@ -157,14 +157,15 @@ func (r *Repository) GetContactByJID(ctx context.Context, jid string, sessionID 
 
 func (r *Repository) InsertMessage(ctx context.Context, m *Message) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO messages (id, wa_message_id, session_id, contact_id, from_jid, to_jid,
+		INSERT INTO messages (id, wa_message_id, session_id, contact_id, from_jid, to_jid, author_name,
 		                      direction, message_type, content, media_url, media_mime, media_size, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (wa_message_id) DO UPDATE SET
-			from_jid = EXCLUDED.from_jid,
-			to_jid   = EXCLUDED.to_jid,
-			status   = EXCLUDED.status
-	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.FromJID, m.ToJID,
+			from_jid    = EXCLUDED.from_jid,
+			to_jid      = EXCLUDED.to_jid,
+			author_name = EXCLUDED.author_name,
+			status      = EXCLUDED.status
+	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.FromJID, m.ToJID, m.AuthorName,
 		m.Direction, m.MessageType, m.Content,
 		m.MediaURL, m.MediaMime, m.MediaSize, m.Status)
 	return err
@@ -210,7 +211,7 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	// phone sem @s.whatsapp.net — usamos LIKE para casar qualquer JID que comece com o número
 	pattern := phone + "@%"
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, wa_message_id, session_id, contact_id, from_jid, to_jid,
+		SELECT id, wa_message_id, session_id, contact_id, from_jid, to_jid, author_name,
 		       direction, message_type, content, media_url, media_mime, media_size,
 		       status, retry_count, error_msg, sent_at, delivered_at, created_at
 		FROM messages
@@ -227,7 +228,7 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	for rows.Next() {
 		var m Message
 		if err := rows.Scan(&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
-			&m.FromJID, &m.ToJID,
+			&m.FromJID, &m.ToJID, &m.AuthorName,
 			&m.Direction, &m.MessageType, &m.Content, &m.MediaURL, &m.MediaMime,
 			&m.MediaSize, &m.Status, &m.RetryCount, &m.ErrorMsg,
 			&m.SentAt, &m.DeliveredAt, &m.CreatedAt); err != nil {

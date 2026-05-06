@@ -60,6 +60,9 @@ type OutboundJob struct {
 	FileURL      string `json:"file_url,omitempty"`      // downloadLink do evento
 	FileName     string `json:"file_name,omitempty"`
 	FileMime     string `json:"file_mime,omitempty"`
+
+	// Nome do operador que enviou (para salvar no histórico)
+	OperatorName string `json:"operator_name,omitempty"`
 }
 
 // Queue gerencia as filas via Redis.

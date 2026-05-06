@@ -86,25 +86,23 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 }
 
 // POST /bitrix/crm/send
-// Body: { "domain", "entity_type", "entity_id", "phone", "session_jid", "message", "line_id" }
-// Abre a sessão de Open Channel e envia a primeira mensagem via WA.
+// Body: { "domain", "entity_type", "entity_id", "phone", "session_jid", "message", "line_id", "operator_name" }
 func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	var body struct {
-		Domain     string `json:"domain"`
-		EntityType string `json:"entity_type"`
-		EntityID   string `json:"entity_id"`
-		Phone      string `json:"phone"`
-		SessionJID string `json:"session_jid"`
-		Message    string `json:"message"`
-		LineID     int    `json:"line_id"`
+		Domain       string `json:"domain"`
+		EntityType   string `json:"entity_type"`
+		EntityID     string `json:"entity_id"`
+		Phone        string `json:"phone"`
+		SessionJID   string `json:"session_jid"`
+		Message      string `json:"message"`
+		LineID       int    `json:"line_id"`
+		OperatorName string `json:"operator_name"` // nome do operador logado
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 	if body.Domain == "" || body.Phone == "" || body.SessionJID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "domain, phone e session_jid são obrigatórios",
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
 	}
 	if body.Message == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message é obrigatório"})
@@ -116,7 +114,6 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 	creds := h.portalToCreds(portal)
 
-	// Normaliza o telefone para formato WA (apenas dígitos)
 	phone := normalizeWAPhone(body.Phone)
 	toJID := phone + "@s.whatsapp.net"
 
@@ -132,41 +129,60 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		lineID = 1
 	}
 
-	// USER_CODE: "<connector>|<lineID>|<ext_chat_id>|<ext_user_id>"
-	// ext_chat_id e ext_user_id usamos o número de telefone normalizado
-	userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
-
-	chatID, err := h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
-	if err != nil {
-		h.log.Warn("crm send: imopenlines.session.open failed", zap.String("user_code", userCode), zap.Error(err))
-		// Continua mesmo se a sessão falhar — a mensagem WA ainda será enviada
-	} else {
-		h.log.Info("crm send: session opened", zap.String("chat_id", chatID), zap.String("user_code", userCode))
+	operatorName := body.OperatorName
+	if operatorName == "" {
+		operatorName = "UC Talk"
 	}
 
-	// Enfileira mensagem outbound para o WhatsApp
+	// USER_CODE: "<connector>|<lineID>|<ext_chat_id>|<ext_user_id>"
+	userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
+
+	// 1. Abre/retoma a sessão no Open Channel do Bitrix
+	chatID, err := h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
+	if err != nil {
+		h.log.Warn("crm send: session.open failed", zap.Error(err))
+	}
+
+	// 2. Registra a mensagem OUTBOUND no Open Channel do Bitrix via imconnector.send.messages
+	//    Isso faz a mensagem aparecer no histórico do Contact Center como se fosse do operador
+	msgID := fmt.Sprintf("crm-%s-%d", phone, c.Context().Time().UnixMilli())
+	connMsg := bitrix.ConnectorMessage{
+		User: bitrix.ConnectorUser{
+			ID:    phone,
+			Name:  operatorName,
+			Phone: "+" + phone,
+		},
+		Message: bitrix.ConnectorMsgBody{
+			ID:   msgID,
+			Text: body.Message,
+		},
+		Chat: bitrix.ConnectorChat{ID: phone},
+	}
+	if _, sendErr := h.bitrixClient.ConnectorSendMessage(c.Context(), creds, connectorID, lineID, connMsg); sendErr != nil {
+		h.log.Warn("crm send: imconnector.send.messages failed", zap.Error(sendErr))
+		// Não bloqueia — a mensagem WA ainda será enviada
+	}
+
+	// 3. Enfileira mensagem outbound para o WhatsApp
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
 		ToJID:           toJID,
 		Text:            body.Message,
 		BitrixConnector: connectorID,
 		BitrixLine:      lineID,
+		OperatorName:    operatorName,
 	}
 	if err := h.q.PushOutbound(c.Context(), job); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	h.log.Info("crm send: outbound queued",
+	h.log.Info("crm send: done",
 		zap.String("to_jid", toJID),
-		zap.String("session_jid", body.SessionJID),
-		zap.String("domain", body.Domain),
+		zap.String("chat_id", chatID),
+		zap.String("operator", operatorName),
 	)
 
-	return c.JSON(fiber.Map{
-		"status":  "queued",
-		"to_jid":  toJID,
-		"chat_id": chatID,
-	})
+	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
@@ -326,14 +342,15 @@ func localMsgsToCRM(msgs []db.Message) []crmMessage {
 			msgType = "text"
 		}
 		out = append(out, crmMessage{
-			ID:        m.WAMessageID,
-			Direction: string(m.Direction),
-			Type:      msgType,
-			Content:   m.Content,
-			MediaURL:  m.MediaURL,
-			MediaMime: m.MediaMime,
-			Status:    string(m.Status),
-			CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:         m.WAMessageID,
+			Direction:  string(m.Direction),
+			Type:       msgType,
+			Content:    m.Content,
+			MediaURL:   m.MediaURL,
+			MediaMime:  m.MediaMime,
+			AuthorName: m.AuthorName,
+			Status:     string(m.Status),
+			CreatedAt:  m.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 	return out
@@ -1214,7 +1231,8 @@ function sendMsg() {
   fetch(_baseUrl + '/bitrix/crm/send', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ domain:_domain, entity_type:_entityType, entity_id:_entityId,
-                           phone:_contactPhone, session_jid:_activeSession, message:msg })
+                           phone:_contactPhone, session_jid:_activeSession, message:msg,
+                           operator_name: document.getElementById('op-name').textContent || 'UC Talk' })
   })
   .then(function(r){ return r.json(); })
   .then(function(d) {

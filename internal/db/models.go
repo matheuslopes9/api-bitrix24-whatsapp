@@ -64,8 +64,9 @@ type Message struct {
 	WAMessageID string           `db:"wa_message_id"`
 	SessionID   *uuid.UUID       `db:"session_id"`
 	ContactID   *uuid.UUID       `db:"contact_id"`
-	FromJID     string           `db:"from_jid"` // JID de quem enviou
-	ToJID       string           `db:"to_jid"`   // JID de quem recebeu
+	FromJID     string           `db:"from_jid"`    // JID de quem enviou
+	ToJID       string           `db:"to_jid"`      // JID de quem recebeu
+	AuthorName  string           `db:"author_name"` // nome do operador (outbound) ou do contato (inbound)
 	Direction   MessageDirection `db:"direction"`
 	MessageType MessageType      `db:"message_type"`
 	Content     string           `db:"content"`

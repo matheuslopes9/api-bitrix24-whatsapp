@@ -174,8 +174,9 @@ func main() {
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
-			FromJID:     job.SessionJID, // sessão WA que enviou
-			ToJID:       job.ToJID,      // destinatário
+			FromJID:     job.SessionJID,    // sessão WA que enviou
+			ToJID:       job.ToJID,         // destinatário
+			AuthorName:  job.OperatorName,  // nome do operador
 			Direction:   db.DirOutbound,
 			MessageType: msgType,
 			Content:     job.Text,
@@ -393,6 +394,7 @@ func buildMessageHandler(
 			SessionID:   &sessionID,
 			FromJID:     evt.Info.Sender.String(), // ex: 5519987717792@s.whatsapp.net
 			ToJID:       sessionJID,               // ex: 5519910001772@s.whatsapp.net
+			AuthorName:  evt.Info.PushName,        // nome do contato no WhatsApp
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,
