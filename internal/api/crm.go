@@ -112,7 +112,6 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if err != nil || portal == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
 	}
-	creds := h.portalToCreds(portal)
 
 	phone := normalizeWAPhone(body.Phone)
 	toJID := phone + "@s.whatsapp.net"
@@ -134,47 +133,9 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		operatorName = "UC Talk"
 	}
 
-	// 1. Busca o chat_id existente da sessão Open Channel vinculada ao contato/lead/deal.
-	//    Usa o mesmo entity_id que o iframe já conhece — igual ao que o histórico usa.
-	//    Isso garante que a mensagem vai para o chat CORRETO e não abre sessão paralela.
-	chatID := ""
-	bxEntityType := strings.ToUpper(body.EntityType)
-	if body.EntityID != "" {
-		chatID, _ = h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, body.EntityID)
-		if chatID == "" {
-			if chatsRaw, e := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, body.EntityID); e == nil {
-				chatID = extractChatID(chatsRaw)
-			}
-		}
-	}
-
-	// 2. Se não encontrou chat pelo entity_id, abre/retoma sessão pelo USER_CODE.
-	//    Isso cria uma nova sessão no Open Channel caso ainda não exista nenhuma.
-	if chatID == "" {
-		userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
-		chatID, err = h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
-		if err != nil {
-			h.log.Warn("crm send: session.open failed", zap.String("user_code", userCode), zap.Error(err))
-		}
-	}
-
-	h.log.Info("crm send: chat_id resolved",
-		zap.String("chat_id", chatID),
-		zap.String("entity_id", body.EntityID),
-		zap.String("phone", phone),
-	)
-
-	// 3. Registra a mensagem do operador no Open Channel do Bitrix.
-	//    im.message.add com DIALOG_ID=chatXXX envia como o usuário autenticado no token.
-	if chatID != "" {
-		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
-			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
-		} else {
-			h.log.Info("crm send: message registered in Open Channel", zap.String("chat_id", chatID))
-		}
-	}
-
-	// 4. Enfileira mensagem outbound para envio no WhatsApp.
+	// Enfileira mensagem outbound para envio no WhatsApp.
+	// O worker em main.go salva no banco após enviar — o CRM tab lê do banco.
+	// Não mexemos no Open Lines aqui: o sistema já processa inbound/outbound por lá.
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
 		ToJID:           toJID,
@@ -187,13 +148,12 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	h.log.Info("crm send: done",
+	h.log.Info("crm send: queued",
 		zap.String("to_jid", toJID),
-		zap.String("chat_id", chatID),
 		zap.String("operator", operatorName),
 	)
 
-	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
+	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID})
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
