@@ -202,6 +202,17 @@ func (r *Repository) DeleteOldMessages(ctx context.Context, retentionDays int) (
 	return tag.RowsAffected(), nil
 }
 
+// DeleteMessagesByJIDPattern remove mensagens cujo from_jid ou to_jid bate com o pattern LIKE.
+// Usado pelo simulador para limpar mensagens de teste.
+func (r *Repository) DeleteMessagesByJIDPattern(ctx context.Context, pattern string) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM messages WHERE from_jid LIKE $1 OR to_jid LIKE $1`, pattern)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // GetMessagesByPhone retorna as últimas N mensagens trocadas com um número de telefone.
 // Busca por from_jid ou to_jid contendo o número — funciona para inbound e outbound.
 func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {

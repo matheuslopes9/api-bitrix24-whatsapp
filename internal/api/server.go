@@ -135,6 +135,13 @@ func New(
 	stats.Get("/contacts", h.contactStats)
 	stats.Get("/export", h.exportStats)
 
+	// ─── Simulador interno (testes sem WA/Bitrix reais) ─────────────────
+	app.Get("/sim", h.simPage)
+	app.Post("/sim/inbound", h.simInbound)
+	app.Post("/sim/outbound", h.simOutbound)
+	app.Get("/sim/history", h.simHistory)
+	app.Post("/sim/clear", h.simClear)
+
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())
 
