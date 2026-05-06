@@ -135,7 +135,7 @@ select.inp:focus{border-color:rgba(37,211,102,.55);box-shadow:0 0 0 3px rgba(37,
 .cselect-trigger .cselect-placeholder{color:#3d4f66;font-weight:400;}
 .cselect-trigger .cselect-arrow{flex-shrink:0;transition:transform .2s;color:#64748b;}
 .cselect-trigger.open .cselect-arrow{transform:rotate(180deg);}
-.cselect-dropdown{display:none;position:fixed;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:9999;overflow:hidden;}
+.cselect-dropdown{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#131929;border:1.5px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.6);z-index:99999;overflow:hidden;}
 .cselect-dropdown.open{display:flex;flex-direction:column;max-height:260px;}
 .cselect-search{padding:10px 12px 6px;flex-shrink:0;background:#131929;}
 #fila-openline-options{overflow-y:auto;flex:1;}
@@ -1772,25 +1772,60 @@ function abrirModalFila(prePortal) {
 // ─── Custom Select ────────────────────────────────────────────────────────────
 var _cselectData = {}; // id → [{value, label, color}]
 
+// ─── Custom Select refatorado ─────────────────────────────────────────────────
+// Estratégia: ao abrir, move o dropdown para o <body> com position:fixed
+// para escapar de qualquer overflow:hidden ou stacking context de modais.
+// Ao fechar, devolve o dropdown para dentro do .cselect original.
+
+var _cselectOpen = null; // id do cselect atualmente aberto
+
 function toggleCSelect(id) {
+  if (_cselectOpen === id) {
+    _fecharCSelect(id);
+  } else {
+    if (_cselectOpen) _fecharCSelect(_cselectOpen);
+    _abrirCSelect(id);
+  }
+}
+
+function _abrirCSelect(id) {
   var trigger  = document.getElementById(id + '-trigger');
   var dropdown = document.getElementById(id + '-dropdown');
+  var wrap     = document.getElementById(id + '-wrap');
   if (!trigger || !dropdown) return;
+
+  // Move para o body para escapar de overflow:hidden e z-index de modais
+  document.body.appendChild(dropdown);
+
+  var rect = trigger.getBoundingClientRect();
+  dropdown.style.position  = 'fixed';
+  dropdown.style.left      = rect.left + 'px';
+  dropdown.style.width     = rect.width + 'px';
+  dropdown.style.top       = (rect.bottom + 4) + 'px';
+  dropdown.style.maxHeight = Math.min(260, window.innerHeight - rect.bottom - 16) + 'px';
+  dropdown.style.zIndex    = '99999';
+  dropdown.classList.add('open');
+  trigger.classList.add('open');
+  _cselectOpen = id;
+
   var search = document.getElementById(id + '-search');
-  var isOpen = dropdown.classList.contains('open');
-  document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
-  document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
-  if (!isOpen) {
-    // Calcula posição baseada no trigger (position:fixed escapa do stacking context do modal)
-    var rect = trigger.getBoundingClientRect();
-    dropdown.style.left  = rect.left + 'px';
-    dropdown.style.width = rect.width + 'px';
-    dropdown.style.top   = (rect.bottom + 6) + 'px';
-    dropdown.style.maxHeight = Math.min(260, window.innerHeight - rect.bottom - 20) + 'px';
-    dropdown.classList.add('open');
-    trigger.classList.add('open');
-    if (search) { search.value = ''; filtrarCSelect(id, ''); setTimeout(function(){ search.focus(); }, 50); }
+  if (search) { search.value = ''; filtrarCSelect(id, ''); setTimeout(function(){ search.focus(); }, 60); }
+}
+
+function _fecharCSelect(id) {
+  var dropdown = document.getElementById(id + '-dropdown');
+  var trigger  = document.getElementById(id + '-trigger');
+  var wrap     = document.getElementById(id + '-wrap');
+  if (!dropdown) return;
+
+  dropdown.classList.remove('open');
+  if (trigger) trigger.classList.remove('open');
+
+  // Devolve o dropdown para dentro do .cselect original
+  if (wrap && dropdown.parentNode === document.body) {
+    wrap.appendChild(dropdown);
   }
+  _cselectOpen = null;
 }
 
 function filtrarCSelect(id, q) {
@@ -1819,14 +1854,11 @@ function filtrarCSelect(id, q) {
 function selecionarCSelect(id, value, label) {
   var hidden = document.getElementById(id);
   var lbl    = document.getElementById(id + '-label');
-  var dd     = document.getElementById(id + '-dropdown');
-  var tr     = document.getElementById(id + '-trigger');
   if (!hidden || !lbl) return;
   hidden.value = value;
   lbl.textContent = label;
   lbl.classList.remove('cselect-placeholder');
-  if (dd) dd.classList.remove('open');
-  if (tr) tr.classList.remove('open');
+  _fecharCSelect(id);
   var ev = new Event('change');
   hidden.dispatchEvent(ev);
 }
@@ -1841,16 +1873,15 @@ function setCSelectPlaceholder(id, text) {
   if (opts) opts.innerHTML = '<div class="cselect-empty">' + text + '</div>';
 }
 
-// Usa mousedown para fechar — dispara ANTES do click, mas não interfere com onclick
-// das opções porque o onclick só executa no mouseup+mousedown no mesmo elemento.
-// position:fixed faz o dropdown sair do DOM tree do .cselect, por isso verificamos
-// também .cselect-dropdown e .cselect-option.
-document.addEventListener('mousedown', function(e) {
-  var inSelect   = e.target.closest('.cselect');
-  var inDropdown = e.target.closest('.cselect-dropdown');
-  if (!inSelect && !inDropdown) {
-    document.querySelectorAll('.cselect-dropdown.open').forEach(function(d){ d.classList.remove('open'); });
-    document.querySelectorAll('.cselect-trigger.open').forEach(function(t){ t.classList.remove('open'); });
+// Fecha ao clicar fora — verifica se o clique foi no trigger ou no dropdown (mesmo no body)
+document.addEventListener('click', function(e) {
+  if (!_cselectOpen) return;
+  var trigger  = document.getElementById(_cselectOpen + '-trigger');
+  var dropdown = document.getElementById(_cselectOpen + '-dropdown');
+  var inTrigger  = trigger  && trigger.contains(e.target);
+  var inDropdown = dropdown && dropdown.contains(e.target);
+  if (!inTrigger && !inDropdown) {
+    _fecharCSelect(_cselectOpen);
   }
 });
 
