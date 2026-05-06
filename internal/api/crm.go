@@ -1042,7 +1042,7 @@ function loadEntity() {
     }
 
     // Adiciona o contato na lista e abre o chat imediatamente
-    _allConvs = [{ name: _contactName, phone: _contactPhone, preview: 'Carregando...', time: '', unread: 0, active: true }];
+    _allConvs = [{ name: _contactName, phone: _contactPhone, preview: _contactPhone, time: '', unread: 0, active: true }];
     renderConvList();
     openChat(_contactName, _contactPhone);
   }).catch(function() {
