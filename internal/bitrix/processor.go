@@ -44,29 +44,60 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		zap.String("type", job.MessageType),
 	)
 
-	// 1. Busca a conta Bitrix vinculada à sessão WA
-	acct, err := p.repo.GetBitrixAccountByJID(ctx, job.SessionJID)
-	if err != nil {
-		p.log.Error("bitrix account not found",
-			zap.String("session_jid", job.SessionJID),
-			zap.Error(err),
-		)
-		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, "bitrix account not configured")
-		return fmt.Errorf("bitrix account not found for session %s: %w", job.SessionJID, err)
-	}
-
-	p.log.Info("bitrix account found",
-		zap.String("domain", acct.Domain),
-		zap.Int("open_line_id", acct.OpenLineID),
-		zap.String("connector_id", acct.ConnectorID),
+	// 1. Busca a conta Bitrix vinculada à sessão WA.
+	// Tenta primeiro em bitrix_accounts (app local), depois em bitrix_portals (Partner App).
+	var (
+		domain      string
+		connectorID string
+		openLineID  int
+		creds       TenantCreds
 	)
 
-	creds := TenantCreds{
-		Domain:       acct.Domain,
-		ClientID:     acct.ClientID,
-		ClientSecret: acct.ClientSecret,
-		RedirectURI:  acct.RedirectURI,
+	acct, err := p.repo.GetBitrixAccountByJID(ctx, job.SessionJID)
+	if err == nil {
+		// App local — usa as credenciais da conta
+		domain      = acct.Domain
+		connectorID = acct.ConnectorID
+		openLineID  = acct.OpenLineID
+		creds = TenantCreds{
+			Domain:       acct.Domain,
+			ClientID:     acct.ClientID,
+			ClientSecret: acct.ClientSecret,
+			RedirectURI:  acct.RedirectURI,
+		}
+		p.log.Info("bitrix account found (local app)",
+			zap.String("domain", domain),
+			zap.Int("open_line_id", openLineID),
+		)
+	} else {
+		// Fallback: Partner App — pega o primeiro portal disponível
+		portals, pErr := p.repo.ListBitrixPortals(ctx)
+		if pErr != nil || len(portals) == 0 {
+			p.log.Error("no bitrix account or portal found",
+				zap.String("session_jid", job.SessionJID),
+				zap.Error(err),
+			)
+			_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, "no bitrix account configured")
+			return fmt.Errorf("no bitrix account or portal for session %s: %w", job.SessionJID, err)
+		}
+		portal := portals[0]
+		domain      = portal.Domain
+		connectorID = portal.ConnectorID
+		if connectorID == "" {
+			connectorID = "whatsapp_uc_v2"
+		}
+		openLineID = portal.OpenLineID
+		if openLineID == 0 {
+			openLineID = 1
+		}
+		creds = TenantCreds{Domain: portal.Domain}
+		p.log.Info("bitrix portal found (partner app)",
+			zap.String("domain", domain),
+			zap.Int("open_line_id", openLineID),
+			zap.String("connector_id", connectorID),
+		)
 	}
+	_ = domain // usado nos logs abaixo
 
 	// 2. Garante que existe um mapeamento contato ↔ bitrix
 	contact, err := p.ensureContact(ctx, job)
@@ -104,7 +135,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	}
 
 	// 4. Envia ao Contact Center
-	chatID, err := p.client.ConnectorSendMessage(ctx, creds, acct.ConnectorID, acct.OpenLineID, msg)
+	chatID, err := p.client.ConnectorSendMessage(ctx, creds, connectorID, openLineID, msg)
 	if err != nil {
 		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("send to contact center: %w", err)
@@ -117,8 +148,8 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	}
 
 	// 6. Confirma entrega da mensagem ao Bitrix
-	p.log.Info("calling set delivery", zap.String("msg_id", job.MessageID), zap.Int("line", acct.OpenLineID))
-	if err := p.client.ConnectorSetDelivery(ctx, creds, acct.ConnectorID, acct.OpenLineID, job.MessageID); err != nil {
+	p.log.Info("calling set delivery", zap.String("msg_id", job.MessageID), zap.Int("line", openLineID))
+	if err := p.client.ConnectorSetDelivery(ctx, creds, connectorID, openLineID, job.MessageID); err != nil {
 		p.log.Warn("set delivery status failed", zap.String("msg_id", job.MessageID), zap.Error(err))
 	} else {
 		p.log.Info("set delivery ok", zap.String("msg_id", job.MessageID))
@@ -131,7 +162,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		zap.String("from", job.FromPhone),
 		zap.String("type", job.MessageType),
 		zap.String("chat_id", chatID),
-		zap.String("bitrix_domain", acct.Domain))
+		zap.String("bitrix_domain", domain))
 	return nil
 }
 
