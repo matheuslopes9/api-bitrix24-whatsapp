@@ -135,7 +135,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 
 	// 1. Busca o chat_id do Open Lines vinculado a este contato/lead/deal.
-	//    Necessário para registrar a mensagem no Open Lines (aparece para o operador lá também).
+	//    Necessário para registrar a mensagem no Open Lines existente (não criar paralela).
 	chatID := ""
 	if body.EntityID != "" {
 		bxEntityType := strings.ToUpper(body.EntityType)
@@ -146,13 +146,9 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 			}
 		}
 	}
-	// Fallback: abre/retoma sessão pelo USER_CODE se não encontrou chat pelo entity
-	if chatID == "" {
-		userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
-		chatID, _ = h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
-	}
 
-	// 2. Registra a mensagem no Open Lines do Bitrix (aparece para o operador no chat).
+	// 2. Registra a mensagem no chat existente do Open Lines (aparece pro operador lá).
+	//    Se não há chat ainda, NÃO abre sessão paralela — apenas envia pro WhatsApp.
 	if chatID != "" {
 		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
 			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
@@ -160,16 +156,18 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 			h.log.Info("crm send: registered in Open Lines", zap.String("chat_id", chatID))
 		}
 	} else {
-		h.log.Warn("crm send: no chat_id found, message will NOT appear in Open Lines",
+		h.log.Info("crm send: no chat_id yet — sending only to WhatsApp",
 			zap.String("entity_id", body.EntityID), zap.String("phone", phone))
 	}
 
-	// 3. Enfileira envio no WhatsApp — worker salva no banco após enviar.
-	//    O CRM tab lê do banco no próximo poll (5s).
+	// 3. Enfileira envio no WhatsApp com prefixo do operador em negrito,
+	//    igual o Open Lines faz quando o operador envia por lá.
+	//    Formato: "*Nome:*\nMensagem" (negrito do WhatsApp via asteriscos).
+	textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
 		ToJID:           toJID,
-		Text:            body.Message,
+		Text:            textWithPrefix,
 		BitrixConnector: connectorID,
 		BitrixLine:      lineID,
 		OperatorName:    operatorName,
