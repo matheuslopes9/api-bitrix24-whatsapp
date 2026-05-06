@@ -135,7 +135,6 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 
 	// 1. Busca o chat_id do Open Lines vinculado a este contato/lead/deal.
-	//    Necessário para registrar a mensagem no Open Lines existente (não criar paralela).
 	chatID := ""
 	if body.EntityID != "" {
 		bxEntityType := strings.ToUpper(body.EntityType)
@@ -147,22 +146,31 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		}
 	}
 
-	// 2. Registra a mensagem no chat existente do Open Lines (aparece pro operador lá).
-	//    Se não há chat ainda, NÃO abre sessão paralela — apenas envia pro WhatsApp.
+	// 2. Registra a mensagem no Open Lines.
+	//    O Bitrix vai disparar ONIMCONNECTORMESSAGEADD automaticamente, que cai
+	//    em bitrixConnectorEvent e enfileira o envio para o WhatsApp.
+	//    Por isso NÃO enfileiramos OutboundJob direto aqui — evita duplicação.
 	if chatID != "" {
 		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
 			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
-		} else {
-			h.log.Info("crm send: registered in Open Lines", zap.String("chat_id", chatID))
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "falha ao enviar pelo Open Lines: " + sendErr.Error(),
+				"chat_id": chatID,
+			})
 		}
-	} else {
-		h.log.Info("crm send: no chat_id yet — sending only to WhatsApp",
-			zap.String("entity_id", body.EntityID), zap.String("phone", phone))
+		h.log.Info("crm send: registered in Open Lines (Bitrix routes to WA via connector)",
+			zap.String("chat_id", chatID),
+			zap.String("operator", operatorName),
+		)
+		return c.JSON(fiber.Map{
+			"status":  "sent_via_openlines",
+			"chat_id": chatID,
+		})
 	}
 
-	// 3. Enfileira envio no WhatsApp com prefixo do operador em negrito,
-	//    igual o Open Lines faz quando o operador envia por lá.
-	//    Formato: "*Nome:*\nMensagem" (negrito do WhatsApp via asteriscos).
+	// 3. Sem chat_id ainda — não há sessão Open Lines. Envia direto pelo WhatsApp.
+	//    Adiciona o prefixo "*Nome:*\nMsg" para manter consistência visual.
+	//    A próxima resposta do cliente cria a sessão Open Lines automaticamente.
 	textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
@@ -176,13 +184,11 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	h.log.Info("crm send: done",
+	h.log.Info("crm send: no chat_id — sent direct to WhatsApp with prefix",
 		zap.String("to_jid", toJID),
-		zap.String("chat_id", chatID),
 		zap.String("operator", operatorName),
 	)
-
-	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
+	return c.JSON(fiber.Map{"status": "queued_direct", "to_jid": toJID})
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
