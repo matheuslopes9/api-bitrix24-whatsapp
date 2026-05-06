@@ -211,9 +211,13 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	// phone sem @s.whatsapp.net — usamos LIKE para casar qualquer JID que comece com o número
 	pattern := phone + "@%"
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, wa_message_id, session_id, contact_id, from_jid, to_jid, author_name,
-		       direction, message_type, content, media_url, media_mime, media_size,
-		       status, retry_count, error_msg, sent_at, delivered_at, created_at
+		SELECT id, wa_message_id, session_id, contact_id,
+		       COALESCE(from_jid,''), COALESCE(to_jid,''), COALESCE(author_name,''),
+		       direction, message_type,
+		       COALESCE(content,''), COALESCE(media_url,''), COALESCE(media_mime,''),
+		       COALESCE(media_size,0),
+		       status, retry_count, COALESCE(error_msg,''),
+		       sent_at, delivered_at, created_at
 		FROM messages
 		WHERE from_jid LIKE $1 OR to_jid LIKE $1
 		ORDER BY created_at DESC
@@ -227,20 +231,27 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	var msgs []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
+		if err := rows.Scan(
+			&m.ID, &m.WAMessageID, &m.SessionID, &m.ContactID,
 			&m.FromJID, &m.ToJID, &m.AuthorName,
-			&m.Direction, &m.MessageType, &m.Content, &m.MediaURL, &m.MediaMime,
-			&m.MediaSize, &m.Status, &m.RetryCount, &m.ErrorMsg,
-			&m.SentAt, &m.DeliveredAt, &m.CreatedAt); err != nil {
+			&m.Direction, &m.MessageType,
+			&m.Content, &m.MediaURL, &m.MediaMime,
+			&m.MediaSize,
+			&m.Status, &m.RetryCount, &m.ErrorMsg,
+			&m.SentAt, &m.DeliveredAt, &m.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	// Retorna em ordem cronológica (mais antigas primeiro)
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
-	return msgs, rows.Err()
+	return msgs, nil
 }
 
 // DebugMessageStats retorna estatísticas do banco para diagnóstico.

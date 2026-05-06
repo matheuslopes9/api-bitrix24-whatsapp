@@ -96,7 +96,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		SessionJID   string `json:"session_jid"`
 		Message      string `json:"message"`
 		LineID       int    `json:"line_id"`
-		OperatorName string `json:"operator_name"` // nome do operador logado
+		OperatorName string `json:"operator_name"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -134,28 +134,47 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		operatorName = "UC Talk"
 	}
 
-	// USER_CODE: "<connector>|<lineID>|<ext_chat_id>|<ext_user_id>"
-	userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
-
-	// 1. Abre/retoma a sessão existente no Open Channel do Bitrix
-	//    Se o chat já existe, imopenlines.session.open retorna o CHAT_ID existente sem criar novo
-	chatID, err := h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
-	if err != nil {
-		h.log.Warn("crm send: session.open failed", zap.Error(err))
+	// 1. Busca o chat_id existente da sessão Open Channel vinculada ao contato/lead/deal.
+	//    Usa o mesmo entity_id que o iframe já conhece — igual ao que o histórico usa.
+	//    Isso garante que a mensagem vai para o chat CORRETO e não abre sessão paralela.
+	chatID := ""
+	bxEntityType := strings.ToUpper(body.EntityType)
+	if body.EntityID != "" {
+		chatID, _ = h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, body.EntityID)
+		if chatID == "" {
+			if chatsRaw, e := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, body.EntityID); e == nil {
+				chatID = extractChatID(chatsRaw)
+			}
+		}
 	}
 
-	// 2. Envia a mensagem no chat do Open Channel como operador
-	//    imopenlines.crm.message.add é o método correto para outbound (operador→cliente)
-	//    NÃO usar imconnector.send.messages que é para inbound (cliente→Bitrix)
+	// 2. Se não encontrou chat pelo entity_id, abre/retoma sessão pelo USER_CODE.
+	//    Isso cria uma nova sessão no Open Channel caso ainda não exista nenhuma.
+	if chatID == "" {
+		userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
+		chatID, err = h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
+		if err != nil {
+			h.log.Warn("crm send: session.open failed", zap.String("user_code", userCode), zap.Error(err))
+		}
+	}
+
+	h.log.Info("crm send: chat_id resolved",
+		zap.String("chat_id", chatID),
+		zap.String("entity_id", body.EntityID),
+		zap.String("phone", phone),
+	)
+
+	// 3. Registra a mensagem do operador no Open Channel do Bitrix.
+	//    im.message.add com DIALOG_ID=chatXXX envia como o usuário autenticado no token.
 	if chatID != "" {
 		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
-			h.log.Warn("crm send: imopenlines.crm.message.add failed", zap.String("chat_id", chatID), zap.Error(sendErr))
+			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
 		} else {
 			h.log.Info("crm send: message registered in Open Channel", zap.String("chat_id", chatID))
 		}
 	}
 
-	// 3. Enfileira mensagem outbound para o WhatsApp
+	// 4. Enfileira mensagem outbound para envio no WhatsApp.
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
 		ToJID:           toJID,
