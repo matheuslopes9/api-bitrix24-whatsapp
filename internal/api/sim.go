@@ -183,6 +183,37 @@ func (h *handlers) simHistory(c *fiber.Ctx) error {
 	})
 }
 
+// GET /sim/recent — lista as últimas 30 mensagens do banco SEM filtro
+// Útil para diagnosticar mensagens com from_jid/to_jid inesperado
+func (h *handlers) simRecent(c *fiber.Ctx) error {
+	msgs, err := h.repo.GetRecentMessages(c.Context(), 30)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"ok": false, "error": err.Error()})
+	}
+	type row struct {
+		WAID      string `json:"wa_id"`
+		Direction string `json:"direction"`
+		FromJID   string `json:"from_jid"`
+		ToJID     string `json:"to_jid"`
+		Author    string `json:"author"`
+		Text      string `json:"text"`
+		CreatedAt string `json:"created_at"`
+	}
+	rows := make([]row, len(msgs))
+	for i, m := range msgs {
+		rows[i] = row{
+			WAID:      m.WAMessageID,
+			Direction: string(m.Direction),
+			FromJID:   m.FromJID,
+			ToJID:     m.ToJID,
+			Author:    m.AuthorName,
+			Text:      m.Content,
+			CreatedAt: m.CreatedAt.Format("2006-01-02 15:04:05"),
+		}
+	}
+	return c.JSON(fiber.Map{"ok": true, "count": len(rows), "messages": rows})
+}
+
 // POST /sim/clear?phone=5519987717792 — remove mensagens simuladas do número (limpeza)
 func (h *handlers) simClear(c *fiber.Ctx) error {
 	phone := normalizeWAPhone(c.Query("phone"))
@@ -282,9 +313,10 @@ textarea{resize:vertical;min-height:60px}
         <input id="h-phone" value="5519987717792" placeholder="5519987717792">
       </div>
       <button class="btn btn-gray" onclick="fetchHistory()" style="margin-top:0">🔍 Buscar no banco</button>
+      <button class="btn btn-blue" onclick="fetchRecent()" style="margin-top:0">📋 Últimas 30 (sem filtro)</button>
       <button class="btn btn-red" onclick="clearHistory()" style="margin-top:0">🗑 Limpar</button>
     </div>
-    <div class="result" id="h-result" style="max-height:300px">Aguardando...</div>
+    <div class="result" id="h-result" style="max-height:400px">Aguardando...</div>
   </div>
 
   <!-- VALIDAÇÃO C: endpoint real do CRM history -->
@@ -394,6 +426,25 @@ function fetchHistory() {
       el.innerHTML = lines;
     })
     .catch(function(e){ el.innerHTML = '<span class="err">✗ Falha: ' + e + '</span>'; });
+}
+
+function fetchRecent() {
+  var el = document.getElementById('h-result');
+  el.innerHTML = 'Buscando últimas 30 mensagens do banco...';
+  fetch('/sim/recent').then(r => r.json()).then(function(d) {
+    if (!d.ok) { el.innerHTML = '<span class="err">✗ ERRO: ' + d.error + '</span>'; return; }
+    if (!d.count) { el.innerHTML = '<span class="err">Banco vazio — nenhuma mensagem.</span>'; return; }
+    var lines = '<span class="ok">✓ ' + d.count + ' mensagem(ns) (mais recentes primeiro)</span>\n\n';
+    d.messages.forEach(function(m) {
+      var tag = m.direction === 'inbound'
+        ? '<span class="tag tag-in">IN </span>'
+        : '<span class="tag tag-out">OUT</span>';
+      lines += tag + ' [' + m.created_at + '] ' + (m.author ? m.author + ': ' : '') + m.text + '\n'
+        + '         from: ' + m.from_jid + '\n'
+        + '         to:   ' + m.to_jid + '\n\n';
+    });
+    el.innerHTML = lines;
+  }).catch(function(e){ el.innerHTML = '<span class="err">✗ Falha: ' + e + '</span>'; });
 }
 
 function clearHistory() {
