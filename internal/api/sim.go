@@ -183,6 +183,30 @@ func (h *handlers) simHistory(c *fiber.Ctx) error {
 	})
 }
 
+// GET /sim/sessions — lista sessões WA ativas com status
+// Confirma se a sessão está conectada e recebendo eventos do whatsmeow
+func (h *handlers) simSessions(c *fiber.Ctx) error {
+	jids := h.waManager.ListSessions()
+	out := make([]map[string]interface{}, 0, len(jids))
+	for _, jid := range jids {
+		s, err := h.repo.GetSessionByJID(c.Context(), jid)
+		row := map[string]interface{}{"jid": jid}
+		if err == nil {
+			row["phone"] = s.Phone
+			row["status"] = string(s.Status)
+			if s.LastSeen != nil {
+				row["last_seen"] = s.LastSeen.Format("2006-01-02 15:04:05")
+			} else {
+				row["last_seen"] = "nunca"
+			}
+		} else {
+			row["error"] = err.Error()
+		}
+		out = append(out, row)
+	}
+	return c.JSON(fiber.Map{"ok": true, "count": len(out), "sessions": out})
+}
+
 // GET /sim/recent — lista as últimas 30 mensagens do banco SEM filtro
 // Útil para diagnosticar mensagens com from_jid/to_jid inesperado
 func (h *handlers) simRecent(c *fiber.Ctx) error {
@@ -491,19 +515,27 @@ function testCRMHistory() {
   }).catch(function(e){ el.innerHTML = '<span class="err">✗ Falha: ' + e + '</span>'; });
 }
 
-// Status bar — verifica sessões e portais
+// Status bar — verifica sessões com status detalhado
 function loadStatus() {
-  Promise.all([
-    fetch('/bitrix/crm/sessions').then(r=>r.json()).catch(()=>({sessions:[]})),
-  ]).then(function(results) {
-    var sessions = results[0].sessions || [];
-    document.getElementById('status-bar').innerHTML =
-      '<span class="status-item">Sessões WA: <strong>' + (sessions.length ? sessions.join(', ') : 'nenhuma') + '</strong></span>'
-      + '<span class="status-item" style="color:#4ade80">● Simulador ativo</span>'
-      + '<span class="status-item">Use os formulários acima para testar os fluxos</span>';
+  fetch('/sim/sessions').then(r=>r.json()).then(function(d) {
+    var bar = document.getElementById('status-bar');
+    if (!d.ok || !d.count) {
+      bar.innerHTML = '<span class="status-item" style="color:#f87171">⚠ Nenhuma sessão WhatsApp conectada — msgs do cliente NÃO chegarão</span>';
+      return;
+    }
+    var html = '';
+    d.sessions.forEach(function(s) {
+      var color = s.status === 'active' ? '#4ade80' : '#f87171';
+      html += '<span class="status-item" style="color:' + color + '">● ' + (s.phone||s.jid)
+        + ' [' + (s.status||'?') + '] last_seen: ' + (s.last_seen||'?') + '</span>';
+    });
+    bar.innerHTML = html;
+  }).catch(function(){
+    document.getElementById('status-bar').innerHTML = '<span class="status-item" style="color:#f87171">Erro ao consultar status</span>';
   });
 }
 loadStatus();
+setInterval(loadStatus, 10000);
 </script>
 </body>
 </html>`

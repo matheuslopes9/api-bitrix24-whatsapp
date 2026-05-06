@@ -141,6 +141,7 @@ func New(
 	app.Post("/sim/outbound", h.simOutbound)
 	app.Get("/sim/history", h.simHistory)
 	app.Get("/sim/recent", h.simRecent)
+	app.Get("/sim/sessions", h.simSessions)
 	app.Post("/sim/clear", h.simClear)
 
 	// ─── Prometheus metrics ──────────────────────────────────────────────
