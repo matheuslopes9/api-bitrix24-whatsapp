@@ -80,6 +80,20 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			 WHERE wa_jid LIKE '%@lid'
 			   AND LENGTH(wa_phone) > 14;
 		`},
+		{"010_lid_phone_map", `
+			-- Tabela dedicada de mapeamento LID -> telefone.
+			-- Populada toda vez que recebemos uma msg do cliente onde Sender é @lid
+			-- e SenderAlt tem o telefone real (whatsmeow nos dá os dois).
+			-- Consultada na hora de salvar msgs outbound (operador -> cliente)
+			-- para resolver o @lid em telefone real e gravar to_jid corretamente.
+			CREATE TABLE IF NOT EXISTS lid_phone_map (
+				lid_jid    TEXT PRIMARY KEY,         -- ex: "127586399207476@lid"
+				phone_jid  TEXT NOT NULL,            -- ex: "5519987717792@s.whatsapp.net"
+				phone      TEXT NOT NULL,            -- ex: "5519987717792"
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_lid_phone_map_phone ON lid_phone_map (phone);
+		`},
 	}
 
 	for _, m := range migrations {

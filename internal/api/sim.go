@@ -183,6 +183,15 @@ func (h *handlers) simHistory(c *fiber.Ctx) error {
 	})
 }
 
+// GET /sim/lidmap — lista mapeamentos LID -> telefone
+func (h *handlers) simLIDMap(c *fiber.Ctx) error {
+	rows, err := h.repo.RawQueryLIDMap(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"ok": false, "error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"ok": true, "count": len(rows), "entries": rows})
+}
+
 // GET /sim/sessions — lista sessões WA ativas com status
 // Confirma se a sessão está conectada e recebendo eventos do whatsmeow
 func (h *handlers) simSessions(c *fiber.Ctx) error {

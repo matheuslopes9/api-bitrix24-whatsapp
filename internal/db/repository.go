@@ -246,6 +246,65 @@ func (r *Repository) GetRecentMessages(ctx context.Context, limit int) ([]Messag
 	return msgs, rows.Err()
 }
 
+// UpsertLIDPhoneMap registra (ou atualiza) o mapeamento LID -> telefone.
+// Chamado quando recebemos uma msg do cliente onde Sender é @lid mas
+// SenderAlt tem o JID com telefone real.
+func (r *Repository) UpsertLIDPhoneMap(ctx context.Context, lidJID, phoneJID, phone string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO lid_phone_map (lid_jid, phone_jid, phone, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (lid_jid) DO UPDATE SET
+			phone_jid  = EXCLUDED.phone_jid,
+			phone      = EXCLUDED.phone,
+			updated_at = NOW()
+	`, lidJID, phoneJID, phone)
+	return err
+}
+
+// RawQueryLIDMap retorna todos os mapeamentos LID -> telefone (para diagnóstico).
+func (r *Repository) RawQueryLIDMap(ctx context.Context) ([]map[string]interface{}, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT lid_jid, phone_jid, phone, updated_at
+		  FROM lid_phone_map
+		 ORDER BY updated_at DESC
+		 LIMIT 100`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]interface{}{}
+	for rows.Next() {
+		var lid, phoneJID, phone string
+		var updated time.Time
+		if err := rows.Scan(&lid, &phoneJID, &phone, &updated); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]interface{}{
+			"lid_jid":    lid,
+			"phone_jid":  phoneJID,
+			"phone":      phone,
+			"updated_at": updated.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return out, rows.Err()
+}
+
+// GetPhoneByLID retorna o telefone real associado a um JID @lid.
+// Retorna ("", nil) se não há mapeamento (não é erro).
+func (r *Repository) GetPhoneByLID(ctx context.Context, lidJID string) (string, error) {
+	var phone string
+	err := r.pool.QueryRow(ctx,
+		`SELECT phone FROM lid_phone_map WHERE lid_jid = $1`, lidJID).Scan(&phone)
+	if err != nil {
+		// pgx retorna pgx.ErrNoRows se não achou — tratamos como vazio sem erro
+		if err.Error() == "no rows in result set" {
+			return "", nil
+		}
+		return "", err
+	}
+	return phone, nil
+}
+
 // DeleteMessagesByJIDPattern remove mensagens cujo from_jid ou to_jid bate com o pattern LIKE.
 // Usado pelo simulador para limpar mensagens de teste.
 func (r *Repository) DeleteMessagesByJIDPattern(ctx context.Context, pattern string) (int64, error) {

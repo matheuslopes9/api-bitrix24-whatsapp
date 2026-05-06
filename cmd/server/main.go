@@ -167,16 +167,23 @@ func main() {
 
 		// Salva mensagem outbound no banco com JIDs sem device suffix.
 		// from_jid = sessão WA (sem :NN do device — que muda a cada reconexão)
-		// to_jid   = destinatário. Quando o ToJID for @lid (LinkedID), tenta resolver
-		//            o telefone real via contact_mapping para que o CRM tab consiga
-		//            encontrar a mensagem ao buscar pelo número.
+		// to_jid   = destinatário. Quando ToJID for @lid (LinkedID), resolve para
+		//            o telefone real via lid_phone_map (populado em msgs inbound)
+		//            para que o CRM tab encontre a msg ao buscar pelo número.
 		msgType := db.MsgTypeText
 		if len(fileData) > 0 {
 			msgType = db.MsgTypeDocument
 		}
 		toJIDForDB := stripDeviceSuffix(job.ToJID)
 		if strings.HasSuffix(toJIDForDB, "@lid") {
-			if contact, lookupErr := repo.GetContactByWAJID(c, toJIDForDB); lookupErr == nil && contact.WAPhone != "" {
+			if phone, lookupErr := repo.GetPhoneByLID(c, toJIDForDB); lookupErr == nil && phone != "" {
+				toJIDForDB = phone + "@s.whatsapp.net"
+				log.Info("outbound: resolved @lid via lid_phone_map",
+					zap.String("lid", stripDeviceSuffix(job.ToJID)),
+					zap.String("phone", phone),
+				)
+			} else if contact, lookupErr := repo.GetContactByWAJID(c, toJIDForDB); lookupErr == nil && contact.WAPhone != "" {
+				// Fallback: contact_mapping (caso lid_phone_map ainda esteja vazio)
 				toJIDForDB = contact.WAPhone + "@s.whatsapp.net"
 			}
 		}
@@ -403,6 +410,17 @@ func buildMessageHandler(
 		fromJID := evt.Info.Sender.String()
 		if !evt.Info.SenderAlt.IsEmpty() && evt.Info.Sender.Server == "lid" {
 			fromJID = evt.Info.SenderAlt.String()
+			// Registra o mapeamento LID -> telefone para resolver outbound depois.
+			lidJID := stripDeviceSuffix(evt.Info.Sender.String())
+			phoneJID := stripDeviceSuffix(evt.Info.SenderAlt.String())
+			if err := repo.UpsertLIDPhoneMap(ctx, lidJID, phoneJID, evt.Info.SenderAlt.User); err != nil {
+				log.Warn("upsert lid_phone_map failed", zap.String("lid", lidJID), zap.Error(err))
+			} else {
+				log.Info("lid_phone_map registered",
+					zap.String("lid", lidJID),
+					zap.String("phone_jid", phoneJID),
+				)
+			}
 		}
 		fromJID = stripDeviceSuffix(fromJID)
 		msg := &db.Message{
