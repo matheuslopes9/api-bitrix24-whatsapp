@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,33 +107,43 @@ func main() {
 		typingDur := waManager.TypingDelay(job.Text)
 		waManager.SendTyping(c, job.SessionJID, job.ToJID, typingDur)
 
+		// Resolve dados do arquivo — pode vir de FileURL (Bitrix) ou MediaURL (upload direto base64)
+		var fileData []byte
+		fileMime := job.FileMime
+		fileName := job.FileName
+
 		if job.FileURL != "" {
 			// Baixa o arquivo do Bitrix
-			fileData, dlErr := downloadURL(job.FileURL)
+			var dlErr error
+			fileData, dlErr = downloadURL(job.FileURL)
 			if dlErr != nil {
 				metrics.MessagesFailed.Inc()
 				return fmt.Errorf("download file from bitrix: %w", dlErr)
 			}
-			mime := job.FileMime
-			if mime == "" {
-				mime = "application/octet-stream"
+		} else if strings.HasPrefix(job.MediaURL, "data:") {
+			// Data URI base64 (upload via aba CRM)
+			fileData, fileMime = decodeDataURI(job.MediaURL)
+			if fileName == "" {
+				fileName = job.FileName
 			}
-			name := job.FileName
-			if name == "" {
-				name = "file"
+		}
+
+		if len(fileData) > 0 {
+			if fileMime == "" {
+				fileMime = "application/octet-stream"
 			}
-			// Roteamento por mime:
-			// audio/mpeg (mp3) → áudio nativo WA
-			// demais (wav, ogg, webm, etc) → documento
-			log.Info("outbound file", zap.String("name", name), zap.String("mime", mime))
-			if mime == "audio/mpeg" {
-				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, mime, false)
+			if fileName == "" {
+				fileName = "file"
+			}
+			log.Info("outbound file", zap.String("name", fileName), zap.String("mime", fileMime))
+			if fileMime == "audio/mpeg" {
+				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, fileMime, false)
 				if err != nil {
 					log.Warn("SendAudio (mp3) failed, falling back to SendDocument", zap.Error(err))
-					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
 				}
 			} else {
-				waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, mime, name)
+				waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
 			}
 		} else {
 			waID, err = waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
@@ -389,6 +401,28 @@ func buildMessageHandler(
 
 		log.Info("message queued", zap.String("from", job.FromPhone), zap.String("type", string(msgType)))
 	}
+}
+
+// decodeDataURI extrai os bytes e o MIME de um data URI base64.
+// Formato: "data:<mime>;base64,<data>"
+func decodeDataURI(uri string) ([]byte, string) {
+	// data:<mime>;base64,<payload>
+	after, ok := strings.CutPrefix(uri, "data:")
+	if !ok {
+		return nil, ""
+	}
+	parts := strings.SplitN(after, ",", 2)
+	if len(parts) != 2 {
+		return nil, ""
+	}
+	meta := parts[0] // "<mime>;base64"
+	payload := parts[1]
+	mime := strings.TrimSuffix(meta, ";base64")
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, ""
+	}
+	return data, mime
 }
 
 // downloadURL faz GET em uma URL e retorna o corpo como bytes.
