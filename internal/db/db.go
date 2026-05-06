@@ -56,6 +56,20 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 		{"007_messages_author", `
 			ALTER TABLE messages ADD COLUMN IF NOT EXISTS author_name TEXT NOT NULL DEFAULT '';
 		`},
+		{"008_strip_device_suffix", `
+			-- Normaliza JIDs existentes: remove ":NN" entre o número e o "@"
+			-- "5519987717792:48@s.whatsapp.net" -> "5519987717792@s.whatsapp.net"
+			-- "127586399207476:48@lid"          -> "127586399207476@lid"
+			UPDATE messages
+			   SET from_jid = REGEXP_REPLACE(from_jid, ':[0-9]+@', '@')
+			 WHERE from_jid ~ ':[0-9]+@';
+			UPDATE messages
+			   SET to_jid = REGEXP_REPLACE(to_jid, ':[0-9]+@', '@')
+			 WHERE to_jid ~ ':[0-9]+@';
+			UPDATE contact_mapping
+			   SET wa_jid = REGEXP_REPLACE(wa_jid, ':[0-9]+@', '@')
+			 WHERE wa_jid ~ ':[0-9]+@';
+		`},
 	}
 
 	for _, m := range migrations {

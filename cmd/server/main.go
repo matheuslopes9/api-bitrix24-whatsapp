@@ -165,7 +165,9 @@ func main() {
 			return err
 		}
 
-		// Salva mensagem outbound no banco
+		// Salva mensagem outbound no banco com JIDs sem device suffix.
+		// from_jid = sessão WA (sem :NN do device — que muda a cada reconexão)
+		// to_jid   = destinatário (sem :NN se vier com device suffix)
 		msgType := db.MsgTypeText
 		if len(fileData) > 0 {
 			msgType = db.MsgTypeDocument
@@ -174,9 +176,9 @@ func main() {
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
-			FromJID:     job.SessionJID,    // sessão WA que enviou
-			ToJID:       job.ToJID,         // destinatário
-			AuthorName:  job.OperatorName,  // nome do operador
+			FromJID:     stripDeviceSuffix(job.SessionJID),
+			ToJID:       stripDeviceSuffix(job.ToJID),
+			AuthorName:  job.OperatorName,
 			Direction:   db.DirOutbound,
 			MessageType: msgType,
 			Content:     job.Text,
@@ -399,9 +401,9 @@ func buildMessageHandler(
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
 			SessionID:   &sessionID,
-			FromJID:     fromJID,           // ex: 5519987717792@s.whatsapp.net
-			ToJID:       sessionJID,        // ex: 5519910001772@s.whatsapp.net
-			AuthorName:  evt.Info.PushName, // nome do contato no WhatsApp
+			FromJID:     fromJID,                          // ex: 5519987717792@s.whatsapp.net
+			ToJID:       stripDeviceSuffix(sessionJID),    // ex: 5519910001772@s.whatsapp.net
+			AuthorName:  evt.Info.PushName,
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,
