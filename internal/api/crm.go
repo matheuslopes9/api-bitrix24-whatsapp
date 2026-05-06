@@ -276,13 +276,31 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	// Se o frontend passou o telefone, busca direto no banco
 	if phone != "" {
 		phoneNorm := normalizeWAPhone(phone)
-		localMsgs, err := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
-		if err == nil && len(localMsgs) > 0 {
+		localMsgs, dbErr := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
+		h.log.Info("crm history: local db query",
+			zap.String("phone_raw", phone),
+			zap.String("phone_norm", phoneNorm),
+			zap.Int("count", len(localMsgs)),
+			zap.Error(dbErr),
+		)
+		if dbErr == nil && len(localMsgs) > 0 {
 			h.log.Info("crm history: found in local db", zap.Int("count", len(localMsgs)), zap.String("phone", phoneNorm))
 			return c.JSON(fiber.Map{
-				"messages": localMsgsToCRM(localMsgs),
-				"count":    len(localMsgs),
-				"source":   "local",
+				"messages":   localMsgsToCRM(localMsgs),
+				"count":      len(localMsgs),
+				"source":     "local",
+				"phone_norm": phoneNorm,
+			})
+		}
+		if dbErr != nil {
+			h.log.Error("crm history: local db error", zap.String("phone", phoneNorm), zap.Error(dbErr))
+			// Retorna o erro para diagnóstico em vez de silenciar
+			return c.JSON(fiber.Map{
+				"messages":   []interface{}{},
+				"count":      0,
+				"source":     "db_error",
+				"phone_norm": phoneNorm,
+				"error":      dbErr.Error(),
 			})
 		}
 	}
@@ -305,13 +323,16 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	h.log.Info("crm history: bitrix chat_id", zap.String("chat_id", chatID), zap.String("entity", entityID))
 
 	if chatID == "" {
+		h.log.Warn("crm history: no chat_id found in bitrix", zap.String("entity_id", entityID))
 		return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "source": "none"})
 	}
 
 	msgsRaw, err := h.bitrixClient.GetSessionHistory(c.Context(), creds, chatID, limit)
 	if err != nil {
+		h.log.Warn("crm history: GetSessionHistory failed, trying GetChatMessages", zap.String("chat_id", chatID), zap.Error(err))
 		msgsRaw, err = h.bitrixClient.GetChatMessages(c.Context(), creds, chatID, limit)
 		if err != nil {
+			h.log.Error("crm history: both history methods failed", zap.String("chat_id", chatID), zap.Error(err))
 			return c.JSON(fiber.Map{"messages": []interface{}{}, "count": 0, "source": "error"})
 		}
 	}
