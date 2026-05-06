@@ -48,6 +48,11 @@ func New(
 	app.Get("/favicon.ico", h.serveFavicon)
 	app.Get("/favicon.png", h.serveFavicon)
 
+	// ─── Raiz → Dashboard ───────────────────────────────────────────────
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.Redirect("/dashboard", fiber.StatusFound)
+	})
+
 	// ─── Health ──────────────────────────────────────────────────────────
 	app.Get("/health", h.health)
 
