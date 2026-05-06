@@ -112,6 +112,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if err != nil || portal == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
 	}
+	creds := h.portalToCreds(portal)
 
 	phone := normalizeWAPhone(body.Phone)
 	toJID := phone + "@s.whatsapp.net"
@@ -133,9 +134,38 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		operatorName = "UC Talk"
 	}
 
-	// Enfileira mensagem outbound para envio no WhatsApp.
-	// O worker em main.go salva no banco após enviar — o CRM tab lê do banco.
-	// Não mexemos no Open Lines aqui: o sistema já processa inbound/outbound por lá.
+	// 1. Busca o chat_id do Open Lines vinculado a este contato/lead/deal.
+	//    Necessário para registrar a mensagem no Open Lines (aparece para o operador lá também).
+	chatID := ""
+	if body.EntityID != "" {
+		bxEntityType := strings.ToUpper(body.EntityType)
+		chatID, _ = h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, body.EntityID)
+		if chatID == "" {
+			if chatsRaw, e := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, body.EntityID); e == nil {
+				chatID = extractChatID(chatsRaw)
+			}
+		}
+	}
+	// Fallback: abre/retoma sessão pelo USER_CODE se não encontrou chat pelo entity
+	if chatID == "" {
+		userCode := fmt.Sprintf("%s|%d|%s|%s", connectorID, lineID, phone, phone)
+		chatID, _ = h.bitrixClient.OpenChatSessionByCode(c.Context(), creds, userCode)
+	}
+
+	// 2. Registra a mensagem no Open Lines do Bitrix (aparece para o operador no chat).
+	if chatID != "" {
+		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
+			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
+		} else {
+			h.log.Info("crm send: registered in Open Lines", zap.String("chat_id", chatID))
+		}
+	} else {
+		h.log.Warn("crm send: no chat_id found, message will NOT appear in Open Lines",
+			zap.String("entity_id", body.EntityID), zap.String("phone", phone))
+	}
+
+	// 3. Enfileira envio no WhatsApp — worker salva no banco após enviar.
+	//    O CRM tab lê do banco no próximo poll (5s).
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
 		ToJID:           toJID,
@@ -148,12 +178,13 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	h.log.Info("crm send: queued",
+	h.log.Info("crm send: done",
 		zap.String("to_jid", toJID),
+		zap.String("chat_id", chatID),
 		zap.String("operator", operatorName),
 	)
 
-	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID})
+	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
