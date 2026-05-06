@@ -167,17 +167,25 @@ func main() {
 
 		// Salva mensagem outbound no banco com JIDs sem device suffix.
 		// from_jid = sessão WA (sem :NN do device — que muda a cada reconexão)
-		// to_jid   = destinatário (sem :NN se vier com device suffix)
+		// to_jid   = destinatário. Quando o ToJID for @lid (LinkedID), tenta resolver
+		//            o telefone real via contact_mapping para que o CRM tab consiga
+		//            encontrar a mensagem ao buscar pelo número.
 		msgType := db.MsgTypeText
 		if len(fileData) > 0 {
 			msgType = db.MsgTypeDocument
+		}
+		toJIDForDB := stripDeviceSuffix(job.ToJID)
+		if strings.HasSuffix(toJIDForDB, "@lid") {
+			if contact, lookupErr := repo.GetContactByWAJID(c, toJIDForDB); lookupErr == nil && contact.WAPhone != "" {
+				toJIDForDB = contact.WAPhone + "@s.whatsapp.net"
+			}
 		}
 		now := time.Now()
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
 			FromJID:     stripDeviceSuffix(job.SessionJID),
-			ToJID:       stripDeviceSuffix(job.ToJID),
+			ToJID:       toJIDForDB,
 			AuthorName:  job.OperatorName,
 			Direction:   db.DirOutbound,
 			MessageType: msgType,
