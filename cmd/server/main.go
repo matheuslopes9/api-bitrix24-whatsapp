@@ -386,16 +386,15 @@ func buildMessageHandler(
 
 		// Salva mensagem no banco com status "received"
 		ts := evt.Info.Timestamp
-		// Normaliza o JID removendo o device suffix (":71") para garantir
-		// que o LIKE "5519987717792@%" bata corretamente na busca do histórico.
-		fromJID := normalizeJID(evt.Info.Sender.String())
+		// from_jid = quem enviou (o cliente WhatsApp)
+		// to_jid   = a sessão que recebeu (nosso número)
 		msg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
 			SessionID:   &sessionID,
-			FromJID:     fromJID,   // ex: 5519987717792@s.whatsapp.net (sem :71)
-			ToJID:       sessionJID, // ex: 5519910001772@s.whatsapp.net
-			AuthorName:  evt.Info.PushName, // nome do contato no WhatsApp
+			FromJID:     evt.Info.Sender.String(), // ex: 5519987717792@s.whatsapp.net
+			ToJID:       sessionJID,               // ex: 5519910001772@s.whatsapp.net
+			AuthorName:  evt.Info.PushName,        // nome do contato no WhatsApp
 			Direction:   db.DirInbound,
 			MessageType: msgType,
 			Content:     text,
@@ -429,17 +428,6 @@ func buildMessageHandler(
 
 		log.Info("message queued", zap.String("from", job.FromPhone), zap.String("type", string(msgType)))
 	}
-}
-
-// normalizeJID remove o device suffix do JID para consistência na busca.
-// "5519987717792:71@s.whatsapp.net" → "5519987717792@s.whatsapp.net"
-func normalizeJID(jid string) string {
-	if idx := strings.Index(jid, ":"); idx != -1 {
-		if at := strings.Index(jid, "@"); at != -1 && idx < at {
-			return jid[:idx] + jid[at:]
-		}
-	}
-	return jid
 }
 
 // decodeDataURI extrai os bytes e o MIME de um data URI base64.

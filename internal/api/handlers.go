@@ -871,7 +871,6 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	imMsgID := c.FormValue("data[MESSAGES][0][im][message_id]")
 	text := c.FormValue("data[MESSAGES][0][message][text]")
 	userID := c.FormValue("data[MESSAGES][0][message][user_id]")
-	userName := c.FormValue("data[MESSAGES][0][message][user_name]")
 	fileDownloadLink := c.FormValue("data[MESSAGES][0][message][files][0][downloadLink]")
 	fileName := c.FormValue("data[MESSAGES][0][message][files][0][name]")
 	fileMime := c.FormValue("data[MESSAGES][0][message][files][0][mime]")
@@ -890,10 +889,9 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 					MessageID interface{} `json:"message_id"`
 				} `json:"im"`
 				Message struct {
-					Text     string      `json:"text"`
-					UserID   interface{} `json:"user_id"`
-					UserName string      `json:"user_name"`
-					Files    []struct {
+					Text   string      `json:"text"`
+					UserID interface{} `json:"user_id"`
+					Files  []struct {
 						DownloadLink string `json:"downloadLink"`
 						Name         string `json:"name"`
 						Mime         string `json:"mime"`
@@ -911,9 +909,6 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 				imMsgID = fmt.Sprintf("%v", msg.Im.MessageID)
 				text = msg.Message.Text
 				userID = fmt.Sprintf("%v", msg.Message.UserID)
-				if msg.Message.UserName != "" {
-					userName = msg.Message.UserName
-				}
 				if len(msg.Message.Files) > 0 {
 					fileDownloadLink = msg.Message.Files[0].DownloadLink
 					fileName = msg.Message.Files[0].Name
@@ -987,7 +982,6 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 				FileURL:         fileDownloadLink,
 				FileName:        fileName,
 				FileMime:        fileMime,
-				OperatorName:    userName,
 			}); err != nil {
 				h.log.Error("connector event: push outbound failed (fallback)", zap.Error(err))
 				return c.SendStatus(fiber.StatusOK)
@@ -1047,7 +1041,6 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		FileURL:         fileDownloadLink,
 		FileName:        fileName,
 		FileMime:        fileMime,
-		OperatorName:    userName,
 	}); err != nil {
 		h.log.Error("connector event: push outbound failed", zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)
