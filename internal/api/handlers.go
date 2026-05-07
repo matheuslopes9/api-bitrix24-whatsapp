@@ -949,21 +949,30 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Deduplicação por im_msg_id: o Bitrix pode disparar ONIMCONNECTORMESSAGEADD
-	// 2x para a mesma mensagem (especialmente quando vem de im.message.add via CRM tab).
-	// Se já processamos esse ID nos últimos 5 min, ignora.
+	cleanText := stripBBCode(text)
+	ctx := context.Background()
+
+	// Deduplicação dupla:
+	// 1) Por im_msg_id (caso o evento dispare 2x com mesmo ID)
+	// 2) Por chat+texto+30s (caso o Bitrix dispare 2 eventos com IDs diferentes
+	//    para a mesma msg — ex: msg do CRM tab via im.message.add gera 1 evento
+	//    do connector + 1 do roteamento Open Lines).
 	if imMsgID != "" {
-		first, err := h.q.MarkProcessed(c.Context(), "connevt:"+imMsgID, 5*time.Minute)
-		if err != nil {
-			h.log.Warn("connector event: dedup check failed, processing anyway", zap.Error(err))
-		} else if !first {
-			h.log.Info("connector event: ignored (duplicate)", zap.String("im_msg_id", imMsgID))
+		first, err := h.q.MarkProcessed(c.Context(), "connevt:id:"+imMsgID, 5*time.Minute)
+		if err == nil && !first {
+			h.log.Info("connector event: ignored (duplicate by im_msg_id)", zap.String("im_msg_id", imMsgID))
 			return c.SendStatus(fiber.StatusOK)
 		}
 	}
-
-	cleanText := stripBBCode(text)
-	ctx := context.Background()
+	dedupKey := "connevt:txt:" + chatID + ":" + cleanText
+	first, err := h.q.MarkProcessed(c.Context(), dedupKey, 30*time.Second)
+	if err != nil {
+		h.log.Warn("connector event: dedup check failed, processing anyway", zap.Error(err))
+	} else if !first {
+		h.log.Info("connector event: ignored (duplicate by chat+text within 30s)",
+			zap.String("chat_id", chatID), zap.String("text", cleanText))
+		return c.SendStatus(fiber.StatusOK)
+	}
 
 	// toJID: usa o chatID normalizado diretamente.
 	// Se for @lid, o whatsmeow resolve internamente — não converter para @s.whatsapp.net
