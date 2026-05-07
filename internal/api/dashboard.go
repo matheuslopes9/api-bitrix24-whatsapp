@@ -177,6 +177,9 @@ select.inp:focus{border-color:rgba(37,211,102,.55);box-shadow:0 0 0 3px rgba(37,
 .tab.active{background:rgba(37,211,102,.15);color:#25D366;}
 .tab:hover:not(.active){color:#cbd5e1;}
 
+/* ── Animations ── */
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
 /* ── Section header ── */
 .section-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
 .section-title{font-size:22px;font-weight:700;color:#f1f5f9;}
@@ -536,6 +539,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div class="section-sub">Conecte e gerencie quantos números forem necessários (QR ou API Oficial)</div>
       </div>
       <div id="sessoes-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" id="btn-refresh-status" onclick="atualizarStatusSessoes()" title="Verifica saúde de cada sessão (QR e Oficial)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="btn-refresh-icon"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+          Atualizar status
+        </button>
         <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalNovaSessao('qr')" title="Conectar via QR code (whatsmeow)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           QR Code
@@ -1346,6 +1353,44 @@ function abrirModalQR() {
 function abrirModalNovaSessao(modo) {
   document.getElementById('qr-modal').classList.add('open');
   trocarTipoSessao(modo === 'cloud' ? 'cloud' : 'qr');
+}
+
+// Atualiza o status de saúde de TODAS as sessões (QR + Cloud).
+// Faz um Ping em cada uma e mostra resultado consolidado.
+function atualizarStatusSessoes() {
+  var btn = document.getElementById('btn-refresh-status');
+  var icon = document.getElementById('btn-refresh-icon');
+  if (btn) btn.disabled = true;
+  if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+
+  fetch('/ui/sessions/refresh-status', {method:'POST'})
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (btn) btn.disabled = false;
+    if (icon) icon.style.animation = '';
+    if (!d.ok) { toast('Erro ao verificar status', 'error'); return; }
+
+    var problemas = [];
+    (d.sessions||[]).forEach(function(s) {
+      if (!s.healthy) problemas.push((s.label || s.jid) + ': ' + (s.error || s.status));
+    });
+
+    if (d.healthy === d.total && d.total > 0) {
+      toast('Todas as ' + d.total + ' sessões estão OK', 'success');
+    } else if (d.total === 0) {
+      toast('Nenhuma sessão cadastrada', 'error');
+    } else {
+      toast(d.healthy + '/' + d.total + ' sessões OK. ' + problemas.length + ' com problema.', 'error');
+      console.warn('Sessões com problema:', problemas);
+    }
+    // Recarrega a lista visual com os novos status
+    carregarSessoes();
+  })
+  .catch(function(e){
+    if (btn) btn.disabled = false;
+    if (icon) icon.style.animation = '';
+    toast('Falha: ' + e, 'error');
+  });
 }
 
 function fecharModalQR() {

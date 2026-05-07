@@ -112,7 +112,7 @@ func main() {
 		// Detecta pelo prefixo "cloud:" do SessionJID e envia via Graph API.
 		// O resto do worker (whatsmeow) continua exatamente como estava.
 		if whatsapp.IsCloudJID(job.SessionJID) {
-			return handleCloudOutbound(c, cloudMgr, repo, log, metrics, job)
+			return handleCloudOutbound(c, cloudMgr, bitrixClient, repo, log, metrics, job)
 		}
 
 		var waID string

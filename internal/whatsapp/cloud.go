@@ -224,6 +224,32 @@ func (p CloudSessionParams) DisplayName() string {
 	return "Cloud " + p.PhoneNumberID
 }
 
+// PingSession verifica se a sessão Cloud está saudável fazendo uma chamada
+// leve no Graph API (GET /{phone_number_id}). Retorna ok + mensagem de erro
+// quando falha.
+func (cm *CloudManager) PingSession(ctx context.Context, sessionJID string) (bool, string) {
+	s, ok := cm.Get(sessionJID)
+	if !ok {
+		return false, "sessão Cloud não está em memória"
+	}
+	url := fmt.Sprintf("%s/%s/%s", s.BaseURL, s.APIVersion, s.PhoneNumberID)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+s.AccessToken)
+	resp, err := cm.http.Do(req)
+	if err != nil {
+		return false, "falha na requisição: " + err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return false, fmt.Sprintf("status %d: %s", resp.StatusCode, string(body))
+	}
+	s.mu.Lock()
+	s.LastOK = time.Now()
+	s.mu.Unlock()
+	return true, ""
+}
+
 // testCredentials valida o token chamando GET /{phone_number_id}.
 // Resposta esperada: {"verified_name": "...", "display_phone_number": "...", ...}
 func (cm *CloudManager) testCredentials(ctx context.Context, p CloudSessionParams) error {

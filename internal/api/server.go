@@ -66,6 +66,7 @@ func New(
 	ui.Get("/sessions", h.uiListSessions)
 	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid=
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
+	ui.Post("/sessions/refresh-status", h.uiRefreshSessionsStatus)
 	ui.Get("/overview", h.uiOverview)
 	// ─── Sessões Cloud API (Meta Oficial) ────────────────────────────────
 	ui.Post("/sessions/cloud", h.uiCreateCloudSession)

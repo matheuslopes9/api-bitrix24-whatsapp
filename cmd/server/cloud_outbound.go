@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
@@ -22,6 +23,7 @@ import (
 func handleCloudOutbound(
 	c context.Context,
 	cloudMgr *whatsapp.CloudManager,
+	bitrixClient *bitrix.Client,
 	repo *db.Repository,
 	log *zap.Logger,
 	metrics *telemetry.Metrics,
@@ -101,6 +103,48 @@ func handleCloudOutbound(
 	if err := repo.InsertMessage(c, outMsg); err != nil {
 		log.Warn("cloud outbound: insert message failed",
 			zap.String("wa_id", waID), zap.Error(err))
+	}
+
+	// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
+	// (mesma lógica do worker whatsmeow). O Bitrix precisa receber o
+	// imconnector.send.status.delivery para marcar a msg como "Enviada ✓".
+	if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
+		log.Info("cloud outbound delivery: confirming",
+			zap.String("connector", job.BitrixConnector),
+			zap.String("im_msg_id", job.BitrixImMsgID),
+			zap.String("wa_id", waID),
+		)
+		go func() {
+			bgCtx := context.Background()
+			acct, err := repo.GetBitrixAccountByJID(bgCtx, job.SessionJID)
+			if err != nil {
+				log.Warn("cloud outbound delivery: bitrix account not found",
+					zap.String("session", job.SessionJID), zap.Error(err))
+				return
+			}
+			creds := bitrix.TenantCreds{
+				Domain:       acct.Domain,
+				ClientID:     acct.ClientID,
+				ClientSecret: acct.ClientSecret,
+				RedirectURI:  acct.RedirectURI,
+			}
+			if err := bitrixClient.ConnectorSetOutboundDelivery(
+				bgCtx, creds,
+				job.BitrixConnector,
+				job.BitrixLine,
+				job.BitrixImChatID,
+				job.BitrixImMsgID,
+				waID,
+				job.BitrixChatExtID,
+			); err != nil {
+				log.Warn("cloud outbound delivery confirmation failed", zap.Error(err))
+			}
+		}()
+	} else {
+		log.Warn("cloud outbound delivery: skipped (missing connector or msg_id)",
+			zap.String("connector", job.BitrixConnector),
+			zap.String("im_msg_id", job.BitrixImMsgID),
+		)
 	}
 
 	log.Info("cloud outbound sent",

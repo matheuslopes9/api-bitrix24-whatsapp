@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -161,6 +162,96 @@ func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
 
 func isCloudJID(jid string) bool {
 	return len(jid) > 6 && jid[:6] == "cloud:"
+}
+
+// POST /ui/sessions/refresh-status
+// Verifica a saúde de cada sessão (QR + Cloud) e atualiza status no banco.
+// Retorna lista detalhada com {jid, type, healthy, status, last_seen, error}.
+func (h *handlers) uiRefreshSessionsStatus(c *fiber.Ctx) error {
+	type sessionHealth struct {
+		JID      string `json:"jid"`
+		Type     string `json:"type"`
+		Phone    string `json:"phone"`
+		Label    string `json:"label"`
+		Healthy  bool   `json:"healthy"`
+		Status   string `json:"status"`
+		LastSeen string `json:"last_seen,omitempty"`
+		ErrorMsg string `json:"error,omitempty"`
+	}
+	out := []sessionHealth{}
+
+	// QR (whatsmeow): usa Ping para testar a conexão WebSocket.
+	for _, jid := range h.waManager.ListSessions() {
+		hp := sessionHealth{JID: jid, Type: "qr"}
+		// Extrai telefone do JID
+		ph := jid
+		if at := indexAt(ph); at != -1 {
+			ph = ph[:at]
+		}
+		if cl := indexColon(ph); cl != -1 {
+			ph = ph[:cl]
+		}
+		hp.Phone = ph
+		hp.Label = "+" + ph
+
+		hp.Healthy = h.waManager.Ping(jid)
+		if hp.Healthy {
+			hp.Status = "active"
+			_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionActive)
+		} else {
+			hp.Status = "disconnected"
+			hp.ErrorMsg = "WebSocket não respondeu ao ping"
+			_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionDisconnected)
+		}
+		// last_seen do banco
+		if s, err := h.repo.GetSessionByJID(c.Context(), jid); err == nil && s != nil && s.LastSeen != nil {
+			hp.LastSeen = s.LastSeen.Format("2006-01-02 15:04:05")
+		}
+		out = append(out, hp)
+	}
+
+	// Cloud API: valida o token chamando GET /{phone_number_id} no Graph.
+	if h.cloudMgr != nil {
+		for _, jid := range h.cloudMgr.ListJIDs() {
+			hp := sessionHealth{JID: jid, Type: "cloud_api"}
+			cs, _ := h.cloudMgr.Get(jid)
+			if cs != nil {
+				hp.Phone = cs.DisplayPhone
+				if hp.Phone != "" {
+					hp.Label = "+" + hp.Phone + " (Oficial)"
+				} else {
+					hp.Label = "Cloud " + cs.PhoneNumberID
+				}
+			}
+			ok, errMsg := h.cloudMgr.PingSession(c.Context(), jid)
+			hp.Healthy = ok
+			if ok {
+				hp.Status = "active"
+				_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionActive)
+			} else {
+				hp.Status = "disconnected"
+				hp.ErrorMsg = errMsg
+				_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionDisconnected)
+			}
+			if s, err := h.repo.GetSessionByJID(c.Context(), jid); err == nil && s != nil && s.LastSeen != nil {
+				hp.LastSeen = s.LastSeen.Format("2006-01-02 15:04:05")
+			}
+			out = append(out, hp)
+		}
+	}
+
+	healthy := 0
+	for _, h := range out {
+		if h.Healthy {
+			healthy++
+		}
+	}
+	return c.JSON(fiber.Map{
+		"ok":       true,
+		"total":    len(out),
+		"healthy":  healthy,
+		"sessions": out,
+	})
 }
 
 const connectHTML = `<!DOCTYPE html>
