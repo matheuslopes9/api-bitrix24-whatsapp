@@ -133,7 +133,20 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			   AND ws.cloud_phone_number_id <> ''
 			   AND ba.connector_id NOT LIKE 'wa_cloud_%';
 		`},
-		{"013_qr_connector_per_session", `
+		{"013_reactivate_cloud_sessions", `
+			-- Reativa sessões Cloud API que ficaram 'disconnected' por engano:
+			-- o watchdog antigo tentava reconectar como whatsmeow ("session file not
+			-- found") e marcava as sessões Cloud como desconectadas a cada ciclo.
+			-- Como sessões Cloud são stateless via HTTPS (token + phone_number_id
+			-- bastam), basta reativar no banco para que voltem a operar.
+			UPDATE whatsapp_sessions
+			   SET status = 'active', last_seen = NOW()
+			 WHERE type = 'cloud_api'
+			   AND status = 'disconnected'
+			   AND cloud_phone_number_id <> ''
+			   AND cloud_access_token <> '';
+		`},
+		{"014_qr_connector_per_session", `
 			-- Mesma ideia para sessões QR: cada uma ganha "wa_qr_<telefone>".
 			-- O telefone é extraído do session_jid removendo ":NN" (device suffix)
 			-- e "@s.whatsapp.net". Isso permite que múltiplos números QR

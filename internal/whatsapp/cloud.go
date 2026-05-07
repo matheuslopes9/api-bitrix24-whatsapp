@@ -79,9 +79,17 @@ func CloudJIDFromPhoneID(phoneID string) string {
 	return cloudJIDPrefix + phoneID + "@s.whatsapp.net"
 }
 
-// LoadAll carrega todas as sessões Cloud API ativas do banco para memória.
+// LoadAll carrega TODAS as sessões Cloud API do banco para a memória.
+// Diferente do whatsmeow (que pode estar legitimamente desconectado),
+// sessões Cloud API são stateless via HTTPS — enquanto o token estiver
+// salvo no banco, a sessão está utilizável. Carregamos sessões com
+// qualquer status exceto 'banned' e marcamos como 'active' ao subir.
+//
+// Isso resolve perda de conexão Cloud entre deploys: mesmo que o
+// watchdog antigo tenha marcado como 'disconnected' por engano, ao
+// reiniciar o app a sessão volta automaticamente.
 func (cm *CloudManager) LoadAll(ctx context.Context) error {
-	sessions, err := cm.repo.ListActiveSessions(ctx)
+	sessions, err := cm.repo.ListAllSessions(ctx)
 	if err != nil {
 		return err
 	}
@@ -89,7 +97,16 @@ func (cm *CloudManager) LoadAll(ctx context.Context) error {
 		if s.Type != db.SessionTypeCloudAPI {
 			continue
 		}
-		cm.register(s)
+		// Mesmo que estiver marcada como 'disconnected' no banco, registra em memória
+		// para que o webhook da Meta encontre a sessão e o envio outbound funcione.
+		cm.register(&s)
+		// Reativa no banco para que liste corretamente nas UIs.
+		if s.Status != db.SessionActive {
+			if err := cm.repo.UpdateSessionStatus(ctx, s.JID, db.SessionActive); err != nil {
+				cm.log.Warn("cloud LoadAll: failed to reactivate session in db",
+					zap.String("jid", s.JID), zap.Error(err))
+			}
+		}
 	}
 	cm.log.Info("cloud sessions loaded", zap.Int("count", len(cm.sessions)))
 	return nil
