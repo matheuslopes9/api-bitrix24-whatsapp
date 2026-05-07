@@ -147,22 +147,32 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		}
 	}
 
-	// 2. Registra a mensagem no chat existente do Open Lines (aparece pro operador lá).
-	//    Se não há chat ainda, NÃO abre sessão paralela — apenas envia pro WhatsApp.
+	// 2. Se há chat no Open Lines, registra a msg lá. O Bitrix roteia para o
+	//    connector (ONIMCONNECTORMESSAGEADD) que enfileira o OutboundJob via
+	//    bitrixConnectorEvent — então NÃO enfileiramos direto aqui (evita duplicar).
+	//    Se não há chat ainda, enfileira direto pelo WhatsApp como fallback.
 	if chatID != "" {
 		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
-			h.log.Warn("crm send: SendOperatorMessage failed", zap.String("chat_id", chatID), zap.Error(sendErr))
-		} else {
-			h.log.Info("crm send: registered in Open Lines", zap.String("chat_id", chatID))
+			h.log.Warn("crm send: SendOperatorMessage failed, falling back to direct WA send",
+				zap.String("chat_id", chatID), zap.Error(sendErr))
+			// Fallback: se falhou no Open Lines, envia direto pelo WA para não perder a msg
+			textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
+			job := &queue.OutboundJob{
+				SessionJID: body.SessionJID, ToJID: toJID, Text: textWithPrefix,
+				BitrixConnector: connectorID, BitrixLine: lineID, OperatorName: operatorName,
+			}
+			if err := h.q.PushOutbound(c.Context(), job); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar: " + err.Error()})
+			}
+			return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
 		}
-	} else {
-		h.log.Info("crm send: no chat_id yet — sending only to WhatsApp",
-			zap.String("entity_id", body.EntityID), zap.String("phone", phone))
+		h.log.Info("crm send: registered in Open Lines (Bitrix roteia para WA via connector)",
+			zap.String("chat_id", chatID), zap.String("operator", operatorName))
+		return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID, "via": "openlines"})
 	}
 
-	// 3. Enfileira envio no WhatsApp com prefixo do operador em negrito,
-	//    igual o Open Lines faz quando o operador envia por lá.
-	//    Formato: "*Nome:*\nMensagem" (negrito do WhatsApp via asteriscos).
+	// 3. Sem chat ainda — primeira mensagem do contato. Envia direto pelo WhatsApp
+	//    com prefixo formatado igual ao Open Lines.
 	textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
@@ -176,13 +186,11 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	h.log.Info("crm send: done",
+	h.log.Info("crm send: no chat — sent direct to WhatsApp with prefix",
 		zap.String("to_jid", toJID),
-		zap.String("chat_id", chatID),
 		zap.String("operator", operatorName),
 	)
-
-	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
+	return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "via": "direct"})
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
