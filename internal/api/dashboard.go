@@ -934,17 +934,11 @@ function apiUrl(base) {
   return base + sep + 'portal=' + encodeURIComponent(PORTAL);
 }
 
-// Aplica modo portal: esconde menus de admin, mostra badge do portal
+// Aplica modo portal: apenas mostra badge do portal no sidebar.
+// Botões de "Nova Sessão" continuam visíveis para que o admin possa
+// gerenciar sessões mesmo acessando pelo iframe do Bitrix.
 (function() {
   if (!PORTAL) return;
-  // Esconde botões de criar sessão (cliente não cadastra sessões — só admin)
-  var actions = document.getElementById('sessoes-actions');
-  if (actions) actions.style.display = 'none';
-  var btnNovaSessao = document.getElementById('btn-nova-sessao');
-  if (btnNovaSessao) btnNovaSessao.style.display = 'none';
-  var btnNovaCloud = document.getElementById('btn-nova-sessao-cloud');
-  if (btnNovaCloud) btnNovaCloud.style.display = 'none';
-  // Mostra badge do portal no sidebar
   var portalBadge = document.getElementById('sidebar-portal-badge');
   if (portalBadge) {
     portalBadge.style.display = 'block';
