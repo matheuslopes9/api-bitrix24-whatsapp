@@ -781,6 +781,26 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 	return &a, nil
 }
 
+// GetBitrixAccountByConnectorID resolve a sessão WhatsApp dona de um connector_id.
+// Usado quando o evento ONIMCONNECTORMESSAGEADD chega — o Bitrix nos diz qual
+// connector disparou o evento (ex: "wa_qr_5519910001772" ou "wa_cloud_123...").
+// Esse é o ÚNICO mapeamento determinístico de connector→sessão.
+func (r *Repository) GetBitrixAccountByConnectorID(ctx context.Context, connectorID string) (*BitrixAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+		       connector_id, redirect_uri, status, created_at, updated_at
+		FROM bitrix_accounts
+		WHERE connector_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 1`, connectorID)
+	var a BitrixAccount
+	if err := row.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+		&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 func (r *Repository) ListBitrixAccounts(ctx context.Context) ([]*BitrixAccount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
