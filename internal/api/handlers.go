@@ -477,22 +477,48 @@ func (h *handlers) uiListBitrixAccounts(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	// Oculta client_secret na listagem
+	// Oculta client_secret na listagem.
+	// Inclui display_phone e session_type para o frontend renderizar
+	// corretamente sessões Cloud API (cujo JID é "cloud:<phone_id>@...").
 	type safeAccount struct {
-		ID          interface{} `json:"id"`
-		SessionJID  string      `json:"session_jid"`
-		Domain      string      `json:"domain"`
-		ClientID    string      `json:"client_id"`
-		OpenLineID  int         `json:"open_line_id"`
-		ConnectorID string      `json:"connector_id"`
-		RedirectURI string      `json:"redirect_uri"`
-		Status      string      `json:"status"`
+		ID           interface{} `json:"id"`
+		SessionJID   string      `json:"session_jid"`
+		SessionType  string      `json:"session_type"`  // "qr" | "cloud_api"
+		DisplayPhone string      `json:"display_phone"` // telefone real (E.164) para exibição
+		Domain       string      `json:"domain"`
+		ClientID     string      `json:"client_id"`
+		OpenLineID   int         `json:"open_line_id"`
+		ConnectorID  string      `json:"connector_id"`
+		RedirectURI  string      `json:"redirect_uri"`
+		Status       string      `json:"status"`
 	}
 	var safe []safeAccount
 	for _, a := range accounts {
+		sessionType := "qr"
+		displayPhone := ""
+		// Tenta resolver o tipo + telefone real consultando whatsapp_sessions
+		if sess, err := h.repo.GetSessionByJID(c.Context(), a.SessionJID); err == nil && sess != nil {
+			sessionType = string(sess.Type)
+			if sess.Type == db.SessionTypeCloudAPI && sess.CloudDisplayPhone != "" {
+				displayPhone = sess.CloudDisplayPhone
+			} else {
+				displayPhone = sess.Phone
+			}
+		}
+		// Fallback: extrai telefone do JID (QR)
+		if displayPhone == "" && !strings.HasPrefix(a.SessionJID, "cloud:") {
+			displayPhone = a.SessionJID
+			if at := strings.Index(displayPhone, "@"); at != -1 {
+				displayPhone = displayPhone[:at]
+			}
+			if colon := strings.Index(displayPhone, ":"); colon != -1 {
+				displayPhone = displayPhone[:colon]
+			}
+		}
 		safe = append(safe, safeAccount{
-			ID: a.ID, SessionJID: a.SessionJID, Domain: a.Domain,
-			ClientID: a.ClientID, OpenLineID: a.OpenLineID,
+			ID: a.ID, SessionJID: a.SessionJID,
+			SessionType: sessionType, DisplayPhone: displayPhone,
+			Domain: a.Domain, ClientID: a.ClientID, OpenLineID: a.OpenLineID,
 			ConnectorID: a.ConnectorID, RedirectURI: a.RedirectURI,
 			Status: string(a.Status),
 		})

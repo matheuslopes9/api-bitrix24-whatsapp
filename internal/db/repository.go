@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -740,13 +741,34 @@ func (r *Repository) UpsertBitrixAccount(ctx context.Context, a *BitrixAccount) 
 }
 
 func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID string) (*BitrixAccount, error) {
-	// Match pelo número de telefone (parte antes de ':'), ignorando o device suffix que muda a cada reconexão.
-	// Ex: "5519910001772:19@s.whatsapp.net" bate em "5519910001772:18@s.whatsapp.net" salvo no banco.
+	// Match estratégico:
+	//  - Cloud API ("cloud:<phone_id>@..."): match EXATO pelo session_jid completo,
+	//    pois SPLIT_PART(...,':',1) retorna "cloud" para todas as sessões Cloud
+	//    e causaria colisão entre múltiplas contas oficiais.
+	//  - QR (whatsmeow): match pelo número antes de ':' (tolera device suffix
+	//    que muda a cada reconexão, ex: ":19" vs ":18").
+	if strings.HasPrefix(sessionJID, "cloud:") {
+		row := r.pool.QueryRow(ctx, `
+			SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+			       connector_id, redirect_uri, status, created_at, updated_at
+			FROM bitrix_accounts
+			WHERE session_jid = $1
+			ORDER BY updated_at DESC
+			LIMIT 1`, sessionJID)
+		var a BitrixAccount
+		if err := row.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+			&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		return &a, nil
+	}
+
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
 		       connector_id, redirect_uri, status, created_at, updated_at
 		FROM bitrix_accounts
-		WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)
+		WHERE session_jid NOT LIKE 'cloud:%'
+		  AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)
 		ORDER BY updated_at DESC
 		LIMIT 1`, sessionJID)
 
@@ -782,16 +804,31 @@ func (r *Repository) ListBitrixAccounts(ctx context.Context) ([]*BitrixAccount, 
 }
 
 func (r *Repository) UpdateBitrixAccountStatus(ctx context.Context, sessionJID string, status BitrixAccountStatus) error {
+	if strings.HasPrefix(sessionJID, "cloud:") {
+		_, err := r.pool.Exec(ctx,
+			`UPDATE bitrix_accounts SET status = $1, updated_at = NOW()
+			 WHERE session_jid = $2`,
+			status, sessionJID)
+		return err
+	}
 	_, err := r.pool.Exec(ctx,
 		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW()
-		 WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($2, ':', 1)`,
+		 WHERE session_jid NOT LIKE 'cloud:%'
+		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($2, ':', 1)`,
 		status, sessionJID)
 	return err
 }
 
 func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string) error {
+	if strings.HasPrefix(sessionJID, "cloud:") {
+		_, err := r.pool.Exec(ctx,
+			`DELETE FROM bitrix_accounts WHERE session_jid = $1`, sessionJID)
+		return err
+	}
 	_, err := r.pool.Exec(ctx,
-		`DELETE FROM bitrix_accounts WHERE SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)`,
+		`DELETE FROM bitrix_accounts
+		 WHERE session_jid NOT LIKE 'cloud:%'
+		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)`,
 		sessionJID)
 	return err
 }

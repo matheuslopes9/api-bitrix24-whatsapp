@@ -127,6 +127,8 @@ func indexColon(s string) int {
 // DELETE /ui/sessions/:jid
 // O JID pode conter '@' e ':' — lê também via query param ?jid= como fallback seguro.
 // Despacha para o manager correto baseado no prefixo do JID.
+// Também remove o vínculo na tabela bitrix_accounts (se houver) para que a sessão
+// não fique órfã na página "Filas Bitrix".
 func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
 	jid := c.Query("jid")
 	if jid == "" {
@@ -135,6 +137,14 @@ func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
 	if jid == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "jid required"})
 	}
+
+	// Remove o vínculo Bitrix antes de desconectar a sessão.
+	// Tolera erro: se não houver vínculo, segue.
+	if delErr := h.repo.DeleteBitrixAccount(c.Context(), jid); delErr != nil {
+		h.log.Warn("uiDisconnectSession: failed to delete bitrix_account",
+			zap.String("jid", jid), zap.Error(delErr))
+	}
+
 	// Cloud API
 	if isCloudJID(jid) {
 		if h.cloudMgr != nil {

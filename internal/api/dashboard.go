@@ -2015,13 +2015,24 @@ function carregarFilas() {
       if (vinculos.length > 0) {
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">';
         vinculos.forEach(function(v) {
-          var tel = '+' + v.session_jid.split(':')[0].split('@')[0];
+          // Telefone para exibição: usa display_phone do backend; fallback ao split do JID.
+          var tel = '';
+          if (v.display_phone) {
+            tel = '+' + v.display_phone;
+          } else if (v.session_jid.indexOf('cloud:') === 0) {
+            tel = 'WhatsApp Oficial';
+          } else {
+            tel = '+' + v.session_jid.split(':')[0].split('@')[0];
+          }
           var jidEnc = encodeURIComponent(v.session_jid);
+          var tipoBadge = (v.session_type === 'cloud_api')
+            ? '<span style="font-size:9.5px;background:rgba(59,130,246,.18);color:#60a5fa;padding:2px 7px;border-radius:10px;font-weight:700;letter-spacing:.04em;margin-left:6px;">OFICIAL</span>'
+            : '<span style="font-size:9.5px;background:rgba(37,211,102,.15);color:#25D366;padding:2px 7px;border-radius:10px;font-weight:700;letter-spacing:.04em;margin-left:6px;">QR</span>';
           html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;flex-wrap:wrap;">'
             + '<div style="display:flex;align-items:center;gap:10px;">'
             + '<div class="dot dot-green"></div>'
             + '<div>'
-            + '<div style="font-size:13.5px;font-weight:600;color:#e2e8f0;">' + tel + '</div>'
+            + '<div style="font-size:13.5px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:6px;">' + tel + tipoBadge + '</div>'
             + '<div style="font-size:11px;color:#475569;">' + v.session_jid + '</div>'
             + '</div></div>'
             + '<div style="display:flex;align-items:center;gap:10px;">'
@@ -2091,20 +2102,29 @@ function abrirModalFila(prePortal) {
   selLine.disabled = true;
   if (temPortal) { buscarLinhasBitrix(); }
 
-  // Popula select de sessões
+  // Popula select de sessões — usa details (com type e phone real) quando disponível
   fetch('/ui/sessions')
   .then(function(r){return r.json();})
   .then(function(d){
     var sel = document.getElementById('fila-sessao');
     sel.innerHTML = '<option value="">Selecione o número conectado...</option>';
-    (d.sessions||[]).forEach(function(jid) {
-      var tel = '+' + jid.split(':')[0].split('@')[0];
+    var lista = (d.details && d.details.length) ? d.details : (d.sessions||[]).map(function(j){return {jid:j,type:'qr'};});
+    lista.forEach(function(s) {
+      var jid = s.jid || s;
+      var tel, sufixo;
+      if (s.type === 'cloud_api') {
+        tel = s.phone ? '+' + s.phone : 'WhatsApp Oficial';
+        sufixo = ' (Oficial)';
+      } else {
+        tel = '+' + jid.split(':')[0].split('@')[0];
+        sufixo = ' (QR)';
+      }
       var opt = document.createElement('option');
       opt.value = jid;
-      opt.textContent = tel + '  (' + jid + ')';
+      opt.textContent = tel + sufixo;
       sel.appendChild(opt);
     });
-    if ((d.sessions||[]).length === 0) {
+    if (lista.length === 0) {
       sel.innerHTML = '<option value="">Nenhum número conectado — conecte primeiro em Sessões</option>';
     }
   }).catch(function(){});
