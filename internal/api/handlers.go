@@ -699,6 +699,12 @@ func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 
 // POST /ui/bitrix/queues/link — cria ou atualiza o vínculo portal+sessão+fila
 // Body: { "domain": "empresa.bitrix24.com.br", "session_jid": "5519...@s.whatsapp.net", "open_line_id": 218 }
+//
+// Cada sessão WhatsApp ganha um connector_id PRÓPRIO no Bitrix:
+//   - Cloud API: usa o phone_number_id (ex: "wa_cloud_123456789012345")
+//   - QR Code:   usa "whatsapp_uc_v2" (default — não muda o que já funciona)
+// Sem isso, múltiplas sessões disputam o mesmo connector e mensagens vão pra
+// linha errada (ou nem chegam).
 func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	var body struct {
 		Domain     string `json:"domain"`
@@ -716,6 +722,36 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "portal não encontrado: " + domain})
 	}
 
+	// Resolve o connector_id ÚNICO desta sessão. Cada sessão WhatsApp
+	// (QR ou Cloud) ganha seu próprio connector no Bitrix — sem isso,
+	// múltiplas sessões compartilham o mesmo canal e mensagens vão pra
+	// linha errada.
+	//   - Cloud API: "wa_cloud_<phone_number_id>"
+	//   - QR Code:   "wa_qr_<telefone>"   (ex: wa_qr_5519910001772)
+	var connectorID, connectorName string
+	if strings.HasPrefix(body.SessionJID, "cloud:") {
+		sess, err := h.repo.GetSessionByJID(c.Context(), body.SessionJID)
+		if err != nil || sess == nil || sess.CloudPhoneNumberID == "" {
+			return c.Status(404).JSON(fiber.Map{"error": "sessão Cloud API não encontrada para gerar connector_id"})
+		}
+		connectorID = "wa_cloud_" + sess.CloudPhoneNumberID
+		connectorName = "UC Talk Oficial +" + sess.CloudDisplayPhone
+	} else {
+		// QR Code: extrai o número antes do ":" / "@" do JID
+		phone := body.SessionJID
+		if at := strings.Index(phone, "@"); at != -1 {
+			phone = phone[:at]
+		}
+		if colon := strings.Index(phone, ":"); colon != -1 {
+			phone = phone[:colon]
+		}
+		if phone == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "session_jid inválido para gerar connector_id"})
+		}
+		connectorID = "wa_qr_" + phone
+		connectorName = "UC Talk +" + phone
+	}
+
 	// Cria/atualiza o bitrix_account que o ProcessInbound usa para rotear
 	acct := &db.BitrixAccount{
 		ID:           generateUUID(),
@@ -724,7 +760,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 		ClientID:     h.cfg.Bitrix.ClientID,
 		ClientSecret: h.cfg.Bitrix.ClientSecret,
 		OpenLineID:   body.OpenLineID,
-		ConnectorID:  portal.ConnectorID,
+		ConnectorID:  connectorID,
 		RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
 		Status:       db.BitrixAccountActive,
 	}
@@ -748,24 +784,37 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
-			h.log.Warn("uiLinkQueue: register connector failed", zap.String("domain", domain), zap.Error(err))
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, connectorID, connectorName, appBase+"/bitrix-connect"); err != nil {
+			h.log.Warn("uiLinkQueue: register connector failed",
+				zap.String("domain", domain), zap.String("connector_id", connectorID), zap.Error(err))
 		}
-		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, body.OpenLineID, ""); err != nil {
-			h.log.Warn("uiLinkQueue: set connector data failed", zap.String("domain", domain), zap.Error(err))
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, connectorID, body.OpenLineID, ""); err != nil {
+			h.log.Warn("uiLinkQueue: set connector data failed",
+				zap.String("domain", domain), zap.String("connector_id", connectorID), zap.Error(err))
 		}
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
-			h.log.Warn("uiLinkQueue: activate connector failed", zap.String("domain", domain), zap.Int("line", body.OpenLineID), zap.Error(err))
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, connectorID, body.OpenLineID, true); err != nil {
+			h.log.Warn("uiLinkQueue: activate connector failed",
+				zap.String("domain", domain), zap.String("connector_id", connectorID),
+				zap.Int("line", body.OpenLineID), zap.Error(err))
 		}
 		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
 			h.log.Warn("uiLinkQueue: event.bind failed", zap.String("domain", domain), zap.Error(err))
 		}
 		h.log.Info("uiLinkQueue: connector activated",
-			zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
+			zap.String("domain", domain), zap.String("jid", body.SessionJID),
+			zap.String("connector_id", connectorID), zap.Int("line", body.OpenLineID))
 	}()
 
-	h.log.Info("queue link created", zap.String("domain", domain), zap.String("jid", body.SessionJID), zap.Int("line", body.OpenLineID))
-	return c.JSON(fiber.Map{"status": "linked", "domain": domain, "session_jid": body.SessionJID, "open_line_id": body.OpenLineID})
+	h.log.Info("queue link created",
+		zap.String("domain", domain), zap.String("jid", body.SessionJID),
+		zap.String("connector_id", connectorID), zap.Int("line", body.OpenLineID))
+	return c.JSON(fiber.Map{
+		"status":       "linked",
+		"domain":       domain,
+		"session_jid":  body.SessionJID,
+		"open_line_id": body.OpenLineID,
+		"connector_id": connectorID,
+	})
 }
 
 // timeNow retorna time.Now() — extraído para facilitar testes.
@@ -833,31 +882,68 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["app_info"] = string(appInfo)
 	}
 
-	// Register — PLACEMENT_HANDLER é só a UI de configuração (slider), não o endpoint de mensagens
-	if err := h.bitrixClient.RegisterConnector(c.Context(), creds, portal.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
-		steps["register"] = "erro: " + err.Error()
-	} else {
-		steps["register"] = "ok"
+	// Resolve a lista de connectors a registrar:
+	//  - portal.ConnectorID (default — usado pelas sessões QR)
+	//  - cada connector_id único de bitrix_accounts vinculados a este portal
+	//    (sessões Cloud API têm "wa_cloud_<phone_id>" próprio)
+	connectors := map[string]struct{ Name string; LineID int }{}
+	if portal.ConnectorID != "" {
+		connectors[portal.ConnectorID] = struct{ Name string; LineID int }{"UC Talk", lineID}
+	}
+	if accts, err := h.repo.ListBitrixAccounts(c.Context()); err == nil {
+		for _, a := range accts {
+			acctDomain := strings.TrimPrefix(a.Domain, "https://")
+			acctDomain = strings.TrimPrefix(acctDomain, "http://")
+			acctDomain = strings.TrimSuffix(acctDomain, "/")
+			if !strings.EqualFold(acctDomain, domain) || a.ConnectorID == "" {
+				continue
+			}
+			name := "UC Talk"
+			// Para Cloud, usa um nome mais descritivo
+			if strings.HasPrefix(a.ConnectorID, "wa_cloud_") {
+				if sess, err := h.repo.GetSessionByJID(c.Context(), a.SessionJID); err == nil && sess != nil && sess.CloudDisplayPhone != "" {
+					name = "UC Talk Oficial +" + sess.CloudDisplayPhone
+				} else {
+					name = "UC Talk Oficial"
+				}
+			}
+			connectors[a.ConnectorID] = struct{ Name string; LineID int }{name, a.OpenLineID}
+		}
 	}
 
-	// Ativa em TODAS as open lines onde o connector já existe ou na lineID especificada.
-	lines := h.discoverOpenLines(c.Context(), creds, portal.ConnectorID, lineID)
+	// Register cada connector + ativa nas open lines
 	activatedLines := []int{}
-	for _, lid := range lines {
-		if err := h.bitrixClient.SetConnectorData(c.Context(), creds, portal.ConnectorID, lid, ""); err != nil {
-			steps[fmt.Sprintf("set_data_line_%d", lid)] = "erro: " + err.Error()
+	allActivateOk := false
+	for connID, info := range connectors {
+		if err := h.bitrixClient.RegisterConnector(c.Context(), creds, connID, info.Name, appBase+"/bitrix-connect"); err != nil {
+			steps["register_"+connID] = "erro: " + err.Error()
 		} else {
-			steps[fmt.Sprintf("set_data_line_%d", lid)] = "ok"
+			steps["register_"+connID] = "ok"
 		}
-		if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lid, true); err != nil {
-			steps[fmt.Sprintf("activate_line_%d", lid)] = "erro: " + err.Error()
-		} else {
-			steps[fmt.Sprintf("activate_line_%d", lid)] = "ok"
-			activatedLines = append(activatedLines, lid)
+
+		// Ativa em TODAS as open lines onde o connector já existe ou na lineID configurada para esse account
+		targetLine := info.LineID
+		if targetLine <= 0 {
+			targetLine = lineID
+		}
+		lines := h.discoverOpenLines(c.Context(), creds, connID, targetLine)
+		for _, lid := range lines {
+			if err := h.bitrixClient.SetConnectorData(c.Context(), creds, connID, lid, ""); err != nil {
+				steps[fmt.Sprintf("set_data_%s_line_%d", connID, lid)] = "erro: " + err.Error()
+			} else {
+				steps[fmt.Sprintf("set_data_%s_line_%d", connID, lid)] = "ok"
+			}
+			if err := h.bitrixClient.ActivateConnector(c.Context(), creds, connID, lid, true); err != nil {
+				steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "erro: " + err.Error()
+			} else {
+				steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "ok"
+				activatedLines = append(activatedLines, lid)
+				allActivateOk = true
+			}
 		}
 	}
-	if len(activatedLines) > 0 {
-		steps["activate"] = fmt.Sprintf("ok (linhas: %v)", activatedLines)
+	if allActivateOk {
+		steps["activate"] = fmt.Sprintf("ok (linhas: %v, connectors: %d)", activatedLines, len(connectors))
 	} else {
 		steps["activate"] = "nenhuma linha ativada"
 	}

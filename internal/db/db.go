@@ -118,6 +118,34 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_lid_phone_map_phone ON lid_phone_map (phone);
 		`},
+		{"012_cloud_connector_per_session", `
+			-- Cada sessão Cloud API precisa do próprio connector_id no Bitrix
+			-- (formato: "wa_cloud_<phone_number_id>"). Sessões Cloud existentes
+			-- foram criadas com connector_id genérico ("whatsapp_uc_v2") e por
+			-- isso colidiam entre si. Atualiza os bitrix_accounts existentes
+			-- consultando whatsapp_sessions pelo session_jid.
+			UPDATE bitrix_accounts ba
+			   SET connector_id = 'wa_cloud_' || ws.cloud_phone_number_id,
+			       updated_at   = NOW()
+			  FROM whatsapp_sessions ws
+			 WHERE ba.session_jid = ws.jid
+			   AND ws.type = 'cloud_api'
+			   AND ws.cloud_phone_number_id <> ''
+			   AND ba.connector_id NOT LIKE 'wa_cloud_%';
+		`},
+		{"013_qr_connector_per_session", `
+			-- Mesma ideia para sessões QR: cada uma ganha "wa_qr_<telefone>".
+			-- O telefone é extraído do session_jid removendo ":NN" (device suffix)
+			-- e "@s.whatsapp.net". Isso permite que múltiplos números QR
+			-- coexistam no mesmo portal sem colidir no connector.
+			UPDATE bitrix_accounts ba
+			   SET connector_id = 'wa_qr_' || SPLIT_PART(SPLIT_PART(ba.session_jid, '@', 1), ':', 1),
+			       updated_at   = NOW()
+			 WHERE ba.session_jid NOT LIKE 'cloud:%'
+			   AND ba.session_jid <> ''
+			   AND ba.connector_id NOT LIKE 'wa_qr_%'
+			   AND ba.connector_id NOT LIKE 'wa_cloud_%';
+		`},
 	}
 
 	for _, m := range migrations {
