@@ -14,6 +14,14 @@ const (
 	SessionBanned       SessionStatus = "banned"
 )
 
+// SessionType indica se a sessão é QR Code (whatsmeow) ou Cloud API (Meta).
+type SessionType string
+
+const (
+	SessionTypeQR       SessionType = "qr"
+	SessionTypeCloudAPI SessionType = "cloud_api"
+)
+
 type WhatsAppSession struct {
 	ID          uuid.UUID     `db:"id"`
 	JID         string        `db:"jid"`
@@ -21,8 +29,16 @@ type WhatsAppSession struct {
 	DisplayName string        `db:"display_name"`
 	Status      SessionStatus `db:"status"`
 	SessionFile string        `db:"session_file"`
-	CreatedAt   time.Time     `db:"created_at"`
-	LastSeen    *time.Time    `db:"last_seen"`
+	Type        SessionType   `db:"type"`
+	// Credenciais Cloud API (vazias para sessões QR)
+	CloudPhoneNumberID string `db:"cloud_phone_number_id"`
+	CloudWABAID        string `db:"cloud_waba_id"`
+	CloudAccessToken   string `db:"cloud_access_token"`
+	CloudVerifyToken   string `db:"cloud_verify_token"`
+	CloudAppSecret     string `db:"cloud_app_secret"`
+	CloudDisplayPhone  string `db:"cloud_display_phone"`
+	CreatedAt          time.Time  `db:"created_at"`
+	LastSeen           *time.Time `db:"last_seen"`
 }
 
 type ContactMapping struct {

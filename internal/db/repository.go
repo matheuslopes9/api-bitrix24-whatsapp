@@ -19,28 +19,82 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 // ─── Sessions ──────────────────────────────────────────────────────────────
 
+// sessionColumns lista todas as colunas escalares de whatsapp_sessions na ordem
+// usada pelos helpers scanSession*. session_file é nullable (NULL para Cloud API).
+const sessionColumns = `id, jid, phone, display_name, status,
+		COALESCE(session_file, '') AS session_file,
+		COALESCE(type, 'qr') AS type,
+		COALESCE(cloud_phone_number_id, '') AS cloud_phone_number_id,
+		COALESCE(cloud_waba_id, '') AS cloud_waba_id,
+		COALESCE(cloud_access_token, '') AS cloud_access_token,
+		COALESCE(cloud_verify_token, '') AS cloud_verify_token,
+		COALESCE(cloud_app_secret, '') AS cloud_app_secret,
+		COALESCE(cloud_display_phone, '') AS cloud_display_phone,
+		created_at, last_seen`
+
+// scanSessionRow lê uma linha da tabela whatsapp_sessions com todas as colunas.
+type sessionRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanSession(r sessionRowScanner, s *WhatsAppSession) error {
+	return r.Scan(
+		&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status,
+		&s.SessionFile, &s.Type,
+		&s.CloudPhoneNumberID, &s.CloudWABAID, &s.CloudAccessToken,
+		&s.CloudVerifyToken, &s.CloudAppSecret, &s.CloudDisplayPhone,
+		&s.CreatedAt, &s.LastSeen,
+	)
+}
+
 func (r *Repository) UpsertSession(ctx context.Context, s *WhatsAppSession) error {
+	if s.Type == "" {
+		s.Type = SessionTypeQR
+	}
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO whatsapp_sessions (id, jid, phone, display_name, status, session_file)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO whatsapp_sessions
+			(id, jid, phone, display_name, status, session_file, type,
+			 cloud_phone_number_id, cloud_waba_id, cloud_access_token,
+			 cloud_verify_token, cloud_app_secret, cloud_display_phone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (jid) DO UPDATE SET
-			id           = EXCLUDED.id,
-			display_name = EXCLUDED.display_name,
-			status       = EXCLUDED.status,
-			session_file = EXCLUDED.session_file,
-			last_seen    = NOW()
-	`, s.ID, s.JID, s.Phone, s.DisplayName, s.Status, s.SessionFile)
+			id                    = EXCLUDED.id,
+			display_name          = EXCLUDED.display_name,
+			status                = EXCLUDED.status,
+			session_file          = EXCLUDED.session_file,
+			type                  = EXCLUDED.type,
+			cloud_phone_number_id = EXCLUDED.cloud_phone_number_id,
+			cloud_waba_id         = EXCLUDED.cloud_waba_id,
+			cloud_access_token    = EXCLUDED.cloud_access_token,
+			cloud_verify_token    = EXCLUDED.cloud_verify_token,
+			cloud_app_secret      = EXCLUDED.cloud_app_secret,
+			cloud_display_phone   = EXCLUDED.cloud_display_phone,
+			last_seen             = NOW()
+	`,
+		s.ID, s.JID, s.Phone, s.DisplayName, s.Status, s.SessionFile, s.Type,
+		s.CloudPhoneNumberID, s.CloudWABAID, s.CloudAccessToken,
+		s.CloudVerifyToken, s.CloudAppSecret, s.CloudDisplayPhone,
+	)
 	return err
 }
 
 func (r *Repository) GetSessionByJID(ctx context.Context, jid string) (*WhatsAppSession, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
-		 FROM whatsapp_sessions WHERE jid = $1`, jid)
-
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions WHERE jid = $1`, jid)
 	var s WhatsAppSession
-	err := row.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen)
-	if err != nil {
+	if err := scanSession(row, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// GetSessionByCloudPhoneID localiza uma sessão Cloud API pelo phone_number_id.
+func (r *Repository) GetSessionByCloudPhoneID(ctx context.Context, phoneID string) (*WhatsAppSession, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions
+		 WHERE type = 'cloud_api' AND cloud_phone_number_id = $1`, phoneID)
+	var s WhatsAppSession
+	if err := scanSession(row, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -48,8 +102,7 @@ func (r *Repository) GetSessionByJID(ctx context.Context, jid string) (*WhatsApp
 
 func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
-		 FROM whatsapp_sessions WHERE status = 'active'`)
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +111,7 @@ func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession
 	var sessions []*WhatsAppSession
 	for rows.Next() {
 		var s WhatsAppSession
-		if err := rows.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen); err != nil {
+		if err := scanSession(rows, &s); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, &s)
@@ -70,8 +123,7 @@ func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession
 // Usada pelo watchdog para tentar reconectar sessões que caíram.
 func (r *Repository) ListAllSessions(ctx context.Context) ([]WhatsAppSession, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
-		 FROM whatsapp_sessions WHERE status != 'banned'`)
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions WHERE status != 'banned'`)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +132,7 @@ func (r *Repository) ListAllSessions(ctx context.Context) ([]WhatsAppSession, er
 	var sessions []WhatsAppSession
 	for rows.Next() {
 		var s WhatsAppSession
-		if err := rows.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen); err != nil {
+		if err := scanSession(rows, &s); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, s)
@@ -129,12 +181,9 @@ func (r *Repository) GetContactByWAJID(ctx context.Context, jid string) (*Contac
 
 func (r *Repository) GetSessionByID(ctx context.Context, id uuid.UUID) (*WhatsAppSession, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, jid, phone, display_name, status, session_file, created_at, last_seen
-		 FROM whatsapp_sessions WHERE id = $1`, id)
-
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions WHERE id = $1`, id)
 	var s WhatsAppSession
-	err := row.Scan(&s.ID, &s.JID, &s.Phone, &s.DisplayName, &s.Status, &s.SessionFile, &s.CreatedAt, &s.LastSeen)
-	if err != nil {
+	if err := scanSession(row, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil

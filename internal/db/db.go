@@ -80,6 +80,30 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			 WHERE wa_jid LIKE '%@lid'
 			   AND LENGTH(wa_phone) > 14;
 		`},
+		{"011_cloud_api_session", `
+			-- Suporte a sessões WhatsApp Cloud API (Meta) ao lado de QR Code.
+			-- type: 'qr' (whatsmeow) | 'cloud_api' (Meta Graph)
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'qr';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_phone_number_id TEXT NOT NULL DEFAULT '';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_waba_id TEXT NOT NULL DEFAULT '';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_access_token TEXT NOT NULL DEFAULT '';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_verify_token TEXT NOT NULL DEFAULT '';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_app_secret TEXT NOT NULL DEFAULT '';
+			ALTER TABLE whatsapp_sessions
+				ADD COLUMN IF NOT EXISTS cloud_display_phone TEXT NOT NULL DEFAULT '';
+			-- session_file só faz sentido para QR — cloud_api não tem arquivo SQLite
+			ALTER TABLE whatsapp_sessions
+				ALTER COLUMN session_file DROP NOT NULL;
+			CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_type ON whatsapp_sessions (type);
+			CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_cloud_phone_id
+				ON whatsapp_sessions (cloud_phone_number_id) WHERE cloud_phone_number_id <> '';
+		`},
 		{"010_lid_phone_map", `
 			-- Tabela dedicada de mapeamento LID -> telefone.
 			-- Populada toda vez que recebemos uma msg do cliente onde Sender é @lid

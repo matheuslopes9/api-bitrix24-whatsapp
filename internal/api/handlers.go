@@ -25,6 +25,7 @@ type handlers struct {
 	cfg          *config.Config
 	repo         *db.Repository
 	waManager    *whatsapp.Manager
+	cloudMgr     *whatsapp.CloudManager
 	bitrixClient *bitrix.Client
 	q            *queue.Queue
 	metrics      *telemetry.Metrics
@@ -35,12 +36,13 @@ func newHandlers(
 	cfg *config.Config,
 	repo *db.Repository,
 	waManager *whatsapp.Manager,
+	cloudMgr *whatsapp.CloudManager,
 	bitrixClient *bitrix.Client,
 	q *queue.Queue,
 	metrics *telemetry.Metrics,
 	log *zap.Logger,
 ) *handlers {
-	return &handlers{cfg: cfg, repo: repo, waManager: waManager, bitrixClient: bitrixClient, q: q, metrics: metrics, log: log}
+	return &handlers{cfg: cfg, repo: repo, waManager: waManager, cloudMgr: cloudMgr, bitrixClient: bitrixClient, q: q, metrics: metrics, log: log}
 }
 
 // GET /health

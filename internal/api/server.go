@@ -20,6 +20,7 @@ func New(
 	cfg *config.Config,
 	repo *db.Repository,
 	waManager *whatsapp.Manager,
+	cloudMgr *whatsapp.CloudManager,
 	bitrixClient *bitrix.Client,
 	q *queue.Queue,
 	metrics *telemetry.Metrics,
@@ -40,7 +41,7 @@ func New(
 		Format: "[${time}] ${status} ${method} ${path} ${latency}\n",
 	}))
 
-	h := newHandlers(cfg, repo, waManager, bitrixClient, q, metrics, log)
+	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
 
 	// ─── Assets estáticos ────────────────────────────────────────────────
 	app.Get("/assets/chart.js", h.serveChartJS)
@@ -66,6 +67,9 @@ func New(
 	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid=
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
 	ui.Get("/overview", h.uiOverview)
+	// ─── Sessões Cloud API (Meta Oficial) ────────────────────────────────
+	ui.Post("/sessions/cloud", h.uiCreateCloudSession)
+	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)
 	// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────
 	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
 	ui.Get("/bitrix/accounts", h.uiListBitrixAccounts)
@@ -85,6 +89,10 @@ func New(
 	wa.Get("/sessions/:phone/qr", h.getSessionQR)
 	wa.Delete("/sessions/:jid", h.removeSession)
 	wa.Post("/send", h.sendMessage)
+
+	// ─── Webhook Cloud API (Meta) — público, identificado por session_id ──
+	app.Get("/webhook/cloud/:session_id", h.cloudWebhookVerify)
+	app.Post("/webhook/cloud/:session_id", h.cloudWebhookReceive)
 
 	// ─── Bitrix24 ────────────────────────────────────────────────────────
 	bx := app.Group("/bitrix")

@@ -44,27 +44,101 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 }
 
 // GET /ui/sessions
-// Retorna todas as sessões ativas — sem filtro por portal.
+// Retorna todas as sessões ativas (QR Code + Cloud API) com seus tipos.
+// Mantém retrocompatibilidade: campo "sessions" continua sendo []string com JIDs.
+// Adiciona "details" com objetos {jid, type, phone, label}.
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
-	jids := h.waManager.ListSessions()
-	h.log.Info("uiListSessions called", zap.Int("count", len(jids)), zap.Strings("jids", jids))
-	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
+	qrJIDs := h.waManager.ListSessions()
+	type sessionDetail struct {
+		JID   string `json:"jid"`
+		Type  string `json:"type"`  // "qr" | "cloud_api"
+		Phone string `json:"phone"`
+		Label string `json:"label"`
+	}
+	allJIDs := make([]string, 0, len(qrJIDs))
+	allJIDs = append(allJIDs, qrJIDs...)
+	details := make([]sessionDetail, 0, len(qrJIDs))
+
+	for _, jid := range qrJIDs {
+		phone := jid
+		if at := indexAt(phone); at != -1 {
+			phone = phone[:at]
+		}
+		if c := indexColon(phone); c != -1 {
+			phone = phone[:c]
+		}
+		details = append(details, sessionDetail{JID: jid, Type: "qr", Phone: phone, Label: "+" + phone})
+	}
+
+	if h.cloudMgr != nil {
+		for _, jid := range h.cloudMgr.ListJIDs() {
+			allJIDs = append(allJIDs, jid)
+			label := jid
+			phone := ""
+			if s, ok := h.cloudMgr.Get(jid); ok {
+				phone = s.DisplayPhone
+				if phone != "" {
+					label = "+" + phone + " (Oficial)"
+				} else {
+					label = "Cloud " + s.PhoneNumberID
+				}
+			}
+			details = append(details, sessionDetail{JID: jid, Type: "cloud_api", Phone: phone, Label: label})
+		}
+	}
+
+	h.log.Info("uiListSessions called", zap.Int("count", len(allJIDs)))
+	return c.JSON(fiber.Map{
+		"sessions": allJIDs,
+		"details":  details,
+		"count":    len(allJIDs),
+	})
+}
+
+func indexAt(s string) int {
+	for i, c := range s {
+		if c == '@' {
+			return i
+		}
+	}
+	return -1
+}
+func indexColon(s string) int {
+	for i, c := range s {
+		if c == ':' {
+			return i
+		}
+	}
+	return -1
 }
 
 // DELETE /ui/sessions/:jid
 // O JID pode conter '@' e ':' — lê também via query param ?jid= como fallback seguro.
+// Despacha para o manager correto baseado no prefixo do JID.
 func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
-	// Tenta query param primeiro (mais seguro para JIDs com @)
 	jid := c.Query("jid")
 	if jid == "" {
-		// Fallback: path param (funciona apenas quando JID não contém @)
 		jid = c.Params("jid")
 	}
 	if jid == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "jid required"})
 	}
+	// Cloud API
+	if isCloudJID(jid) {
+		if h.cloudMgr != nil {
+			if err := h.cloudMgr.RemoveSession(c.Context(), jid); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			}
+		}
+		return c.JSON(fiber.Map{"status": "disconnected", "jid": jid, "type": "cloud_api"})
+	}
+	// QR (whatsmeow)
 	h.waManager.Disconnect(jid)
-	return c.JSON(fiber.Map{"status": "disconnected", "jid": jid})
+	return c.JSON(fiber.Map{"status": "disconnected", "jid": jid, "type": "qr"})
+}
+
+func isCloudJID(jid string) bool {
+	return len(jid) > 6 && jid[:6] == "cloud:"
 }
 
 const connectHTML = `<!DOCTYPE html>
@@ -142,22 +216,66 @@ input:focus{border-color:#25D366}
   <h1>WhatsApp Connector</h1>
   <p class="subtitle">Conecte seu número ao Bitrix24</p>
 
-  <div class="form-row">
-    <input type="text" id="phone" placeholder="5519910001772" maxlength="20"/>
-    <button class="btn" id="btn-connect" onclick="startSession()">Conectar</button>
+  <!-- Toggle entre QR Code e API Oficial -->
+  <div class="conn-tabs" style="display:flex;gap:6px;background:#f3f4f6;border-radius:10px;padding:4px;margin-bottom:20px">
+    <button class="conn-tab active" id="tab-qr" onclick="setMode('qr')" style="flex:1;padding:9px;border:none;background:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.06)">📱 QR Code</button>
+    <button class="conn-tab" id="tab-cloud" onclick="setMode('cloud')" style="flex:1;padding:9px;border:none;background:transparent;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#666">☁️ API Oficial</button>
   </div>
 
-  <div id="qr-section">
-    <div class="instructions">
-      <b>Como escanear:</b><br>
-      1. Abra o WhatsApp no celular<br>
-      2. Toque em <b>⋮ → Aparelhos conectados</b><br>
-      3. Toque em <b>Conectar um aparelho</b><br>
-      4. Aponte a câmera para o QR abaixo
+  <!-- ─── Modo QR Code ─── -->
+  <div id="mode-qr">
+    <div class="form-row">
+      <input type="text" id="phone" placeholder="5519910001772" maxlength="20"/>
+      <button class="btn" id="btn-connect" onclick="startSession()">Conectar</button>
     </div>
-    <div id="badge" class="badge badge-wait">⏳ Aguardando QR...</div><br>
-    <div id="qr-wrap"><img id="qr-img" src="" width="256" height="256" style="display:none"/></div>
-    <div class="timer" id="timer"></div>
+
+    <div id="qr-section">
+      <div class="instructions">
+        <b>Como escanear:</b><br>
+        1. Abra o WhatsApp no celular<br>
+        2. Toque em <b>⋮ → Aparelhos conectados</b><br>
+        3. Toque em <b>Conectar um aparelho</b><br>
+        4. Aponte a câmera para o QR abaixo
+      </div>
+      <div id="badge" class="badge badge-wait">⏳ Aguardando QR...</div><br>
+      <div id="qr-wrap"><img id="qr-img" src="" width="256" height="256" style="display:none"/></div>
+      <div class="timer" id="timer"></div>
+    </div>
+  </div>
+
+  <!-- ─── Modo Cloud API (Meta Oficial) ─── -->
+  <div id="mode-cloud" style="display:none;text-align:left">
+    <div class="instructions" style="text-align:left">
+      <b>WhatsApp Business API (Meta Oficial):</b><br>
+      Crie um app no <a href="https://developers.facebook.com" target="_blank">Meta for Developers</a>,
+      adicione o produto <b>WhatsApp</b> e pegue:
+      <ul style="margin:6px 0 0 18px;padding:0">
+        <li>Phone Number ID</li>
+        <li>WABA ID (opcional)</li>
+        <li>Access Token (permanente recomendado)</li>
+        <li>App Secret (Configurações → Básico)</li>
+      </ul>
+    </div>
+    <label style="display:block;font-size:12px;color:#555;margin:12px 0 4px;font-weight:600">Telefone (E.164, sem +)</label>
+    <input type="text" id="c-display" placeholder="5519910001772" style="margin-bottom:0">
+    <label style="display:block;font-size:12px;color:#555;margin:12px 0 4px;font-weight:600">Phone Number ID *</label>
+    <input type="text" id="c-pnid" placeholder="123456789012345" style="margin-bottom:0">
+    <label style="display:block;font-size:12px;color:#555;margin:12px 0 4px;font-weight:600">WABA ID</label>
+    <input type="text" id="c-waba" placeholder="(opcional)" style="margin-bottom:0">
+    <label style="display:block;font-size:12px;color:#555;margin:12px 0 4px;font-weight:600">Access Token *</label>
+    <input type="text" id="c-token" placeholder="EAAxxxxxxxxxxxx..." style="margin-bottom:0">
+    <label style="display:block;font-size:12px;color:#555;margin:12px 0 4px;font-weight:600">App Secret</label>
+    <input type="text" id="c-secret" placeholder="(necessário para validar webhooks)" style="margin-bottom:0">
+    <button class="btn" id="btn-cloud" onclick="startCloud()" style="width:100%;margin-top:16px">Conectar via API Oficial</button>
+    <div id="cloud-result" style="display:none;margin-top:18px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px;font-size:12px">
+      <b style="color:#15803d">✓ Conta cadastrada!</b><br>
+      Configure no Meta (WhatsApp → Webhooks → Editar URL de retorno):
+      <div style="margin-top:8px"><b>Callback URL:</b></div>
+      <div id="cl-url" style="background:#fff;padding:6px 8px;border-radius:6px;border:1px solid #d1d5db;word-break:break-all;font-family:monospace;margin-top:3px;cursor:pointer" onclick="copyText(this)"></div>
+      <div style="margin-top:8px"><b>Verify Token:</b></div>
+      <div id="cl-token" style="background:#fff;padding:6px 8px;border-radius:6px;border:1px solid #d1d5db;word-break:break-all;font-family:monospace;margin-top:3px;cursor:pointer" onclick="copyText(this)"></div>
+      <div style="margin-top:10px;color:#475569">Clique para copiar. Depois assine os campos <b>messages</b> e <b>message_status</b>.</div>
+    </div>
   </div>
 
   <hr class="divider"/>
@@ -262,20 +380,101 @@ function loadSessions() {
   .then(function(r){ return r.json(); })
   .then(function(d){
     var wrap = document.getElementById('sessions-wrap');
-    var noSess = document.getElementById('no-sessions');
     if (d.count === 0) {
       wrap.innerHTML = '<div class="no-sessions" id="no-sessions">Nenhum dispositivo conectado</div>';
       return;
     }
+    var details = d.details || [];
     var html = '';
-    d.sessions.forEach(function(jid){
-      html += '<div class="session-item">'
-        + '<div class="session-info"><div class="dot"></div><span class="jid">'+jid+'</span></div>'
-        + '<button class="btn-red" onclick="doDisconnect(\''+encodeURIComponent(jid)+'\')">Desconectar</button>'
-        + '</div>';
-    });
+    if (details.length) {
+      details.forEach(function(s){
+        var badge = s.type === 'cloud_api'
+          ? '<span style="font-size:10px;background:#dbeafe;color:#1e40af;padding:2px 7px;border-radius:10px;font-weight:700;margin-left:6px">OFICIAL</span>'
+          : '<span style="font-size:10px;background:#dcfce7;color:#166534;padding:2px 7px;border-radius:10px;font-weight:700;margin-left:6px">QR</span>';
+        var label = s.label || s.jid;
+        html += '<div class="session-item">'
+          + '<div class="session-info"><div class="dot"></div><span class="jid">'+label+badge+'</span></div>'
+          + '<button class="btn-red" onclick="doDisconnect(\''+encodeURIComponent(s.jid)+'\')">Desconectar</button>'
+          + '</div>';
+      });
+    } else {
+      d.sessions.forEach(function(jid){
+        html += '<div class="session-item">'
+          + '<div class="session-info"><div class="dot"></div><span class="jid">'+jid+'</span></div>'
+          + '<button class="btn-red" onclick="doDisconnect(\''+encodeURIComponent(jid)+'\')">Desconectar</button>'
+          + '</div>';
+      });
+    }
     wrap.innerHTML = html;
   }).catch(function(){});
+}
+
+// ─── Toggle entre QR e Cloud API ───
+function setMode(m) {
+  var qr = document.getElementById('mode-qr');
+  var cl = document.getElementById('mode-cloud');
+  var tQR = document.getElementById('tab-qr');
+  var tCL = document.getElementById('tab-cloud');
+  if (m === 'cloud') {
+    qr.style.display = 'none';
+    cl.style.display = 'block';
+    tQR.style.background = 'transparent'; tQR.style.color = '#666'; tQR.style.boxShadow = 'none';
+    tCL.style.background = '#fff'; tCL.style.color = '#111'; tCL.style.boxShadow = '0 1px 3px rgba(0,0,0,.06)';
+  } else {
+    qr.style.display = 'block';
+    cl.style.display = 'none';
+    tCL.style.background = 'transparent'; tCL.style.color = '#666'; tCL.style.boxShadow = 'none';
+    tQR.style.background = '#fff'; tQR.style.color = '#111'; tQR.style.boxShadow = '0 1px 3px rgba(0,0,0,.06)';
+  }
+}
+
+function startCloud() {
+  var pnid = document.getElementById('c-pnid').value.trim();
+  var waba = document.getElementById('c-waba').value.trim();
+  var token = document.getElementById('c-token').value.trim();
+  var secret = document.getElementById('c-secret').value.trim();
+  var disp = document.getElementById('c-display').value.replace(/\D/g,'');
+  if (!pnid || !token) { alert('Phone Number ID e Access Token são obrigatórios'); return; }
+  var btn = document.getElementById('btn-cloud');
+  btn.disabled = true; btn.textContent = 'Validando credenciais...';
+  fetch('/ui/sessions/cloud', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      phone_number_id: pnid,
+      waba_id: waba,
+      access_token: token,
+      app_secret: secret,
+      display_phone: disp
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    btn.disabled = false; btn.textContent = 'Conectar via API Oficial';
+    if (d.error) { alert('Erro: ' + d.error); return; }
+    document.getElementById('cl-url').textContent = d.webhook_url;
+    document.getElementById('cl-token').textContent = d.verify_token;
+    document.getElementById('cloud-result').style.display = 'block';
+    loadSessions();
+  })
+  .catch(function(e){
+    btn.disabled = false; btn.textContent = 'Conectar via API Oficial';
+    alert('Falha: ' + e);
+  });
+}
+
+function copyText(el) {
+  var t = el.textContent;
+  navigator.clipboard.writeText(t).then(function(){
+    var orig = el.style.background;
+    el.style.background = '#dcfce7';
+    setTimeout(function(){ el.style.background = orig; }, 600);
+  }).catch(function(){
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(ta);
+  });
 }
 
 var dcCallback = null;

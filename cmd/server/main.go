@@ -75,14 +75,23 @@ func main() {
 	bitrixClient := bitrix.NewClient(repo, log)
 	bitrixProcessor := bitrix.NewProcessor(bitrixClient, repo, log)
 
-	// ─── WhatsApp Manager ────────────────────────────────────────────────
+	// ─── WhatsApp Manager (QR Code via whatsmeow) ─────────────────────────
 	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
 	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, nil)
 	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, metrics, log))
 
-	// Carrega todas as sessões salvas no banco
+	// Carrega todas as sessões QR salvas no banco
 	if err := waManager.LoadAll(ctx); err != nil {
 		log.Warn("load sessions warning", zap.Error(err))
+	}
+
+	// ─── Cloud API Manager (Meta WhatsApp Business) ───────────────────────
+	// Roda em paralelo ao whatsmeow. Sessões Cloud API recebem mensagens via
+	// webhook em /webhook/cloud/:session_id (handler injeta InboundJob na fila
+	// igual ao buildMessageHandler do whatsmeow — mesmo processor.ProcessInbound).
+	cloudMgr := whatsapp.NewCloudManager(repo, log)
+	if err := cloudMgr.LoadAll(ctx); err != nil {
+		log.Warn("load cloud sessions warning", zap.Error(err))
 	}
 
 	// ─── Workers inbound: WA → Bitrix ─────────────────────────────────────
@@ -98,6 +107,13 @@ func main() {
 	// ─── Workers outbound: Bitrix → WA ───────────────────────────────────
 	workers.StartOutbound(ctx, func(c context.Context, job *queue.OutboundJob) error {
 		metrics.MessagesOutbound.Inc()
+
+		// Cloud API: caminho alternativo para sessões oficiais (sem whatsmeow).
+		// Detecta pelo prefixo "cloud:" do SessionJID e envia via Graph API.
+		// O resto do worker (whatsmeow) continua exatamente como estava.
+		if whatsapp.IsCloudJID(job.SessionJID) {
+			return handleCloudOutbound(c, cloudMgr, repo, log, metrics, job)
+		}
 
 		var waID string
 		var err error
@@ -269,7 +285,7 @@ func main() {
 	}()
 
 	// ─── HTTP Server ─────────────────────────────────────────────────────
-	app := api.New(cfg, repo, waManager, bitrixClient, q, metrics, log)
+	app := api.New(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
 
 	go func() {
 		if err := app.Listen(":" + cfg.App.Port); err != nil {
