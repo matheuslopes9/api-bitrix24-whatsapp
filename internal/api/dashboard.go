@@ -906,7 +906,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div id="cl-out-url" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
         <div style="margin-top:8px;font-weight:600;color:#cbd5e1;">Verify Token:</div>
         <div id="cl-out-token" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
-        <button class="btn btn-ghost btn-sm" onclick="abrirGuiaCloud()" style="margin-top:10px;color:#60a5fa;border:1px solid rgba(59,130,246,.4);width:100%;">📖 Ver guia completo de configuração no Meta</button>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="btn btn-ghost btn-sm" onclick="abrirGuiaCloud()" style="flex:1;color:#60a5fa;border:1px solid rgba(59,130,246,.4);">📖 Ver guia</button>
+          <button class="btn btn-primary btn-sm" onclick="fecharModalQR()" style="flex:1;">✓ Concluir</button>
+        </div>
       </div>
     </div>
   </div>
