@@ -143,52 +143,27 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Registra e ativa o imconnector em background — não bloqueia o retorno ao Bitrix.
-	// IMPORTANTE: registra o connector default APENAS se não houver bitrix_accounts
-	// com connectors específicos por sessão (wa_qr_*, wa_cloud_*). Isso evita que
-	// uma reinstalação do app reative o connector genérico e crie chats paralelos
-	// no Open Lines, sobrepondo aos connectors já configurados pelas sessões.
+	// Registra e ativa o imconnector em background — não bloqueia o retorno ao Bitrix
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
 		appBaseURL := h.cfg.App.BaseURL()
-
-		// Verifica se já existem connectors específicos por sessão neste portal.
-		// Se sim, pula o registro do default (cada sessão já tem o seu).
-		hasPerSession := false
-		if accts, err := h.repo.ListBitrixAccounts(ctx); err == nil {
-			for _, a := range accts {
-				acctDomain := strings.TrimPrefix(a.Domain, "https://")
-				acctDomain = strings.TrimPrefix(acctDomain, "http://")
-				acctDomain = strings.TrimSuffix(acctDomain, "/")
-				if !strings.EqualFold(acctDomain, domain) {
-					continue
-				}
-				if strings.HasPrefix(a.ConnectorID, "wa_qr_") || strings.HasPrefix(a.ConnectorID, "wa_cloud_") {
-					hasPerSession = true
-					break
-				}
-			}
+		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBaseURL+"/bitrix-connect"); err != nil {
+			// APPLICATION_REGISTRATION_ERROR significa que o conector já está registrado
+			// por este app — pode continuar com activate normalmente.
+			h.log.Warn("partner install: imconnector.register failed (may already exist)", zap.String("domain", domain), zap.Error(err))
 		}
-		if hasPerSession {
-			h.log.Info("partner install: skip default connector activation (per-session connectors already exist)",
-				zap.String("domain", domain))
-		} else {
-			if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBaseURL+"/bitrix-connect"); err != nil {
-				h.log.Warn("partner install: imconnector.register failed (may already exist)", zap.String("domain", domain), zap.Error(err))
-			}
-			lineID := portal.OpenLineID
-			if lineID == 0 {
-				lineID = 1
-			}
-			if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
-				h.log.Warn("partner install: connector.data.set failed", zap.String("domain", domain), zap.Error(err))
-			}
-			if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
-				h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
-			}
-			h.log.Info("partner install: default connector activated", zap.String("domain", domain))
+		lineID := portal.OpenLineID
+		if lineID == 0 {
+			lineID = 1
 		}
+		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
+			h.log.Warn("partner install: connector.data.set failed", zap.String("domain", domain), zap.Error(err))
+		}
+		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
+			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
+		}
+		h.log.Info("partner install: connector activated", zap.String("domain", domain))
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
 	}()
 

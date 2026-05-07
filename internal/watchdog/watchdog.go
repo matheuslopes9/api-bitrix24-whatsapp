@@ -55,20 +55,12 @@ func (w *Watchdog) check(ctx context.Context) {
 	reconnected := 0
 
 	for _, s := range dbSessions {
-		// Cloud API não usa whatsmeow — não tem ping/reconnect. Skip.
-		// Sessões Cloud "estão sempre vivas" enquanto o token for válido,
-		// e a comunicação é stateless via HTTPS Graph API.
-		if s.Type == db.SessionTypeCloudAPI {
-			alive++
-			continue
-		}
-
 		if w.waManager.Ping(s.JID) {
 			alive++
 			continue
 		}
 
-		// Sessão whatsmeow não está respondendo — tenta reconectar
+		// Sessão não está respondendo — tenta reconectar
 		w.log.Warn("session not responding, attempting reconnect", zap.String("jid", s.JID))
 		if err := w.waManager.Reconnect(ctx, &s); err != nil {
 			w.log.Error("watchdog reconnect failed", zap.String("jid", s.JID), zap.Error(err))
