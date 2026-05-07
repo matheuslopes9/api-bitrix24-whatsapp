@@ -1125,53 +1125,73 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	// pois o LID (127586399207476) não é um número de telefone real.
 	toJID := chatID
 
-	// ─── Roteamento determinístico via connector_id ───
-	// Cada sessão WhatsApp tem seu próprio connector_id no Bitrix
-	// (wa_qr_<tel> ou wa_cloud_<phone_id>). O evento ONIMCONNECTORMESSAGEADD
-	// nos diz EXATAMENTE de qual connector veio — então mapeamos
-	// connector_id → bitrix_account → session_jid.
-	// Isso é o ÚNICO mapeamento sem ambiguidade quando há múltiplas sessões.
-	sessionJID := ""
-	if connector != "" {
-		if acct, err := h.repo.GetBitrixAccountByConnectorID(ctx, connector); err == nil && acct != nil {
-			sessionJID = acct.SessionJID
-			h.log.Info("connector event: session resolved via connector_id",
-				zap.String("connector", connector),
-				zap.String("session_jid", sessionJID),
-			)
-		} else {
-			h.log.Warn("connector event: connector_id not in bitrix_accounts",
-				zap.String("connector", connector), zap.Error(err))
-		}
-	}
+	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
 
-	// Fallback 1: contato + sua session_id (legado, usado quando connector é vazio).
-	if sessionJID == "" {
-		if contact, err := h.repo.GetContactByWAJID(ctx, chatID); err == nil && contact != nil && contact.SessionID != nil {
-			if sess, err := h.repo.GetSessionByID(ctx, *contact.SessionID); err == nil {
-				sessionJID = sess.JID
-				h.log.Info("connector event: session resolved via contact_mapping (fallback)",
-					zap.String("session_jid", sessionJID))
+	if err != nil {
+		h.log.Warn("connector event: contact not found by normalized JID, trying sessions directly",
+			zap.String("chat_id", chatID),
+			zap.String("chat_id_raw", chatIDRaw),
+			zap.Error(err),
+		)
+		sessions := h.waManager.ListSessions()
+		if len(sessions) == 1 {
+			sessionJID := sessions[0]
+			line := 0
+			fmt.Sscanf(lineStr, "%d", &line)
+			if err := h.q.PushOutbound(ctx, &queue.OutboundJob{
+				SessionJID:      sessionJID,
+				ToJID:           toJID,
+				Text:            cleanText,
+				BitrixConnector: connector,
+				BitrixLine:      line,
+				BitrixImChatID:  imChatID,
+				BitrixImMsgID:   imMsgID,
+				BitrixChatExtID: chatIDRaw,
+				FileURL:         fileDownloadLink,
+				FileName:        fileName,
+				FileMime:        fileMime,
+			}); err != nil {
+				h.log.Error("connector event: push outbound failed (fallback)", zap.Error(err))
+				return c.SendStatus(fiber.StatusOK)
 			}
+			h.log.Info("outbound job queued (fallback — single session)",
+				zap.String("to_jid", toJID),
+				zap.String("session_jid", sessionJID),
+				zap.String("text", cleanText),
+			)
+			return c.SendStatus(fiber.StatusOK)
 		}
+		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Fallback 2: única sessão ativa no sistema.
+	// Descobre qual sessão WA usar a partir do contato
+	sessionJID := ""
+	if contact.SessionID != nil {
+		sess, err := h.repo.GetSessionByID(ctx, *contact.SessionID)
+		if err == nil {
+			sessionJID = sess.JID
+		} else {
+			h.log.Warn("connector event: GetSessionByID failed",
+				zap.String("contact_jid", contact.WAJID),
+				zap.Error(err),
+			)
+		}
+	}
+	// Fallback: se o contato não tem session_id, usa a única sessão ativa
 	if sessionJID == "" {
 		sessions := h.waManager.ListSessions()
 		if len(sessions) == 1 {
 			sessionJID = sessions[0]
-			h.log.Warn("connector event: using only active QR session as last resort",
-				zap.String("session_jid", sessionJID))
+			h.log.Info("connector event: using only active session as fallback",
+				zap.String("session_jid", sessionJID),
+			)
+		} else {
+			h.log.Warn("connector event: no session found for contact",
+				zap.String("chat_id", chatID),
+				zap.Int("active_sessions", len(sessions)),
+			)
+			return c.SendStatus(fiber.StatusOK)
 		}
-	}
-
-	if sessionJID == "" {
-		h.log.Error("connector event: cannot resolve session — message NOT sent",
-			zap.String("connector", connector),
-			zap.String("chat_id", chatID),
-		)
-		return c.SendStatus(fiber.StatusOK)
 	}
 
 	line := 0
@@ -1194,7 +1214,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	h.log.Info("outbound job queued",
+	h.log.Info("outbound job queued for JID",
 		zap.String("to_jid", toJID),
 		zap.String("session_jid", sessionJID),
 		zap.String("text", cleanText),
