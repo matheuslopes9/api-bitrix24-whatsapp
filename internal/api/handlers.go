@@ -1421,11 +1421,29 @@ func sanitizeJID(jid string) string {
 	return jid
 }
 
-// stripBBCode remove tags BBCode do Bitrix24 ([b], [/b], [br], etc.).
+// stripBBCode converte BBCode do Bitrix24 para markdown do WhatsApp.
+// [b]...[/b] → *...*  (negrito do WhatsApp)
+// [i]...[/i] → _..._  (itálico)
+// [s]...[/s] → ~...~  (riscado)
+// [br]       → \n
+// Outras tags são removidas.
 func stripBBCode(s string) string {
 	// [br] → newline
 	s = strings.ReplaceAll(s, "[br]", "\n")
-	// Remove todas as outras tags [tag] e [/tag]
+	// BBCode -> markdown WhatsApp (case-insensitive)
+	s = strings.ReplaceAll(s, "[b]", "*")
+	s = strings.ReplaceAll(s, "[/b]", "*")
+	s = strings.ReplaceAll(s, "[B]", "*")
+	s = strings.ReplaceAll(s, "[/B]", "*")
+	s = strings.ReplaceAll(s, "[i]", "_")
+	s = strings.ReplaceAll(s, "[/i]", "_")
+	s = strings.ReplaceAll(s, "[I]", "_")
+	s = strings.ReplaceAll(s, "[/I]", "_")
+	s = strings.ReplaceAll(s, "[s]", "~")
+	s = strings.ReplaceAll(s, "[/s]", "~")
+	s = strings.ReplaceAll(s, "[S]", "~")
+	s = strings.ReplaceAll(s, "[/S]", "~")
+	// Remove qualquer outra tag [tag] e [/tag]
 	result := strings.Builder{}
 	inTag := false
 	for _, ch := range s {
