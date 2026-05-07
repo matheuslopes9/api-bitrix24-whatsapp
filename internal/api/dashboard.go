@@ -881,7 +881,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div id="ns-mode-cloud" style="display:none;">
       <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#94a3b8;line-height:1.7;">
         <strong style="color:#60a5fa;">WhatsApp Business API (Meta Oficial)</strong><br>
-        Crie um app em <a href="https://developers.facebook.com" target="_blank" style="color:#60a5fa;">developers.facebook.com</a> → Adicione o produto <strong>WhatsApp</strong> e pegue as credenciais no painel.
+        Configuração requer um app Meta com webhook HTTPS configurado.
+        <button class="btn btn-ghost btn-sm" onclick="abrirGuiaCloud()" style="margin-top:8px;color:#60a5fa;border:1px solid rgba(59,130,246,.4);width:100%;">
+          📖 Ver guia passo a passo (Meta for Developers)
+        </button>
       </div>
       <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Telefone (E.164, sem +)</label>
       <input class="inp" id="cl-display" placeholder="5519910001772" style="width:100%;margin-bottom:10px;"/>
@@ -898,13 +901,152 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <!-- Painel pós-cadastro -->
       <div id="cl-result" style="display:none;margin-top:16px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:14px;font-size:12px;color:#94a3b8;line-height:1.7;">
         <strong style="color:#4ade80;display:block;margin-bottom:6px;">✓ Conta cadastrada!</strong>
-        Configure no <strong style="color:#e2e8f0;">Meta for Developers</strong> → seu app → <strong>WhatsApp → Configuration → Webhook → Edit</strong>:
-        <div style="margin-top:10px;font-weight:600;color:#cbd5e1;">Callback URL:</div>
+        Cole estes valores no painel da Meta:
+        <div style="margin-top:10px;font-weight:600;color:#cbd5e1;">Callback URL (HTTPS):</div>
         <div id="cl-out-url" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
         <div style="margin-top:8px;font-weight:600;color:#cbd5e1;">Verify Token:</div>
         <div id="cl-out-token" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
-        <div style="margin-top:10px;font-size:11px;color:#64748b;">Após salvar, assine os campos <strong style="color:#94a3b8;">messages</strong> e <strong style="color:#94a3b8;">message_status</strong>.</div>
+        <button class="btn btn-ghost btn-sm" onclick="abrirGuiaCloud()" style="margin-top:10px;color:#60a5fa;border:1px solid rgba(59,130,246,.4);width:100%;">📖 Ver guia completo de configuração no Meta</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ MODAL GUIA CLOUD API ══════════════════════ -->
+<div id="guia-cloud-modal" onclick="if(event.target===this)fecharGuiaCloud()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:60;align-items:center;justify-content:center;padding:20px;">
+  <div class="card" style="padding:0;max-width:680px;width:100%;position:relative;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;">
+    <!-- Header -->
+    <div style="padding:22px 28px 18px;border-bottom:1px solid rgba(255,255,255,.06);position:relative;flex-shrink:0;">
+      <button onclick="fecharGuiaCloud()" style="position:absolute;top:16px;right:18px;background:none;border:none;color:#475569;cursor:pointer;padding:4px;border-radius:6px;" onmouseover="this.style.color='#e2e8f0'" onmouseout="this.style.color='#475569'">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <div style="width:34px;height:34px;border-radius:8px;background:rgba(59,130,246,.18);display:flex;align-items:center;justify-content:center;">
+          <svg width="18" height="18" fill="#60a5fa" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.34 5L2 22l5.15-1.32A10 10 0 1012 2z"/></svg>
+        </div>
+        <div style="font-size:18px;font-weight:700;color:#f1f5f9;">Configurar WhatsApp Business API</div>
+      </div>
+      <div style="font-size:13px;color:#475569;">Guia oficial Meta — siga os passos para conectar seu número via API Oficial</div>
+    </div>
+
+    <!-- Body com scroll -->
+    <div style="padding:22px 28px;overflow-y:auto;font-size:13.5px;color:#cbd5e1;line-height:1.7;">
+
+      <!-- Pré-requisitos -->
+      <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:13px 16px;margin-bottom:18px;">
+        <div style="font-weight:700;color:#fbbf24;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16" stroke-linecap="round"/></svg>
+          Pré-requisitos
+        </div>
+        <ul style="margin:0;padding-left:20px;font-size:12.5px;color:#94a3b8;">
+          <li>Conta no <a href="https://business.facebook.com" target="_blank" style="color:#60a5fa;">Meta Business Manager</a></li>
+          <li>Telefone <strong style="color:#cbd5e1;">não usado</strong> em WhatsApp comum (será migrado para Business)</li>
+          <li>Servidor com <strong style="color:#cbd5e1;">HTTPS válido</strong> (CA-assinado, não autoassinado) — o seu já tem ✓</li>
+        </ul>
+      </div>
+
+      <!-- Passo 1 -->
+      <div style="display:flex;gap:14px;margin-bottom:20px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,.18);color:#60a5fa;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">1</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Criar app no Meta for Developers</div>
+          <div style="color:#94a3b8;font-size:12.5px;">
+            Acesse <a href="https://developers.facebook.com" target="_blank" style="color:#60a5fa;">developers.facebook.com</a> →
+            <strong style="color:#cbd5e1;">Meus Apps → Criar app</strong> → Tipo <strong style="color:#cbd5e1;">"Business"</strong>.<br>
+            Dê um nome (ex: "UC Talk WhatsApp") e vincule à sua Business Manager.
+          </div>
+        </div>
+      </div>
+
+      <!-- Passo 2 -->
+      <div style="display:flex;gap:14px;margin-bottom:20px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,.18);color:#60a5fa;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">2</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Adicionar produto WhatsApp</div>
+          <div style="color:#94a3b8;font-size:12.5px;">
+            No painel do app: <strong style="color:#cbd5e1;">Adicionar produtos → WhatsApp → Configurar</strong>.<br>
+            Aceite os termos. Será gerada uma <strong style="color:#cbd5e1;">conta WhatsApp Business (WABA)</strong> de teste.
+          </div>
+        </div>
+      </div>
+
+      <!-- Passo 3 -->
+      <div style="display:flex;gap:14px;margin-bottom:20px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(59,130,246,.18);color:#60a5fa;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">3</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Pegar credenciais</div>
+          <div style="color:#94a3b8;font-size:12.5px;margin-bottom:8px;">
+            Em <strong style="color:#cbd5e1;">WhatsApp → API Setup</strong> copie:
+          </div>
+          <ul style="margin:0;padding-left:18px;font-size:12px;color:#94a3b8;">
+            <li><strong style="color:#cbd5e1;">Phone Number ID</strong> (ex: 123456789012345)</li>
+            <li><strong style="color:#cbd5e1;">WhatsApp Business Account ID (WABA)</strong></li>
+            <li><strong style="color:#cbd5e1;">Access Token</strong> — gere um <strong>System User Token permanente</strong> (não use o temporário de 24h)</li>
+            <li><strong style="color:#cbd5e1;">App Secret</strong> em <strong>Configurações → Básico</strong> (clique em "Mostrar" para revelar)</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Passo 4 -->
+      <div style="display:flex;gap:14px;margin-bottom:20px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(34,197,94,.2);color:#4ade80;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">4</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Cadastrar no UC Talk</div>
+          <div style="color:#94a3b8;font-size:12.5px;">
+            Volte ao painel <strong style="color:#cbd5e1;">UC Talk → Sessões WhatsApp → API Oficial</strong> e cole:
+            telefone, Phone Number ID, WABA ID, Access Token, App Secret.<br>
+            Clique <strong style="color:#cbd5e1;">"Conectar via API Oficial"</strong>. O sistema valida o token chamando a API da Meta antes de salvar.
+          </div>
+        </div>
+      </div>
+
+      <!-- Passo 5 -->
+      <div style="display:flex;gap:14px;margin-bottom:20px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(34,197,94,.2);color:#4ade80;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">5</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Configurar webhook no Meta</div>
+          <div style="color:#94a3b8;font-size:12.5px;margin-bottom:8px;">
+            Após cadastrar, copie a <strong style="color:#cbd5e1;">Callback URL</strong> e o <strong style="color:#cbd5e1;">Verify Token</strong> que aparecem no painel verde de sucesso. Volte ao Meta:
+          </div>
+          <ol style="margin:0;padding-left:18px;font-size:12px;color:#94a3b8;">
+            <li><strong style="color:#cbd5e1;">WhatsApp → Configuration → Webhook → Edit</strong></li>
+            <li>Cole a <strong style="color:#cbd5e1;">Callback URL</strong> e o <strong style="color:#cbd5e1;">Verify Token</strong></li>
+            <li>Clique <strong style="color:#cbd5e1;">Verify and save</strong> (Meta faz GET na URL para validar)</li>
+            <li>Em <strong style="color:#cbd5e1;">Webhook fields</strong>, clique <strong>Manage</strong> e assine: <strong style="color:#4ade80;">messages</strong> e <strong style="color:#4ade80;">message_status</strong></li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Passo 6 -->
+      <div style="display:flex;gap:14px;margin-bottom:14px;">
+        <div style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:rgba(34,197,94,.2);color:#4ade80;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;">6</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;color:#f1f5f9;margin-bottom:4px;">Vincular à fila Bitrix</div>
+          <div style="color:#94a3b8;font-size:12.5px;">
+            Vá em <strong style="color:#cbd5e1;">Filas Bitrix</strong> e crie um vínculo entre essa sessão (badge OFICIAL azul) e uma Open Line do seu portal Bitrix24.<br>
+            Sem isso, mensagens recebidas não chegam no atendimento.
+          </div>
+        </div>
+      </div>
+
+      <!-- Caixa SSL -->
+      <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:13px 16px;margin-top:14px;">
+        <div style="font-weight:700;color:#4ade80;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          SSL/TLS — requisito Meta
+        </div>
+        <div style="font-size:12px;color:#94a3b8;">
+          A Meta exige que a Callback URL use <strong style="color:#cbd5e1;">HTTPS com certificado válido emitido por uma CA</strong> (Let's Encrypt, DigiCert, etc).
+          Certificados <strong>autoassinados não são aceitos</strong>. Sua URL <code style="background:rgba(0,0,0,.3);padding:1px 5px;border-radius:4px;">uctalk.uctechnology.com.br</code> já atende esse requisito ✓
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 28px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:10px;justify-content:space-between;align-items:center;flex-shrink:0;">
+      <a href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started" target="_blank" style="font-size:12px;color:#60a5fa;text-decoration:none;">📖 Documentação oficial Meta →</a>
+      <button class="btn btn-primary" onclick="fecharGuiaCloud()">Entendi</button>
     </div>
   </div>
 </div>
@@ -1136,6 +1278,11 @@ function carregarSessoes() {
         iconColor = '#25D366';
         badgeTipo = '<span style="font-size:10px;background:rgba(37,211,102,.15);color:#25D366;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">QR CODE</span>';
       }
+      var btnWebhook = '';
+      if (tipo === 'cloud_api') {
+        var sidEnc = encodeURIComponent(s.session_id || jid);
+        btnWebhook = '<button class="btn btn-ghost btn-sm" onclick="verWebhookCloud(\'' + sidEnc + '\')" title="Ver URL do webhook" style="border:1px solid rgba(59,130,246,.3);color:#60a5fa;">📋 Webhook</button>';
+      }
       html += '<div class="card" style="padding:18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
         + '<div style="display:flex;align-items:center;gap:13px;">'
         + '<div class="metric-icon" style="background:' + iconBg + ';">'
@@ -1145,8 +1292,9 @@ function carregarSessoes() {
         + '<div style="font-size:15px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">' + telefone + ' ' + badgeTipo + '</div>'
         + '<div style="font-size:11.5px;color:#334155;margin-top:2px;">' + jidLabel + '</div>'
         + '</div></div>'
-        + '<div style="display:flex;align-items:center;gap:10px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
         + '<span class="badge badge-green">Conectado</span>'
+        + btnWebhook
         + '<button class="btn btn-danger btn-sm" onclick="desconectarSessao(\'' + enc + '\')">Desconectar</button>'
         + '</div></div>';
     });
@@ -1273,6 +1421,46 @@ function iniciarSessaoCloud() {
     btn.disabled = false; btn.textContent = 'Conectar via API Oficial';
     toast('Falha: ' + e, 'error');
   });
+}
+
+// Abre/fecha o modal com o guia passo-a-passo de configuração Cloud API.
+function abrirGuiaCloud() {
+  var m = document.getElementById('guia-cloud-modal');
+  if (m) m.style.display = 'flex';
+}
+function fecharGuiaCloud() {
+  var m = document.getElementById('guia-cloud-modal');
+  if (m) m.style.display = 'none';
+}
+
+// Mostra um popup com a URL do webhook e o verify_token de uma sessão Cloud,
+// para permitir reconfigurar no Meta sem precisar cadastrar de novo.
+function verWebhookCloud(sidEnc) {
+  fetch('/ui/sessions/cloud/' + sidEnc + '/webhook-info')
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.error) { toast(d.error, 'error'); return; }
+    var existing = document.getElementById('webhook-info-modal');
+    if (existing) existing.remove();
+    var html = '<div id="webhook-info-modal" onclick="if(event.target===this)this.remove()" style="display:flex;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:62;align-items:center;justify-content:center;padding:20px;">'
+      + '<div class="card" style="padding:24px;max-width:560px;width:100%;position:relative;">'
+      + '<button onclick="document.getElementById(\'webhook-info-modal\').remove()" style="position:absolute;top:14px;right:16px;background:none;border:none;color:#475569;cursor:pointer;padding:4px;border-radius:6px;">'
+      + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>'
+      + '<div style="font-size:16px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">📋 Webhook desta sessão</div>'
+      + '<div style="font-size:12.5px;color:#475569;margin-bottom:18px;">Cole no Meta for Developers → WhatsApp → Configuration → Webhook → Edit</div>'
+      + '<div style="font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Telefone: <span style="color:#60a5fa;">+' + (d.display_phone || '') + '</span></div>'
+      + '<div style="font-size:11.5px;color:#475569;margin-bottom:14px;">Phone Number ID: ' + (d.phone_number_id || '?') + '</div>'
+      + '<div style="font-weight:600;color:#cbd5e1;font-size:12px;margin-bottom:4px;">Callback URL (HTTPS):</div>'
+      + '<div style="background:rgba(0,0,0,.3);padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11.5px;cursor:pointer;color:#e2e8f0;margin-bottom:12px;" onclick="copiarTexto(this)" title="Clique para copiar">' + d.webhook_url + '</div>'
+      + '<div style="font-weight:600;color:#cbd5e1;font-size:12px;margin-bottom:4px;">Verify Token:</div>'
+      + '<div style="background:rgba(0,0,0,.3);padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11.5px;cursor:pointer;color:#e2e8f0;margin-bottom:14px;" onclick="copiarTexto(this)" title="Clique para copiar">' + d.verify_token + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'webhook-info-modal\').remove();abrirGuiaCloud();">📖 Ver guia completo</button>'
+      + '<button class="btn btn-primary btn-sm" onclick="document.getElementById(\'webhook-info-modal\').remove()">Fechar</button>'
+      + '</div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+  })
+  .catch(function(){ toast('Erro ao carregar dados do webhook', 'error'); });
 }
 
 // Copia o texto de um elemento para clipboard com feedback visual.

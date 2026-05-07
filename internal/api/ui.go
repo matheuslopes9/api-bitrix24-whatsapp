@@ -50,10 +50,11 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 	qrJIDs := h.waManager.ListSessions()
 	type sessionDetail struct {
-		JID   string `json:"jid"`
-		Type  string `json:"type"`  // "qr" | "cloud_api"
-		Phone string `json:"phone"`
-		Label string `json:"label"`
+		JID       string `json:"jid"`
+		SessionID string `json:"session_id"`
+		Type      string `json:"type"` // "qr" | "cloud_api"
+		Phone     string `json:"phone"`
+		Label     string `json:"label"`
 	}
 	allJIDs := make([]string, 0, len(qrJIDs))
 	allJIDs = append(allJIDs, qrJIDs...)
@@ -75,6 +76,7 @@ func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 			allJIDs = append(allJIDs, jid)
 			label := jid
 			phone := ""
+			sessionID := ""
 			if s, ok := h.cloudMgr.Get(jid); ok {
 				phone = s.DisplayPhone
 				if phone != "" {
@@ -83,7 +85,17 @@ func (h *handlers) uiListSessions(c *fiber.Ctx) error {
 					label = "Cloud " + s.PhoneNumberID
 				}
 			}
-			details = append(details, sessionDetail{JID: jid, Type: "cloud_api", Phone: phone, Label: label})
+			// Busca o session_id (UUID) no banco
+			if dbSess, err := h.repo.GetSessionByJID(c.Context(), jid); err == nil && dbSess != nil {
+				sessionID = dbSess.ID.String()
+			}
+			details = append(details, sessionDetail{
+				JID:       jid,
+				SessionID: sessionID,
+				Type:      "cloud_api",
+				Phone:     phone,
+				Label:     label,
+			})
 		}
 	}
 
