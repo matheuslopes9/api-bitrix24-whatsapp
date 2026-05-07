@@ -164,6 +164,18 @@ func (q *Queue) PeekDead(ctx context.Context, n int) ([]json.RawMessage, error) 
 	return out, nil
 }
 
+// MarkProcessed registra um ID como já processado por TTL segundos.
+// Retorna true se este é o primeiro processamento; false se já foi processado.
+// Usado para deduplicar eventos do Bitrix que podem chegar 2x (ex: ONIMCONNECTORMESSAGEADD).
+func (q *Queue) MarkProcessed(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	// SETNX = SET if Not eXists. Retorna 1 se setou (primeiro), 0 se já existia (duplicado).
+	ok, err := q.rdb.SetNX(ctx, "dedup:"+key, "1", ttl).Result()
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
 // Lengths retorna o tamanho atual das filas (para telemetria).
 func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	inbound, _ = q.rdb.LLen(ctx, keyInbound).Result()
