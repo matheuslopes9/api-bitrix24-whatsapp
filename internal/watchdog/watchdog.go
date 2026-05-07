@@ -55,6 +55,13 @@ func (w *Watchdog) check(ctx context.Context) {
 	reconnected := 0
 
 	for _, s := range dbSessions {
+		// Cloud API: sem WebSocket — não há ping/reconnect.
+		// Sessões Cloud são stateless via HTTPS, "sempre vivas" enquanto
+		// o token for válido.
+		if s.Type == db.SessionTypeCloudAPI {
+			alive++
+			continue
+		}
 		if w.waManager.Ping(s.JID) {
 			alive++
 			continue
