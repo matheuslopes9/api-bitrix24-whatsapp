@@ -1093,6 +1093,51 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	// pois o LID (127586399207476) não é um número de telefone real.
 	toJID := chatID
 
+	// ─── CAMINHO DEDICADO CLOUD API ────────────────────────────────────────
+	// Quando o connector é "wa_cloud_<phone_id>", resolvemos a sessão Cloud
+	// via bitrix_accounts.connector_id (lookup direto e exato — sem ambiguidade).
+	// Isso isola o fluxo Cloud do QR Code: nenhuma busca em contact_mapping,
+	// nenhum risco de pegar SessionID errado.
+	if strings.HasPrefix(connector, "wa_cloud_") {
+		acct, errAcct := h.repo.GetBitrixAccountByConnectorID(ctx, connector)
+		if errAcct != nil || acct == nil {
+			h.log.Error("cloud event: bitrix_account não encontrado para connector",
+				zap.String("connector", connector), zap.Error(errAcct))
+			return c.SendStatus(fiber.StatusOK)
+		}
+		line := 0
+		fmt.Sscanf(lineStr, "%d", &line)
+		if line == 0 {
+			line = acct.OpenLineID
+		}
+		job := &queue.OutboundJob{
+			SessionJID:      acct.SessionJID, // "cloud:<phone_id>@s.whatsapp.net"
+			ToJID:           toJID,
+			Text:            cleanText,
+			BitrixConnector: connector,
+			BitrixLine:      line,
+			BitrixImChatID:  imChatID,
+			BitrixImMsgID:   imMsgID,
+			BitrixChatExtID: chatIDRaw,
+			FileURL:         fileDownloadLink,
+			FileName:        fileName,
+			FileMime:        fileMime,
+		}
+		if err := h.q.PushOutbound(ctx, job); err != nil {
+			h.log.Error("cloud event: push outbound failed", zap.Error(err))
+			return c.SendStatus(fiber.StatusOK)
+		}
+		h.log.Info("cloud outbound job queued",
+			zap.String("connector", connector),
+			zap.String("session_jid", acct.SessionJID),
+			zap.String("to_jid", toJID),
+			zap.String("text", cleanText),
+			zap.Int("line", line),
+		)
+		return c.SendStatus(fiber.StatusOK)
+	}
+	// ─── FIM caminho Cloud — daqui em diante é fluxo QR original ─────────
+
 	contact, err := h.repo.GetContactByWAJID(ctx, chatID)
 
 	if err != nil {

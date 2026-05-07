@@ -781,6 +781,26 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 	return &a, nil
 }
 
+// GetBitrixAccountByConnectorID localiza a sessão dona de um connector_id no Bitrix.
+// Usado pelo caminho Cloud no bitrixConnectorEvent: quando o evento chega com
+// connector="wa_cloud_<phone_id>", esta função retorna o bitrix_account com o
+// SessionJID Cloud correspondente. Lookup exato — sem ambiguidade entre sessões.
+func (r *Repository) GetBitrixAccountByConnectorID(ctx context.Context, connectorID string) (*BitrixAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+		       connector_id, redirect_uri, status, created_at, updated_at
+		FROM bitrix_accounts
+		WHERE connector_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 1`, connectorID)
+	var a BitrixAccount
+	if err := row.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+		&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 func (r *Repository) ListBitrixAccounts(ctx context.Context) ([]*BitrixAccount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
