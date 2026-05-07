@@ -831,35 +831,74 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
   </div>
 </div>
 
-<!-- ══════════════════════ MODAL QR ══════════════════════ -->
+<!-- ══════════════════════ MODAL NOVA SESSÃO (QR ou Cloud API) ══════════════════════ -->
 <div id="qr-modal" onclick="if(event.target===this)fecharModalQR()">
-  <div class="card" style="padding:28px;max-width:400px;width:100%;position:relative;max-height:90vh;overflow-y:auto;">
+  <div class="card" style="padding:28px;max-width:440px;width:100%;position:relative;max-height:92vh;overflow-y:auto;">
     <button onclick="fecharModalQR()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:#475569;cursor:pointer;padding:4px;border-radius:6px;" onmouseover="this.style.color='#e2e8f0'" onmouseout="this.style.color='#475569'">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div style="font-size:17px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Nova Sessão WhatsApp</div>
-    <div style="font-size:13px;color:#475569;margin-bottom:18px;">Digite o número e escaneie o QR code</div>
+    <div style="font-size:13px;color:#475569;margin-bottom:16px;">Escolha entre QR Code ou WhatsApp Business API</div>
 
-    <div style="display:flex;gap:8px;margin-bottom:18px;">
-      <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;"/>
-      <button class="btn btn-primary" id="modal-btn-conectar" onclick="iniciarSessao()">Conectar</button>
+    <!-- Tabs -->
+    <div style="display:flex;gap:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:4px;margin-bottom:18px;">
+      <button id="ns-tab-qr" onclick="trocarTipoSessao('qr')" style="flex:1;padding:9px;border:none;background:rgba(37,211,102,.18);color:#25D366;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">📱 QR Code</button>
+      <button id="ns-tab-cloud" onclick="trocarTipoSessao('cloud')" style="flex:1;padding:9px;border:none;background:transparent;color:#64748b;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">☁️ API Oficial</button>
     </div>
 
-    <div id="modal-qr-area" style="display:none;text-align:center;">
-      <div id="modal-badge-qr" style="margin-bottom:12px;"></div>
-      <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px;display:inline-block;margin-bottom:8px;">
-        <img id="modal-qr-img" src="" width="200" height="200" style="display:none;border-radius:8px;"/>
-        <div id="modal-qr-placeholder" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;">Aguardando QR...</div>
+    <!-- ─── Form QR Code ─── -->
+    <div id="ns-mode-qr">
+      <div style="display:flex;gap:8px;margin-bottom:18px;">
+        <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;"/>
+        <button class="btn btn-primary" id="modal-btn-conectar" onclick="iniciarSessao()">Conectar</button>
       </div>
-      <div style="font-size:12px;color:#475569;" id="modal-timer"></div>
+
+      <div id="modal-qr-area" style="display:none;text-align:center;">
+        <div id="modal-badge-qr" style="margin-bottom:12px;"></div>
+        <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px;display:inline-block;margin-bottom:8px;">
+          <img id="modal-qr-img" src="" width="200" height="200" style="display:none;border-radius:8px;"/>
+          <div id="modal-qr-placeholder" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;">Aguardando QR...</div>
+        </div>
+        <div style="font-size:12px;color:#475569;" id="modal-timer"></div>
+      </div>
+
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:13px;margin-top:14px;font-size:12.5px;color:#475569;line-height:1.9;">
+        <strong style="color:#94a3b8;display:block;margin-bottom:4px;">Como escanear o QR code:</strong>
+        1. Abra o WhatsApp no celular<br>
+        2. Toque em <strong style="color:#94a3b8;">⋮ → Aparelhos conectados</strong><br>
+        3. Toque em <strong style="color:#94a3b8;">Conectar um aparelho</strong><br>
+        4. Aponte a câmera para o QR acima
+      </div>
     </div>
 
-    <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:13px;margin-top:14px;font-size:12.5px;color:#475569;line-height:1.9;">
-      <strong style="color:#94a3b8;display:block;margin-bottom:4px;">Como escanear o QR code:</strong>
-      1. Abra o WhatsApp no celular<br>
-      2. Toque em <strong style="color:#94a3b8;">⋮ → Aparelhos conectados</strong><br>
-      3. Toque em <strong style="color:#94a3b8;">Conectar um aparelho</strong><br>
-      4. Aponte a câmera para o QR acima
+    <!-- ─── Form Cloud API (Oficial) ─── -->
+    <div id="ns-mode-cloud" style="display:none;">
+      <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:12px;margin-bottom:14px;font-size:12px;color:#94a3b8;line-height:1.7;">
+        <strong style="color:#60a5fa;">WhatsApp Business API (Meta Oficial)</strong><br>
+        Crie um app em <a href="https://developers.facebook.com" target="_blank" style="color:#60a5fa;">developers.facebook.com</a> → Adicione o produto <strong>WhatsApp</strong> e pegue as credenciais no painel.
+      </div>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Telefone (E.164, sem +)</label>
+      <input class="inp" id="cl-display" placeholder="5519910001772" style="width:100%;margin-bottom:10px;"/>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Phone Number ID *</label>
+      <input class="inp" id="cl-pnid" placeholder="123456789012345" style="width:100%;margin-bottom:10px;"/>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">WABA ID (opcional)</label>
+      <input class="inp" id="cl-waba" placeholder="(opcional)" style="width:100%;margin-bottom:10px;"/>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">Access Token *</label>
+      <input class="inp" id="cl-token" placeholder="EAAxxxxxxxxxxxx..." style="width:100%;margin-bottom:10px;"/>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px;font-weight:600;">App Secret</label>
+      <input class="inp" id="cl-secret" placeholder="(necessário para validar webhooks)" style="width:100%;margin-bottom:14px;"/>
+      <button class="btn btn-primary" id="cl-btn-conectar" onclick="iniciarSessaoCloud()" style="width:100%;">Conectar via API Oficial</button>
+
+      <!-- Painel pós-cadastro -->
+      <div id="cl-result" style="display:none;margin-top:16px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:14px;font-size:12px;color:#94a3b8;line-height:1.7;">
+        <strong style="color:#4ade80;display:block;margin-bottom:6px;">✓ Conta cadastrada!</strong>
+        Configure no <strong style="color:#e2e8f0;">Meta for Developers</strong> → seu app → <strong>WhatsApp → Configuration → Webhook → Edit</strong>:
+        <div style="margin-top:10px;font-weight:600;color:#cbd5e1;">Callback URL:</div>
+        <div id="cl-out-url" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
+        <div style="margin-top:8px;font-weight:600;color:#cbd5e1;">Verify Token:</div>
+        <div id="cl-out-token" style="background:rgba(0,0,0,.25);padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.06);word-break:break-all;font-family:monospace;font-size:11px;margin-top:3px;cursor:pointer;color:#e2e8f0;" onclick="copiarTexto(this)" title="Clique para copiar"></div>
+        <div style="margin-top:10px;font-size:11px;color:#64748b;">Após salvar, assine os campos <strong style="color:#94a3b8;">messages</strong> e <strong style="color:#94a3b8;">message_status</strong>.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -1070,17 +1109,34 @@ function carregarSessoes() {
       return;
     }
     var html = '<div style="display:flex;flex-direction:column;gap:10px;">';
-    d.sessions.forEach(function(jid) {
-      var telefone = '+' + jid.split(':')[0].split('@')[0];
+    // Usa details (com type) se backend já retornou; senão monta do array de jids.
+    var lista = (d.details && d.details.length) ? d.details : d.sessions.map(function(j){return {jid:j,type:'qr'};});
+    lista.forEach(function(s) {
+      var jid = s.jid || s;
+      var tipo = s.type || 'qr';
       var enc = encodeURIComponent(jid);
+      var telefone, jidLabel, iconBg, iconColor, badgeTipo;
+      if (tipo === 'cloud_api') {
+        telefone = s.phone ? '+' + s.phone : (s.label || jid);
+        jidLabel = jid;
+        iconBg = 'rgba(59,130,246,.14)';
+        iconColor = '#60a5fa';
+        badgeTipo = '<span style="font-size:10px;background:rgba(59,130,246,.18);color:#60a5fa;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">OFICIAL</span>';
+      } else {
+        telefone = '+' + jid.split(':')[0].split('@')[0];
+        jidLabel = jid;
+        iconBg = 'rgba(37,211,102,.12)';
+        iconColor = '#25D366';
+        badgeTipo = '<span style="font-size:10px;background:rgba(37,211,102,.15);color:#25D366;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">QR CODE</span>';
+      }
       html += '<div class="card" style="padding:18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
         + '<div style="display:flex;align-items:center;gap:13px;">'
-        + '<div class="metric-icon" style="background:rgba(37,211,102,.12);">'
-        + '<svg width="17" height="17" fill="#25D366" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>'
+        + '<div class="metric-icon" style="background:' + iconBg + ';">'
+        + '<svg width="17" height="17" fill="' + iconColor + '" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>'
         + '</div>'
         + '<div>'
-        + '<div style="font-size:15px;font-weight:600;color:#e2e8f0;">' + telefone + '</div>'
-        + '<div style="font-size:11.5px;color:#334155;margin-top:2px;">' + jid + '</div>'
+        + '<div style="font-size:15px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px;">' + telefone + ' ' + badgeTipo + '</div>'
+        + '<div style="font-size:11.5px;color:#334155;margin-top:2px;">' + jidLabel + '</div>'
         + '</div></div>'
         + '<div style="display:flex;align-items:center;gap:10px;">'
         + '<span class="badge badge-green">Conectado</span>'
@@ -1125,6 +1181,7 @@ document.getElementById('confirm-modal').addEventListener('click', function(e) {
 // ─── Modal QR ─────────────────────────────────────────────────────────────────
 function abrirModalQR() {
   document.getElementById('qr-modal').classList.add('open');
+  trocarTipoSessao('qr');
 }
 
 function fecharModalQR() {
@@ -1139,6 +1196,94 @@ function fecharModalQR() {
   document.getElementById('modal-badge-qr').textContent = '';
   var ph = document.getElementById('modal-qr-placeholder');
   ph.style.display = 'flex'; ph.style.flexDirection = ''; ph.textContent = 'Aguardando QR...';
+  // Reset Cloud
+  ['cl-display','cl-pnid','cl-waba','cl-token','cl-secret'].forEach(function(id){
+    var el = document.getElementById(id); if (el) el.value = '';
+  });
+  var cr = document.getElementById('cl-result'); if (cr) cr.style.display = 'none';
+  var clBtn = document.getElementById('cl-btn-conectar');
+  if (clBtn) { clBtn.disabled = false; clBtn.textContent = 'Conectar via API Oficial'; }
+}
+
+// Alterna entre tabs QR e Cloud no modal de nova sessão.
+function trocarTipoSessao(modo) {
+  var qr = document.getElementById('ns-mode-qr');
+  var cl = document.getElementById('ns-mode-cloud');
+  var tQ = document.getElementById('ns-tab-qr');
+  var tC = document.getElementById('ns-tab-cloud');
+  if (!qr || !cl || !tQ || !tC) return;
+  if (modo === 'cloud') {
+    qr.style.display = 'none';
+    cl.style.display = 'block';
+    tQ.style.background = 'transparent'; tQ.style.color = '#64748b';
+    tC.style.background = 'rgba(59,130,246,.18)'; tC.style.color = '#60a5fa';
+  } else {
+    qr.style.display = 'block';
+    cl.style.display = 'none';
+    tC.style.background = 'transparent'; tC.style.color = '#64748b';
+    tQ.style.background = 'rgba(37,211,102,.18)'; tQ.style.color = '#25D366';
+  }
+}
+
+// Cadastra uma sessão Cloud API (Meta) e mostra a URL do webhook + verify token.
+function iniciarSessaoCloud() {
+  var pnid = document.getElementById('cl-pnid').value.trim();
+  var waba = document.getElementById('cl-waba').value.trim();
+  var token = document.getElementById('cl-token').value.trim();
+  var secret = document.getElementById('cl-secret').value.trim();
+  var disp = document.getElementById('cl-display').value.replace(/\D/g,'');
+  if (!pnid || !token) { toast('Phone Number ID e Access Token são obrigatórios', 'error'); return; }
+  var btn = document.getElementById('cl-btn-conectar');
+  btn.disabled = true; btn.textContent = 'Validando credenciais...';
+  fetch('/ui/sessions/cloud', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      phone_number_id: pnid,
+      waba_id: waba,
+      access_token: token,
+      app_secret: secret,
+      display_phone: disp
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    btn.disabled = false; btn.textContent = 'Conectar via API Oficial';
+    if (d.error) { toast('Erro: ' + d.error, 'error'); return; }
+    document.getElementById('cl-out-url').textContent = d.webhook_url;
+    document.getElementById('cl-out-token').textContent = d.verify_token;
+    document.getElementById('cl-result').style.display = 'block';
+    toast('Conta Cloud API cadastrada com sucesso', 'success');
+    carregarSessoes();
+  })
+  .catch(function(e){
+    btn.disabled = false; btn.textContent = 'Conectar via API Oficial';
+    toast('Falha: ' + e, 'error');
+  });
+}
+
+// Copia o texto de um elemento para clipboard com feedback visual.
+function copiarTexto(el) {
+  var t = el.textContent;
+  var done = function() {
+    var orig = el.style.background;
+    el.style.background = 'rgba(34,197,94,.25)';
+    setTimeout(function(){ el.style.background = orig; }, 700);
+    toast('Copiado para área de transferência', 'success');
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(done).catch(function(){
+      var ta = document.createElement('textarea');
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch(e){}
+      document.body.removeChild(ta);
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch(e){}
+    document.body.removeChild(ta);
+  }
 }
 
 function iniciarSessao() {
