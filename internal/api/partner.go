@@ -189,18 +189,6 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 			}
 			h.log.Info("partner install: default connector activated", zap.String("domain", domain))
 		}
-
-		// CRÍTICO: o event.bind para ONIMCONNECTORMESSAGEADD é GLOBAL (não por
-		// connector) e deve ser registrado SEMPRE, inclusive quando reinstalamos
-		// o app. Sem isso, o Bitrix não nos notifica quando o operador responde
-		// no Open Lines — e mensagens nunca chegam no WhatsApp.
-		eventURL := appBaseURL + "/bitrix/connector/event"
-		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
-			h.log.Warn("partner install: event.bind ONIMCONNECTORMESSAGEADD failed", zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("partner install: ONIMCONNECTORMESSAGEADD event bound", zap.String("domain", domain), zap.String("url", eventURL))
-		}
-
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
 	}()
 
