@@ -882,14 +882,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		steps["app_info"] = string(appInfo)
 	}
 
-	// Resolve a lista de connectors a registrar:
-	//  - portal.ConnectorID (default — usado pelas sessões QR)
-	//  - cada connector_id único de bitrix_accounts vinculados a este portal
-	//    (sessões Cloud API têm "wa_cloud_<phone_id>" próprio)
+	// Resolve a lista de connectors a registrar a partir de bitrix_accounts.
+	// Cada sessão WhatsApp tem seu próprio connector ("wa_qr_<tel>" ou
+	// "wa_cloud_<phone_id>") — vinculado à sua Open Line específica.
 	connectors := map[string]struct{ Name string; LineID int }{}
-	if portal.ConnectorID != "" {
-		connectors[portal.ConnectorID] = struct{ Name string; LineID int }{"UC Talk", lineID}
-	}
 	if accts, err := h.repo.ListBitrixAccounts(c.Context()); err == nil {
 		for _, a := range accts {
 			acctDomain := strings.TrimPrefix(a.Domain, "https://")
@@ -899,16 +895,52 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 				continue
 			}
 			name := "UC Talk"
-			// Para Cloud, usa um nome mais descritivo
 			if strings.HasPrefix(a.ConnectorID, "wa_cloud_") {
 				if sess, err := h.repo.GetSessionByJID(c.Context(), a.SessionJID); err == nil && sess != nil && sess.CloudDisplayPhone != "" {
 					name = "UC Talk Oficial +" + sess.CloudDisplayPhone
 				} else {
 					name = "UC Talk Oficial"
 				}
+			} else if strings.HasPrefix(a.ConnectorID, "wa_qr_") {
+				phone := strings.TrimPrefix(a.ConnectorID, "wa_qr_")
+				name = "UC Talk +" + phone
 			}
 			connectors[a.ConnectorID] = struct{ Name string; LineID int }{name, a.OpenLineID}
 		}
+	}
+
+	// Desativa connector default ("whatsapp_uc_v2") quando há per-session connectors,
+	// evitando que o Bitrix duplique chats no Open Lines (1 pelo default + 1 pelo
+	// per-session) e que respostas do operador caiam em chats fantasmas.
+	hasPerSession := false
+	for cid := range connectors {
+		if strings.HasPrefix(cid, "wa_qr_") || strings.HasPrefix(cid, "wa_cloud_") {
+			hasPerSession = true
+			break
+		}
+	}
+	if hasPerSession && portal.ConnectorID != "" &&
+		!strings.HasPrefix(portal.ConnectorID, "wa_qr_") &&
+		!strings.HasPrefix(portal.ConnectorID, "wa_cloud_") {
+		// Tenta desativar nas linhas conhecidas
+		seenLines := map[int]bool{}
+		for _, info := range connectors {
+			if info.LineID > 0 {
+				seenLines[info.LineID] = true
+			}
+		}
+		seenLines[lineID] = true
+		for lid := range seenLines {
+			if err := h.bitrixClient.ActivateConnector(c.Context(), creds, portal.ConnectorID, lid, false); err != nil {
+				steps[fmt.Sprintf("deactivate_default_line_%d", lid)] = "erro: " + err.Error()
+			} else {
+				steps[fmt.Sprintf("deactivate_default_line_%d", lid)] = "ok"
+			}
+		}
+	} else if !hasPerSession && portal.ConnectorID != "" {
+		// Fallback: nenhum per-session ainda, mantém comportamento legado
+		// (registra/ativa o default).
+		connectors[portal.ConnectorID] = struct{ Name string; LineID int }{"UC Talk", lineID}
 	}
 
 	// Register cada connector + ativa nas open lines
