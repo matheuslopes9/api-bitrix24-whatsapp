@@ -533,12 +533,18 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div class="section-hdr">
       <div>
         <div class="section-title">Sessões WhatsApp</div>
-        <div class="section-sub">Conecte e gerencie números de telefone</div>
+        <div class="section-sub">Conecte e gerencie quantos números forem necessários (QR ou API Oficial)</div>
       </div>
-      <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalQR()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Nova Sessão
-      </button>
+      <div id="sessoes-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalNovaSessao('qr')" title="Conectar via QR code (whatsmeow)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          QR Code
+        </button>
+        <button class="btn btn-ghost" id="btn-nova-sessao-cloud" onclick="abrirModalNovaSessao('cloud')" title="Conectar via WhatsApp Business API (Meta Oficial)" style="border:1px solid rgba(59,130,246,.4);color:#60a5fa;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          API Oficial
+        </button>
+      </div>
     </div>
     <div id="lista-sessoes"><div style="text-align:center;padding:40px;color:#334155;">Carregando...</div></div>
   </div>
@@ -931,9 +937,13 @@ function apiUrl(base) {
 // Aplica modo portal: esconde menus de admin, mostra badge do portal
 (function() {
   if (!PORTAL) return;
-  // Esconde botão "Nova Sessão" na página de sessões (cliente não cadastra sessões)
+  // Esconde botões de criar sessão (cliente não cadastra sessões — só admin)
+  var actions = document.getElementById('sessoes-actions');
+  if (actions) actions.style.display = 'none';
   var btnNovaSessao = document.getElementById('btn-nova-sessao');
   if (btnNovaSessao) btnNovaSessao.style.display = 'none';
+  var btnNovaCloud = document.getElementById('btn-nova-sessao-cloud');
+  if (btnNovaCloud) btnNovaCloud.style.display = 'none';
   // Mostra badge do portal no sidebar
   var portalBadge = document.getElementById('sidebar-portal-badge');
   if (portalBadge) {
@@ -1104,7 +1114,10 @@ function carregarSessoes() {
       wrap.innerHTML = '<div class="card" style="padding:40px;text-align:center;">'
         + '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#1e293b" stroke-width="1.5" style="margin:0 auto 14px;display:block;"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>'
         + '<p style="color:#334155;font-size:14px;margin-bottom:16px;">Nenhum número conectado ainda</p>'
-        + '<button class="btn btn-primary" onclick="abrirModalQR()">Conectar primeiro número</button>'
+        + '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'
+        + '<button class="btn btn-primary" onclick="abrirModalNovaSessao(\'qr\')">📱 Conectar via QR Code</button>'
+        + '<button class="btn btn-ghost" onclick="abrirModalNovaSessao(\'cloud\')" style="border:1px solid rgba(59,130,246,.4);color:#60a5fa;">☁️ API Oficial (Meta)</button>'
+        + '</div>'
         + '</div>';
       return;
     }
@@ -1182,6 +1195,12 @@ document.getElementById('confirm-modal').addEventListener('click', function(e) {
 function abrirModalQR() {
   document.getElementById('qr-modal').classList.add('open');
   trocarTipoSessao('qr');
+}
+
+// Abre o modal de nova sessão e seleciona o tab desejado (qr | cloud).
+function abrirModalNovaSessao(modo) {
+  document.getElementById('qr-modal').classList.add('open');
+  trocarTipoSessao(modo === 'cloud' ? 'cloud' : 'qr');
 }
 
 function fecharModalQR() {
