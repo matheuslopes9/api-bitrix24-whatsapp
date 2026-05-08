@@ -89,37 +89,61 @@ func handleCloudOutbound(
 	}
 
 	if err != nil {
-		metrics.MessagesFailed.Inc()
-		log.Error("cloud outbound send failed",
-			zap.String("session_jid", job.SessionJID),
-			zap.String("to_phone", toPhone),
-			zap.Error(err),
-		)
-		// Detecta erro de tipo não suportado pela Meta — envia uma msg de texto
-		// no chat (do operador para o cliente) avisando, e NÃO retry.
-		// Os tipos suportados estão em:
-		//   https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
 		errStr := err.Error()
-		if strings.Contains(errStr, "Param file must be a file with one of the following types") ||
-			strings.Contains(errStr, "(#100)") {
+
+		// Tamanho excede limite Meta (100MB) — não tem como enviar.
+		// Avisa o operador e não tenta retry.
+		if strings.Contains(errStr, "status 413") {
+			metrics.MessagesFailed.Inc()
+			log.Error("cloud outbound: file too large",
+				zap.String("file_name", fileName), zap.Int("size", len(fileData)))
 			aviso := fmt.Sprintf(
-				"⚠️ O arquivo *%s* não pôde ser enviado: o WhatsApp Business API "+
-					"(canal oficial) não aceita arquivos do tipo desse formato. "+
-					"Compacte como ZIP e envie, ou use um formato suportado: "+
-					"PDF, Word, Excel, PowerPoint, JPG, PNG, MP4, MP3, OGG.",
-				fileName,
+				"⚠️ O arquivo *%s* (%.1f MB) é muito grande. "+
+					"O WhatsApp Business API limita arquivos a 100 MB. "+
+					"Compacte ou divida o arquivo antes de enviar.",
+				fileName, float64(len(fileData))/(1024*1024),
 			)
-			if _, sendErr := cloudMgr.SendText(c, job.SessionJID, toPhone, aviso); sendErr != nil {
-				log.Warn("cloud outbound: failed to send unsupported-file warning",
-					zap.Error(sendErr))
-			} else {
-				log.Info("cloud outbound: notified operator about unsupported file type",
-					zap.String("file_name", fileName), zap.String("mime", fileMime))
-			}
-			// Retorna nil para NÃO tentar retry — o aviso já foi enviado
+			_, _ = cloudMgr.SendText(c, job.SessionJID, toPhone, aviso)
 			return nil
 		}
-		return err
+
+		// Tipo não suportado — TENTA NOVAMENTE como application/pdf (que está
+		// na lista oficial da Meta). O WhatsApp usa o filename para identificar
+		// o tipo — o cliente recebe o arquivo com o nome correto e a extensão
+		// original, e ao baixar abre normalmente. Mesma estratégia que clients
+		// como Wassenger / outros gateways usam para "qualquer arquivo".
+		if strings.Contains(errStr, "Param file must be a file with one of the following types") ||
+			strings.Contains(errStr, "(#100)") {
+			log.Info("cloud outbound: retrying as application/pdf (force document)",
+				zap.String("file_name", fileName),
+				zap.String("mime_rejected", fileMime))
+			waID, err = cloudMgr.SendDocument(c, job.SessionJID, toPhone, fileData,
+				"application/pdf", fileName, "document")
+			if err == nil {
+				log.Info("cloud outbound: sent as document fallback",
+					zap.String("file_name", fileName), zap.String("wa_id", waID))
+				// Continua para o save no banco / delivery (segue o fluxo normal abaixo)
+			} else {
+				metrics.MessagesFailed.Inc()
+				log.Error("cloud outbound: fallback as document also failed",
+					zap.String("file_name", fileName), zap.Error(err))
+				aviso := fmt.Sprintf(
+					"⚠️ O arquivo *%s* não pôde ser enviado pelo WhatsApp Business API. "+
+						"Tente enviar pelo WhatsApp QR code, ou compacte como ZIP.",
+					fileName,
+				)
+				_, _ = cloudMgr.SendText(c, job.SessionJID, toPhone, aviso)
+				return nil
+			}
+		} else {
+			metrics.MessagesFailed.Inc()
+			log.Error("cloud outbound send failed",
+				zap.String("session_jid", job.SessionJID),
+				zap.String("to_phone", toPhone),
+				zap.Error(err),
+			)
+			return err
+		}
 	}
 
 	// Salva no banco (mesmo padrão do whatsmeow path).
