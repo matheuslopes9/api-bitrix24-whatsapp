@@ -95,6 +95,30 @@ func handleCloudOutbound(
 			zap.String("to_phone", toPhone),
 			zap.Error(err),
 		)
+		// Detecta erro de tipo não suportado pela Meta — envia uma msg de texto
+		// no chat (do operador para o cliente) avisando, e NÃO retry.
+		// Os tipos suportados estão em:
+		//   https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+		errStr := err.Error()
+		if strings.Contains(errStr, "Param file must be a file with one of the following types") ||
+			strings.Contains(errStr, "(#100)") {
+			aviso := fmt.Sprintf(
+				"⚠️ O arquivo *%s* não pôde ser enviado: o WhatsApp Business API "+
+					"(canal oficial) não aceita arquivos do tipo desse formato. "+
+					"Compacte como ZIP e envie, ou use um formato suportado: "+
+					"PDF, Word, Excel, PowerPoint, JPG, PNG, MP4, MP3, OGG.",
+				fileName,
+			)
+			if _, sendErr := cloudMgr.SendText(c, job.SessionJID, toPhone, aviso); sendErr != nil {
+				log.Warn("cloud outbound: failed to send unsupported-file warning",
+					zap.Error(sendErr))
+			} else {
+				log.Info("cloud outbound: notified operator about unsupported file type",
+					zap.String("file_name", fileName), zap.String("mime", fileMime))
+			}
+			// Retorna nil para NÃO tentar retry — o aviso já foi enviado
+			return nil
+		}
 		return err
 	}
 
@@ -272,6 +296,8 @@ func mimeFromFileName(name string) string {
 		return "audio/amr"
 	case ".ogg", ".opus":
 		return "audio/ogg"
+	case ".wav":
+		return "audio/wav"
 	// Imagens
 	case ".jpg", ".jpeg":
 		return "image/jpeg"
@@ -279,7 +305,11 @@ func mimeFromFileName(name string) string {
 		return "image/png"
 	case ".webp":
 		return "image/webp"
-	// Documentos
+	case ".gif":
+		return "image/gif"
+	case ".bmp":
+		return "image/bmp"
+	// Documentos Office (oficialmente aceitos pela Meta)
 	case ".pdf":
 		return "application/pdf"
 	case ".doc":
@@ -296,6 +326,35 @@ func mimeFromFileName(name string) string {
 		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 	case ".txt":
 		return "text/plain"
+	case ".csv":
+		return "text/csv"
+	case ".rtf":
+		return "application/rtf"
+	// Arquivos compactados
+	case ".zip":
+		return "application/zip"
+	case ".rar":
+		return "application/vnd.rar"
+	case ".7z":
+		return "application/x-7z-compressed"
+	case ".tar":
+		return "application/x-tar"
+	case ".gz":
+		return "application/gzip"
+	// Executáveis / instaladores
+	case ".msi":
+		return "application/x-msi"
+	case ".exe":
+		return "application/x-msdownload"
+	// Outros (provavelmente serão rejeitados pela Meta — fallback genérico)
+	case ".bak":
+		return "application/octet-stream"
+	case ".json":
+		return "application/json"
+	case ".xml":
+		return "application/xml"
+	case ".html", ".htm":
+		return "text/html"
 	}
 	return ""
 }
