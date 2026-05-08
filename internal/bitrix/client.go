@@ -535,17 +535,21 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 
 // ConnectorSetOutboundError marca uma mensagem outbound como FALHA no Bitrix.
 // O Bitrix24 não tem método nativo de "status error" — só delivery/reading.
-// Workaround: reescrevemos o conteúdo da mensagem do operador via
-// imconnector.update.messages para exibir o motivo do erro em destaque,
-// e enviamos delivery para parar o spinner.
-// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-update-messages.html
+// Tentar update.messages com files retorna "Incomplete data" e enviar
+// delivery sintético gera falsa confirmação ("viewed by"), que é pior.
+//
+// Estratégia:
+//   1) imconnector.delete.messages — remove a bolha original do operador
+//      (o nome do .bak some da conversa, não vira "entregue");
+//   2) imconnector.send.messages — injeta uma msg inbound de sistema com
+//      o motivo da falha. Operador vê notificação clara, cliente real
+//      no WhatsApp não recebe nada.
 func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, chatExtID, errorMsg string) error {
 	chatIDInt, _ := strconv.Atoi(imChatID)
 	msgIDInt, _ := strconv.Atoi(imMsgID)
 
-	failText := "[FALHA NO ENVIO] " + errorMsg
-
-	updatePayload := map[string]interface{}{
+	// 1) Apaga a bolha original do operador.
+	deletePayload := map[string]interface{}{
 		"CONNECTOR": connectorID,
 		"LINE":      lineID,
 		"MESSAGES": []map[string]interface{}{
@@ -558,49 +562,38 @@ func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCred
 					"id": chatExtID,
 				},
 				"message": map[string]interface{}{
-					"text": failText,
+					"id": "failed_" + imMsgID,
 				},
 			},
 		},
 	}
-	c.log.Info("imconnector.update.messages (error) request",
+	c.log.Info("imconnector.delete.messages (error) request",
 		zap.String("connector", connectorID),
 		zap.Int("line", lineID),
 		zap.String("im_chat_id", imChatID),
 		zap.String("im_msg_id", imMsgID),
 		zap.String("chat_ext_id", chatExtID),
-		zap.String("error_msg", errorMsg),
 	)
-	raw, err := c.call(ctx, creds, "imconnector.update.messages", updatePayload)
-	c.log.Info("imconnector.update.messages (error) response", zap.String("raw", string(raw)), zap.Error(err))
-
-	// Para o spinner: confirma "delivery" mesmo em caso de erro, com um id sintético.
-	// Sem isso, o Bitrix mantém a UI girando indefinidamente.
-	syntheticID := "failed_" + imMsgID
-	deliveryPayload := map[string]interface{}{
-		"CONNECTOR": connectorID,
-		"LINE":      lineID,
-		"MESSAGES": []map[string]interface{}{
-			{
-				"im": map[string]interface{}{
-					"chat_id":    chatIDInt,
-					"message_id": msgIDInt,
-				},
-				"message": map[string]interface{}{
-					"id":   []string{syntheticID},
-					"date": time.Now().Unix(),
-				},
-				"chat": map[string]interface{}{
-					"id": chatExtID,
-				},
-			},
-		},
-	}
-	rawDel, errDel := c.call(ctx, creds, "imconnector.send.status.delivery", deliveryPayload)
-	c.log.Info("imconnector.send.status.delivery (error stop-spinner) response",
+	rawDel, errDel := c.call(ctx, creds, "imconnector.delete.messages", deletePayload)
+	c.log.Info("imconnector.delete.messages (error) response",
 		zap.String("raw", string(rawDel)), zap.Error(errDel))
 
-	if err != nil {
+	// 2) Injeta msg de sistema (inbound) na conversa avisando a falha.
+	sysMsg := ConnectorMessage{
+		User: ConnectorUser{
+			ID:   chatExtID,
+			Name: "Sistema",
+		},
+		Message: ConnectorMsgBody{
+			ID:   "fail_" + imMsgID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
+			Text: "❌ FALHA NO ENVIO: " + errorMsg,
+		},
+		Chat: ConnectorChat{
+			ID: chatExtID,
+		},
+	}
+	if _, err := c.ConnectorSendMessage(ctx, creds, connectorID, lineID, sysMsg); err != nil {
+		c.log.Warn("imconnector.send.messages (error notice) failed", zap.Error(err))
 		return err
 	}
 	return errDel
