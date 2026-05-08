@@ -78,7 +78,7 @@ func main() {
 	// ─── WhatsApp Manager (QR Code via whatsmeow) ─────────────────────────
 	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
 	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, nil)
-	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, metrics, log))
+	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, bitrixClient, cfg.App.BaseURL(), metrics, log))
 
 	// Carrega todas as sessões QR salvas no banco
 	if err := waManager.LoadAll(ctx); err != nil {
@@ -150,6 +150,17 @@ func main() {
 			}
 			if fileName == "" {
 				fileName = "file"
+			}
+			// Bloqueio 2GB exclusivo do QR — espelha o tratamento Cloud (100MB).
+			// Apaga a bolha do operador e injeta msg de sistema; cliente não recebe nada.
+			if int64(len(fileData)) > whatsapp.MaxQRMediaBytes {
+				sizeGB := float64(len(fileData)) / (1024 * 1024 * 1024)
+				log.Error("qr outbound: file too large",
+					zap.String("file_name", fileName), zap.Float64("size_gb", sizeGB))
+				notifyQROperatorError(c, bitrixClient, repo, log, job,
+					fmt.Sprintf("Arquivo %s (%.2f GB) excede o limite de 2 GB do WhatsApp.",
+						fileName, sizeGB))
+				return nil
 			}
 			log.Info("outbound file", zap.String("name", fileName), zap.String("mime", fileMime))
 			if fileMime == "audio/mpeg" {
@@ -322,6 +333,8 @@ func buildMessageHandler(
 	q *queue.Queue,
 	repo *db.Repository,
 	waManager *whatsapp.Manager,
+	bitrixClient *bitrix.Client,
+	appBase string,
 	metrics *telemetry.Metrics,
 	log *zap.Logger,
 ) whatsapp.MessageHandler {
@@ -376,6 +389,20 @@ func buildMessageHandler(
 			mediaName = doc.GetFileName()
 			if mediaName == "" {
 				mediaName = "document"
+			}
+			// Pre-check tamanho antes de baixar — evita gastar banda em arquivos
+			// que vão ser rejeitados de qualquer jeito.
+			if doc.GetFileLength() > whatsapp.MaxQRMediaBytes {
+				sizeGB := float64(doc.GetFileLength()) / (1024 * 1024 * 1024)
+				warnMsg := fmt.Sprintf("⚠️ Não foi possível receber este arquivo (%.2f GB). O WhatsApp limita envios a 2 GB. Por favor, divida em partes menores ou compacte o arquivo.", sizeGB)
+				log.Warn("qr inbound: document too large — notifying client",
+					zap.String("file", mediaName),
+					zap.Uint64("file_length", doc.GetFileLength()))
+				if _, sendErr := waManager.Send(ctx, sessionJID, evt.Info.Sender.String(), warnMsg); sendErr != nil {
+					log.Warn("qr inbound: failed to notify client about large document",
+						zap.Error(sendErr))
+				}
+				return
 			}
 			if data, err := waManager.DownloadMedia(sessionJID, doc); err == nil {
 				mediaData = data
@@ -478,6 +505,21 @@ func buildMessageHandler(
 			MediaData:   mediaData,
 			MediaName:   mediaName,
 			MediaMime:   mediaMime,
+		}
+
+		// Mídias grandes (> 30MB) estouram o disk.storage.uploadfile (que faz
+		// base64). Caminho exclusivo do QR: hospeda no Redis e entrega ao
+		// Bitrix com link público — sem passar pelo processor.
+		if len(mediaData) > qrLargeMediaThreshold && mediaName != "" {
+			ok, err := deliverQRInboundViaPublicLink(ctx, bitrixClient, repo, q, appBase, log, job)
+			if err != nil {
+				log.Warn("qr inbound: public link path failed, falling back to default queue",
+					zap.String("file", mediaName), zap.Error(err))
+			} else if ok {
+				log.Info("qr inbound: delivered via public link",
+					zap.String("file", mediaName), zap.Int("size", len(mediaData)))
+				return
+			}
 		}
 
 		if err := q.PushInbound(ctx, job); err != nil {
