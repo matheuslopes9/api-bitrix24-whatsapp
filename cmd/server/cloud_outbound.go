@@ -456,6 +456,7 @@ func notifyOperatorError(
 			job.BitrixLine,
 			job.BitrixImChatID,
 			job.BitrixImMsgID,
+			job.BitrixChatExtID,
 			errorMsg,
 		); err != nil {
 			log.Warn("notifyOperatorError: failed to mark error",

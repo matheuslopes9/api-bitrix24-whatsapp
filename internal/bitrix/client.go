@@ -534,13 +534,18 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 }
 
 // ConnectorSetOutboundError marca uma mensagem outbound como FALHA no Bitrix.
-// Resultado: o operador vê a msg em vermelho com indicador de erro, sem avisar
-// o cliente. Usado quando a Meta rejeita o arquivo (tamanho > 100MB etc).
-// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-send-status-error.html
-func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, errorMsg string) error {
+// O Bitrix24 não tem método nativo de "status error" — só delivery/reading.
+// Workaround: reescrevemos o conteúdo da mensagem do operador via
+// imconnector.update.messages para exibir o motivo do erro em destaque,
+// e enviamos delivery para parar o spinner.
+// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-update-messages.html
+func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, chatExtID, errorMsg string) error {
 	chatIDInt, _ := strconv.Atoi(imChatID)
 	msgIDInt, _ := strconv.Atoi(imMsgID)
-	payload := map[string]interface{}{
+
+	failText := "[FALHA NO ENVIO] " + errorMsg
+
+	updatePayload := map[string]interface{}{
 		"CONNECTOR": connectorID,
 		"LINE":      lineID,
 		"MESSAGES": []map[string]interface{}{
@@ -549,20 +554,56 @@ func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCred
 					"chat_id":    chatIDInt,
 					"message_id": msgIDInt,
 				},
-				"description": errorMsg, // texto que aparece como motivo da falha pro operador
+				"chat": map[string]interface{}{
+					"id": chatExtID,
+				},
+				"message": map[string]interface{}{
+					"text": failText,
+				},
 			},
 		},
 	}
-	c.log.Info("imconnector.send.status.error request",
+	c.log.Info("imconnector.update.messages (error) request",
 		zap.String("connector", connectorID),
 		zap.Int("line", lineID),
 		zap.String("im_chat_id", imChatID),
 		zap.String("im_msg_id", imMsgID),
+		zap.String("chat_ext_id", chatExtID),
 		zap.String("error_msg", errorMsg),
 	)
-	raw, err := c.call(ctx, creds, "imconnector.send.status.error", payload)
-	c.log.Info("imconnector.send.status.error response", zap.String("raw", string(raw)), zap.Error(err))
-	return err
+	raw, err := c.call(ctx, creds, "imconnector.update.messages", updatePayload)
+	c.log.Info("imconnector.update.messages (error) response", zap.String("raw", string(raw)), zap.Error(err))
+
+	// Para o spinner: confirma "delivery" mesmo em caso de erro, com um id sintético.
+	// Sem isso, o Bitrix mantém a UI girando indefinidamente.
+	syntheticID := "failed_" + imMsgID
+	deliveryPayload := map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"MESSAGES": []map[string]interface{}{
+			{
+				"im": map[string]interface{}{
+					"chat_id":    chatIDInt,
+					"message_id": msgIDInt,
+				},
+				"message": map[string]interface{}{
+					"id":   []string{syntheticID},
+					"date": time.Now().Unix(),
+				},
+				"chat": map[string]interface{}{
+					"id": chatExtID,
+				},
+			},
+		},
+	}
+	rawDel, errDel := c.call(ctx, creds, "imconnector.send.status.delivery", deliveryPayload)
+	c.log.Info("imconnector.send.status.delivery (error stop-spinner) response",
+		zap.String("raw", string(rawDel)), zap.Error(errDel))
+
+	if err != nil {
+		return err
+	}
+	return errDel
 }
 
 // BindEvent registra um webhook para um evento do Bitrix24.
