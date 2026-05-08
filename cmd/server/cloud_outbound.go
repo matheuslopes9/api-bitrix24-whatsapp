@@ -60,11 +60,18 @@ func handleCloudOutbound(
 	var waID string
 	var err error
 	if len(fileData) > 0 {
-		if fileMime == "" {
-			fileMime = "application/octet-stream"
-		}
 		if fileName == "" {
 			fileName = "file"
+		}
+		// Bitrix as vezes envia mime "application/octet-stream" generico para
+		// arquivos de video/audio. A Meta Cloud API rejeita esse mime.
+		// Tenta inferir pelo nome do arquivo (extensao).
+		if fileMime == "" || fileMime == "application/octet-stream" {
+			if guessed := mimeFromFileName(fileName); guessed != "" {
+				fileMime = guessed
+			} else {
+				fileMime = "application/octet-stream"
+			}
 		}
 		waID, err = cloudMgr.SendDocument(c, job.SessionJID, toPhone, fileData, fileMime, fileName, "")
 	} else {
@@ -172,6 +179,62 @@ func stripJIDToPhone(jid string) string {
 		}
 	}
 	return string(out)
+}
+
+// mimeFromFileName infere o MIME pela extensão do arquivo.
+// Necessário porque o Bitrix às vezes manda "application/octet-stream"
+// genérico para arquivos cujo MIME real a Meta Cloud API exige específico.
+// Lista alinhada com tipos aceitos pela Meta:
+// https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media#supported-media-types
+func mimeFromFileName(name string) string {
+	lower := strings.ToLower(name)
+	dot := strings.LastIndex(lower, ".")
+	if dot < 0 {
+		return ""
+	}
+	switch lower[dot:] {
+	// Vídeos
+	case ".mp4":
+		return "video/mp4"
+	case ".3gp", ".3gpp":
+		return "video/3gpp"
+	// Áudios
+	case ".mp3":
+		return "audio/mpeg"
+	case ".aac":
+		return "audio/aac"
+	case ".m4a":
+		return "audio/mp4"
+	case ".amr":
+		return "audio/amr"
+	case ".ogg", ".opus":
+		return "audio/ogg"
+	// Imagens
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	// Documentos
+	case ".pdf":
+		return "application/pdf"
+	case ".doc":
+		return "application/msword"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".txt":
+		return "text/plain"
+	}
+	return ""
 }
 
 // fetchHTTPBytes faz GET simples — usado pelo cloud_outbound se downloadURL
