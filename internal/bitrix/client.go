@@ -533,6 +533,38 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 	return err
 }
 
+// ConnectorSetOutboundError marca uma mensagem outbound como FALHA no Bitrix.
+// Resultado: o operador vê a msg em vermelho com indicador de erro, sem avisar
+// o cliente. Usado quando a Meta rejeita o arquivo (tamanho > 100MB etc).
+// Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-send-status-error.html
+func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, errorMsg string) error {
+	chatIDInt, _ := strconv.Atoi(imChatID)
+	msgIDInt, _ := strconv.Atoi(imMsgID)
+	payload := map[string]interface{}{
+		"CONNECTOR": connectorID,
+		"LINE":      lineID,
+		"MESSAGES": []map[string]interface{}{
+			{
+				"im": map[string]interface{}{
+					"chat_id":    chatIDInt,
+					"message_id": msgIDInt,
+				},
+				"description": errorMsg, // texto que aparece como motivo da falha pro operador
+			},
+		},
+	}
+	c.log.Info("imconnector.send.status.error request",
+		zap.String("connector", connectorID),
+		zap.Int("line", lineID),
+		zap.String("im_chat_id", imChatID),
+		zap.String("im_msg_id", imMsgID),
+		zap.String("error_msg", errorMsg),
+	)
+	raw, err := c.call(ctx, creds, "imconnector.send.status.error", payload)
+	c.log.Info("imconnector.send.status.error response", zap.String("raw", string(raw)), zap.Error(err))
+	return err
+}
+
 // BindEvent registra um webhook para um evento do Bitrix24.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
 	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{

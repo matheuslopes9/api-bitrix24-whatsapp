@@ -100,17 +100,16 @@ func handleCloudOutbound(
 	if err != nil {
 		errStr := err.Error()
 
-		// Tamanho excede limite Meta (100MB) — não tem como enviar.
+		// Tamanho excede limite Meta (100MB) — marca msg como FALHA pro operador
+		// no Bitrix, SEM avisar o cliente. O operador vê a msg em vermelho.
 		if strings.Contains(errStr, "status 413") {
 			metrics.MessagesFailed.Inc()
+			sizeMB := float64(len(fileData)) / (1024 * 1024)
 			log.Error("cloud outbound: file too large",
-				zap.String("file_name", fileName), zap.Int("size", len(fileData)))
-			aviso := fmt.Sprintf(
-				"⚠️ O arquivo *%s* (%.1f MB) é muito grande. "+
-					"O WhatsApp Business API limita arquivos a 100 MB.",
-				fileName, float64(len(fileData))/(1024*1024),
-			)
-			_, _ = cloudMgr.SendText(c, job.SessionJID, toPhone, aviso)
+				zap.String("file_name", fileName), zap.Float64("size_mb", sizeMB))
+			notifyOperatorError(c, bitrixClient, repo, log, job,
+				fmt.Sprintf("Arquivo %s (%.1f MB) excede o limite de 100 MB do WhatsApp Business API.",
+					fileName, sizeMB))
 			return nil
 		}
 
@@ -418,6 +417,54 @@ func mimeFromFileName(name string) string {
 		return "text/html"
 	}
 	return ""
+}
+
+// notifyOperatorError marca a mensagem outbound como FALHA no Bitrix —
+// usa imconnector.send.status.error para que o operador veja a msg em
+// vermelho/falha no Open Lines. NÃO envia nada pro cliente.
+func notifyOperatorError(
+	ctx context.Context,
+	bitrixClient *bitrix.Client,
+	repo *db.Repository,
+	log *zap.Logger,
+	job *queue.OutboundJob,
+	errorMsg string,
+) {
+	if job.BitrixConnector == "" || job.BitrixImMsgID == "" {
+		log.Warn("notifyOperatorError: skip — missing connector or im_msg_id",
+			zap.String("connector", job.BitrixConnector),
+			zap.String("im_msg_id", job.BitrixImMsgID))
+		return
+	}
+	go func() {
+		bgCtx := context.Background()
+		acct, err := repo.GetBitrixAccountByJID(bgCtx, job.SessionJID)
+		if err != nil {
+			log.Warn("notifyOperatorError: bitrix account not found",
+				zap.String("session", job.SessionJID), zap.Error(err))
+			return
+		}
+		creds := bitrix.TenantCreds{
+			Domain:       acct.Domain,
+			ClientID:     acct.ClientID,
+			ClientSecret: acct.ClientSecret,
+			RedirectURI:  acct.RedirectURI,
+		}
+		if err := bitrixClient.ConnectorSetOutboundError(
+			bgCtx, creds,
+			job.BitrixConnector,
+			job.BitrixLine,
+			job.BitrixImChatID,
+			job.BitrixImMsgID,
+			errorMsg,
+		); err != nil {
+			log.Warn("notifyOperatorError: failed to mark error",
+				zap.Error(err), zap.String("error_msg", errorMsg))
+		} else {
+			log.Info("notifyOperatorError: msg marked as failed in Bitrix",
+				zap.String("error_msg", errorMsg))
+		}
+	}()
 }
 
 // sendViaPublicLink hospeda o arquivo no Redis com TTL 1h e manda à Meta o
