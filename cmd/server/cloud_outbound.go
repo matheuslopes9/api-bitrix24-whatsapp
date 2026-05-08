@@ -76,6 +76,8 @@ func handleCloudOutbound(
 				fileMime = "application/octet-stream"
 			}
 		}
+		// Normaliza variantes legadas que a Meta nao reconhece para o IANA padrao.
+		fileMime = normalizeMimeForMeta(fileMime)
 		log.Info("cloud outbound: sending file",
 			zap.String("session_jid", job.SessionJID),
 			zap.String("file_name", fileName),
@@ -213,6 +215,37 @@ func stripJIDToPhone(jid string) string {
 		}
 	}
 	return string(out)
+}
+
+// normalizeMimeForMeta converte variantes legadas / não-padrão para o
+// MIME oficial IANA que a Meta Cloud API aceita.
+// Ex: Bitrix manda "application/x-zip-compressed" — Meta aceita "application/zip".
+func normalizeMimeForMeta(mime string) string {
+	switch strings.ToLower(strings.TrimSpace(mime)) {
+	// Variantes de ZIP
+	case "application/x-zip-compressed", "application/x-zip":
+		return "application/zip"
+	// Variantes de RAR
+	case "application/x-rar-compressed":
+		return "application/vnd.rar"
+	// Variantes de 7z
+	case "application/x-7zip-compressed", "application/x-7z":
+		return "application/x-7z-compressed"
+	// Variantes de TAR
+	case "application/tar":
+		return "application/x-tar"
+	// Variantes de WAV (Meta tem suporte limitado — geralmente rejeita,
+	// mas tentamos com o MIME mais padrão)
+	case "audio/x-wav", "audio/wave", "audio/vnd.wave":
+		return "audio/wav"
+	// Variantes de MP3
+	case "audio/mp3":
+		return "audio/mpeg"
+	// Variantes de JPEG
+	case "image/jpg", "image/pjpeg":
+		return "image/jpeg"
+	}
+	return mime
 }
 
 // mimeFromMagic detecta o MIME pelos primeiros bytes do arquivo.
