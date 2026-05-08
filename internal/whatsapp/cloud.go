@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -21,6 +22,14 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
+
+// ErrMediaTooLarge é retornado quando a mídia inbound excede o limite do
+// WhatsApp Business API (100MB). Permite o webhook avisar o cliente sem
+// criar a mensagem no Bitrix.
+var ErrMediaTooLarge = errors.New("media too large")
+
+// MaxInboundMediaBytes — limite de 100MB do WhatsApp Business API.
+const MaxInboundMediaBytes = 100 * 1024 * 1024
 
 // escapeQuotes escapa aspas e backslashes em valores de header HTTP
 // (Content-Disposition filename) — replica o que mime/multipart faz internamente.
@@ -471,12 +480,18 @@ func (cm *CloudManager) DownloadMedia(ctx context.Context, sessionJID, mediaID s
 	var info struct {
 		URL      string `json:"url"`
 		MimeType string `json:"mime_type"`
+		FileSize int64  `json:"file_size"`
 	}
 	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, "", err
 	}
 	if info.URL == "" {
 		return nil, "", fmt.Errorf("media URL vazia: %s", string(body))
+	}
+	// Bloqueia download se exceder 100MB — caller trata ErrMediaTooLarge
+	// avisando o cliente e ignorando no Bitrix.
+	if info.FileSize > MaxInboundMediaBytes {
+		return nil, "", fmt.Errorf("%w: %d bytes", ErrMediaTooLarge, info.FileSize)
 	}
 	// 2) GET na URL com Bearer → bytes
 	req2, _ := http.NewRequestWithContext(ctx, "GET", info.URL, nil)

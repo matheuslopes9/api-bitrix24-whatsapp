@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -213,6 +214,20 @@ func (h *handlers) handleCloudInboundMessage(ctx context.Context, sess *db.Whats
 	if mediaID != "" && h.cloudMgr != nil {
 		data, mime, err := h.cloudMgr.DownloadMedia(ctx, sess.JID, mediaID)
 		if err != nil {
+			// Mídia > 100MB: avisa o cliente e ignora — não cria nada no DB
+			// nem enfileira pro Bitrix. Operador não vê esse arquivo.
+			if errors.Is(err, whatsapp.ErrMediaTooLarge) {
+				h.log.Warn("cloud webhook: inbound media too large — notifying client",
+					zap.String("media_id", mediaID),
+					zap.String("from", fromPhone),
+					zap.Error(err))
+				warnMsg := "⚠️ Não foi possível receber este arquivo. O WhatsApp limita envios a 100 MB. Por favor, divida em partes menores ou compacte o arquivo."
+				if _, sendErr := h.cloudMgr.SendText(ctx, sess.JID, fromPhone, warnMsg); sendErr != nil {
+					h.log.Warn("cloud webhook: failed to notify client about large media",
+						zap.Error(sendErr))
+				}
+				return
+			}
 			h.log.Warn("cloud webhook: media download failed",
 				zap.String("media_id", mediaID), zap.Error(err))
 		} else {
