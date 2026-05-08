@@ -1078,14 +1078,21 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 			return c.SendStatus(fiber.StatusOK)
 		}
 	}
-	dedupKey := "connevt:txt:" + chatID + ":" + cleanText
-	first, err := h.q.MarkProcessed(c.Context(), dedupKey, 30*time.Second)
-	if err != nil {
-		h.log.Warn("connector event: dedup check failed, processing anyway", zap.Error(err))
-	} else if !first {
-		h.log.Info("connector event: ignored (duplicate by chat+text within 30s)",
-			zap.String("chat_id", chatID), zap.String("text", cleanText))
-		return c.SendStatus(fiber.StatusOK)
+	// Dedup por chat+texto: aplicada APENAS para mensagens de texto.
+	// Para arquivos (text vazio), o Bitrix dispara um evento por arquivo dentro
+	// do mesmo segundo — se aplicarmos dedup por texto vazio, todos os arquivos
+	// posteriores no mesmo chat são descartados como "duplicado".
+	// A dedup por im_msg_id acima já protege envios duplicados de arquivos.
+	if cleanText != "" {
+		dedupKey := "connevt:txt:" + chatID + ":" + cleanText
+		first, err := h.q.MarkProcessed(c.Context(), dedupKey, 30*time.Second)
+		if err != nil {
+			h.log.Warn("connector event: dedup check failed, processing anyway", zap.Error(err))
+		} else if !first {
+			h.log.Info("connector event: ignored (duplicate by chat+text within 30s)",
+				zap.String("chat_id", chatID), zap.String("text", cleanText))
+			return c.SendStatus(fiber.StatusOK)
+		}
 	}
 
 	// toJID: usa o chatID normalizado diretamente.
