@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,12 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
+
+// escapeQuotes escapa aspas e backslashes em valores de header HTTP
+// (Content-Disposition filename) — replica o que mime/multipart faz internamente.
+func escapeQuotes(s string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(s)
+}
 
 const (
 	// JID sintético para sessões Cloud API. Formato: cloud:<phone_number_id>@s.whatsapp.net
@@ -331,7 +338,16 @@ func (cm *CloudManager) uploadMedia(ctx context.Context, s *CloudSession, data [
 	w := multipart.NewWriter(body)
 	_ = w.WriteField("messaging_product", "whatsapp")
 	_ = w.WriteField("type", mime)
-	fw, err := w.CreateFormFile("file", fileName)
+
+	// CRÍTICO: a Meta valida o Content-Type DA PARTE "file" no multipart
+	// (não o campo "type" separado). w.CreateFormFile sempre seta
+	// "application/octet-stream" como default, então usamos CreatePart
+	// manualmente com o Content-Type correto.
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name="file"; filename=%q`, escapeQuotes(fileName)))
+	h.Set("Content-Type", mime)
+	fw, err := w.CreatePart(h)
 	if err != nil {
 		return "", err
 	}
