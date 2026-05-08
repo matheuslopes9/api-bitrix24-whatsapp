@@ -110,7 +110,9 @@ func (m *Manager) GetQR(phone string) string {
 	return m.qrCodes[phone]
 }
 
-// LoadAll carrega todas as sessões do banco (ativas e desconectadas) e reconecta.
+// LoadAll carrega todas as sessões QR do banco (ativas e desconectadas) e reconecta.
+// Pula sessões Cloud API — essas são gerenciadas pelo CloudManager (HTTPS stateless,
+// não precisam de WebSocket whatsmeow nem session file SQLite).
 func (m *Manager) LoadAll(ctx context.Context) error {
 	sessions, err := m.repo.ListAllSessions(ctx)
 	if err != nil {
@@ -118,6 +120,10 @@ func (m *Manager) LoadAll(ctx context.Context) error {
 	}
 	connected := 0
 	for _, s := range sessions {
+		// Skip Cloud — não tem session file e não usa whatsmeow.
+		if s.Type == db.SessionTypeCloudAPI {
+			continue
+		}
 		s := s // capture
 		if err := m.connectSession(ctx, &s); err != nil {
 			m.log.Warn("failed to reconnect session", zap.String("jid", s.JID), zap.Error(err))
