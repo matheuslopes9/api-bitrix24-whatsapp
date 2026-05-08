@@ -63,16 +63,26 @@ func handleCloudOutbound(
 		if fileName == "" {
 			fileName = "file"
 		}
+		mimeOriginal := fileMime
 		// Bitrix as vezes envia mime "application/octet-stream" generico para
 		// arquivos de video/audio. A Meta Cloud API rejeita esse mime.
 		// Tenta inferir pelo nome do arquivo (extensao).
 		if fileMime == "" || fileMime == "application/octet-stream" {
 			if guessed := mimeFromFileName(fileName); guessed != "" {
 				fileMime = guessed
+			} else if guessed := mimeFromMagic(fileData); guessed != "" {
+				fileMime = guessed
 			} else {
 				fileMime = "application/octet-stream"
 			}
 		}
+		log.Info("cloud outbound: sending file",
+			zap.String("session_jid", job.SessionJID),
+			zap.String("file_name", fileName),
+			zap.String("mime_original", mimeOriginal),
+			zap.String("mime_resolved", fileMime),
+			zap.Int("size", len(fileData)),
+		)
 		waID, err = cloudMgr.SendDocument(c, job.SessionJID, toPhone, fileData, fileMime, fileName, "")
 	} else {
 		waID, err = cloudMgr.SendText(c, job.SessionJID, toPhone, job.Text)
@@ -179,6 +189,59 @@ func stripJIDToPhone(jid string) string {
 		}
 	}
 	return string(out)
+}
+
+// mimeFromMagic detecta o MIME pelos primeiros bytes do arquivo.
+// Fallback usado quando nem o MIME do Bitrix nem a extensão do nome
+// conseguem identificar o tipo. Cobre os formatos aceitos pela
+// Meta Cloud API (vídeo, áudio, imagem, PDF).
+func mimeFromMagic(data []byte) string {
+	if len(data) < 12 {
+		return ""
+	}
+	// MP4 / 3GPP: bytes 4-7 = "ftyp", depois um identificador de marca
+	if string(data[4:8]) == "ftyp" {
+		brand := string(data[8:12])
+		switch brand {
+		case "3gp4", "3gp5", "3gp6", "3ge6", "3ge7", "3gg6":
+			return "video/3gpp"
+		default:
+			// isom, mp42, M4V, M4A, qt etc.
+			if brand == "M4A " || brand == "M4B " {
+				return "audio/mp4"
+			}
+			return "video/mp4"
+		}
+	}
+	// JPEG: FF D8 FF
+	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return "image/jpeg"
+	}
+	// PNG: 89 50 4E 47 0D 0A 1A 0A
+	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return "image/png"
+	}
+	// WEBP: RIFF....WEBP
+	if string(data[0:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
+		return "image/webp"
+	}
+	// PDF: 25 50 44 46 ("%PDF")
+	if string(data[0:4]) == "%PDF" {
+		return "application/pdf"
+	}
+	// MP3 (ID3 tag): "ID3"
+	if string(data[0:3]) == "ID3" {
+		return "audio/mpeg"
+	}
+	// MP3 (frame sync): FF Fx
+	if data[0] == 0xFF && (data[1]&0xE0) == 0xE0 {
+		return "audio/mpeg"
+	}
+	// OGG: "OggS"
+	if string(data[0:4]) == "OggS" {
+		return "audio/ogg"
+	}
+	return ""
 }
 
 // mimeFromFileName infere o MIME pela extensão do arquivo.
