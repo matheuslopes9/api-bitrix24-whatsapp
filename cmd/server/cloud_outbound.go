@@ -4,8 +4,11 @@ package main
 // Caminho paralelo ao worker whatsmeow — não interfere no fluxo QR.
 
 import (
+	cryptoRand "crypto/rand"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -17,16 +20,20 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.uber.org/zap"
-	"io"
 )
+
+// hexEncode é alias local para encoding/hex.EncodeToString (mantém legibilidade)
+func hexEncode(b []byte) string { return hex.EncodeToString(b) }
 
 func handleCloudOutbound(
 	c context.Context,
 	cloudMgr *whatsapp.CloudManager,
 	bitrixClient *bitrix.Client,
+	q *queue.Queue,
 	repo *db.Repository,
 	log *zap.Logger,
 	metrics *telemetry.Metrics,
+	appBase string,
 	job *queue.OutboundJob,
 ) error {
 	// Resolve o telefone do destinatário a partir do ToJID.
@@ -91,37 +98,58 @@ func handleCloudOutbound(
 	}
 
 	if err != nil {
-		metrics.MessagesFailed.Inc()
-		log.Error("cloud outbound send failed",
-			zap.String("session_jid", job.SessionJID),
-			zap.String("to_phone", toPhone),
-			zap.Error(err),
-		)
-		// Detecta erro de tipo não suportado pela Meta — envia uma msg de texto
-		// no chat (do operador para o cliente) avisando, e NÃO retry.
-		// Os tipos suportados estão em:
-		//   https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
 		errStr := err.Error()
-		if strings.Contains(errStr, "Param file must be a file with one of the following types") ||
-			strings.Contains(errStr, "(#100)") {
+
+		// Tamanho excede limite Meta (100MB) — não tem como enviar.
+		if strings.Contains(errStr, "status 413") {
+			metrics.MessagesFailed.Inc()
+			log.Error("cloud outbound: file too large",
+				zap.String("file_name", fileName), zap.Int("size", len(fileData)))
 			aviso := fmt.Sprintf(
-				"⚠️ O arquivo *%s* não pôde ser enviado: o WhatsApp Business API "+
-					"(canal oficial) não aceita arquivos do tipo desse formato. "+
-					"Compacte como ZIP e envie, ou use um formato suportado: "+
-					"PDF, Word, Excel, PowerPoint, JPG, PNG, MP4, MP3, OGG.",
-				fileName,
+				"⚠️ O arquivo *%s* (%.1f MB) é muito grande. "+
+					"O WhatsApp Business API limita arquivos a 100 MB.",
+				fileName, float64(len(fileData))/(1024*1024),
 			)
-			if _, sendErr := cloudMgr.SendText(c, job.SessionJID, toPhone, aviso); sendErr != nil {
-				log.Warn("cloud outbound: failed to send unsupported-file warning",
-					zap.Error(sendErr))
-			} else {
-				log.Info("cloud outbound: notified operator about unsupported file type",
-					zap.String("file_name", fileName), zap.String("mime", fileMime))
-			}
-			// Retorna nil para NÃO tentar retry — o aviso já foi enviado
+			_, _ = cloudMgr.SendText(c, job.SessionJID, toPhone, aviso)
 			return nil
 		}
-		return err
+
+		// Tipo não suportado no upload direto — TENTA VIA LINK PÚBLICO.
+		// A Meta baixa o arquivo do nosso servidor (mais permissivo do que
+		// o upload direto). Hospedamos no Redis com TTL 1h via /cloud-media/:token.
+		if strings.Contains(errStr, "Param file must be a file with one of the following types") ||
+			strings.Contains(errStr, "(#100)") {
+			log.Info("cloud outbound: upload direct rejected, retrying via public link",
+				zap.String("file_name", fileName),
+				zap.String("mime_rejected", fileMime))
+			waIDLink, linkErr := sendViaPublicLink(c, cloudMgr, q, appBase, job, toPhone, fileData, fileMime, fileName, log)
+			if linkErr == nil && waIDLink != "" {
+				waID = waIDLink
+				err = nil
+				log.Info("cloud outbound: sent via public link",
+					zap.String("file_name", fileName), zap.String("wa_id", waID))
+				// Continua para save no banco / delivery (fluxo normal abaixo)
+			} else {
+				metrics.MessagesFailed.Inc()
+				log.Error("cloud outbound: send via link also failed",
+					zap.String("file_name", fileName), zap.Error(linkErr))
+				aviso := fmt.Sprintf(
+					"⚠️ O arquivo *%s* não pôde ser enviado pelo WhatsApp Business. "+
+						"Tente novamente ou utilize um formato comum (PDF, JPG, MP4).",
+					fileName,
+				)
+				_, _ = cloudMgr.SendText(c, job.SessionJID, toPhone, aviso)
+				return nil
+			}
+		} else {
+			metrics.MessagesFailed.Inc()
+			log.Error("cloud outbound send failed",
+				zap.String("session_jid", job.SessionJID),
+				zap.String("to_phone", toPhone),
+				zap.Error(err),
+			)
+			return err
+		}
 	}
 
 	// Salva no banco (mesmo padrão do whatsmeow path).
@@ -390,6 +418,52 @@ func mimeFromFileName(name string) string {
 		return "text/html"
 	}
 	return ""
+}
+
+// sendViaPublicLink hospeda o arquivo no Redis com TTL 1h e manda à Meta o
+// link público "https://<appBase>/cloud-media/<token>". A Meta baixa do
+// nosso servidor — esse caminho aceita mais tipos de arquivo do que o
+// upload direto (que valida Content-Type estritamente).
+func sendViaPublicLink(
+	ctx context.Context,
+	cloudMgr *whatsapp.CloudManager,
+	q *queue.Queue,
+	appBase string,
+	job *queue.OutboundJob,
+	toPhone string,
+	data []byte,
+	mime, fileName string,
+	log *zap.Logger,
+) (string, error) {
+	if appBase == "" {
+		return "", fmt.Errorf("appBase vazio — sem URL pública configurada")
+	}
+	// Gera token aleatório de 32 chars (16 bytes hex).
+	tokenBytes := make([]byte, 16)
+	if _, err := cryptoRand.Read(tokenBytes); err != nil {
+		return "", fmt.Errorf("gerar token: %w", err)
+	}
+	token := hexEncode(tokenBytes)
+
+	// Salva no Redis com TTL 1 hora (Meta baixa em segundos normalmente).
+	if err := q.StoreMedia(ctx, token, &queue.MediaCache{
+		Data:     data,
+		Mime:     mime,
+		FileName: fileName,
+	}, time.Hour); err != nil {
+		return "", fmt.Errorf("store media in redis: %w", err)
+	}
+
+	publicURL := strings.TrimRight(appBase, "/") + "/cloud-media/" + token
+	log.Info("cloud outbound: hosted file via public link",
+		zap.String("token", token),
+		zap.String("file_name", fileName),
+		zap.Int("size", len(data)),
+		zap.String("url", publicURL),
+	)
+
+	// Envia via SendDocumentByLink — Meta baixa do nosso link.
+	return cloudMgr.SendDocumentByLink(ctx, job.SessionJID, toPhone, publicURL, fileName, "")
 }
 
 // fetchHTTPBytes faz GET simples — usado pelo cloud_outbound se downloadURL

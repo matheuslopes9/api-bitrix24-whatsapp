@@ -325,6 +325,38 @@ func (cm *CloudManager) SendDocument(ctx context.Context, sessionJID, toPhone st
 	return cm.postMessage(ctx, s, payload)
 }
 
+// SendDocumentByLink envia arquivo via URL pública. Diferente de SendDocument
+// (que faz upload + media_id), aqui passamos só o link — a Meta baixa do nosso
+// servidor e entrega ao cliente.
+//
+// Vantagem: a validação de MIME é mais permissiva nesse caminho. Tipos como
+// ZIP, RAR, TAR que falham no upload direto podem passar via link.
+//
+// IMPORTANTE: a URL precisa ser PÚBLICA e retornar binary content (não HTML).
+func (cm *CloudManager) SendDocumentByLink(ctx context.Context, sessionJID, toPhone, link, fileName, caption string) (string, error) {
+	s, ok := cm.Get(sessionJID)
+	if !ok {
+		return "", fmt.Errorf("cloud session not found: %s", sessionJID)
+	}
+	doc := map[string]interface{}{
+		"link": link,
+	}
+	if fileName != "" {
+		doc["filename"] = fileName
+	}
+	if caption != "" {
+		doc["caption"] = caption
+	}
+	payload := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
+		"to":                normalizeRecipient(toPhone),
+		"type":              "document",
+		"document":          doc,
+	}
+	return cm.postMessage(ctx, s, payload)
+}
+
 func (cm *CloudManager) uploadMedia(ctx context.Context, s *CloudSession, data []byte, mime, fileName string) (string, error) {
 	url := fmt.Sprintf("%s/%s/%s/media", s.BaseURL, s.APIVersion, s.PhoneNumberID)
 	if fileName == "" {

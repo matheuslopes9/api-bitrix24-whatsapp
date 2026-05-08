@@ -95,6 +95,10 @@ func New(
 	app.Get("/webhook/cloud/:session_id", h.cloudWebhookVerify)
 	app.Post("/webhook/cloud/:session_id", h.cloudWebhookReceive)
 
+	// ─── Mídia temporária para Cloud API (Meta baixa via link) ────────────
+	// Público sem auth — protegido pelo token aleatório de 32 chars no path.
+	app.Get("/cloud-media/:token", h.cloudMediaServe)
+
 	// ─── Bitrix24 ────────────────────────────────────────────────────────
 	bx := app.Group("/bitrix")
 	bx.Get("/oauth/start", h.bitrixOAuthStart)

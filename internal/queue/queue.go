@@ -176,6 +176,44 @@ func (q *Queue) MarkProcessed(ctx context.Context, key string, ttl time.Duration
 	return ok, nil
 }
 
+// MediaCache representa um arquivo armazenado temporariamente no Redis para
+// servir via endpoint público. Usado pelo Cloud API para enviar tipos não
+// suportados no upload direto (zip, tar, msi, etc.) — a Meta baixa via link.
+type MediaCache struct {
+	Data     []byte `json:"data"`
+	Mime     string `json:"mime"`
+	FileName string `json:"file_name"`
+}
+
+// StoreMedia salva bytes + metadados no Redis com TTL (default 1 hora).
+// Retorna o token aleatório que vai compor a URL pública.
+func (q *Queue) StoreMedia(ctx context.Context, token string, m *MediaCache, ttl time.Duration) error {
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return q.rdb.Set(ctx, "cloudmedia:"+token, data, ttl).Err()
+}
+
+// LoadMedia recupera os bytes + metadados pelo token. Retorna nil se expirou.
+func (q *Queue) LoadMedia(ctx context.Context, token string) (*MediaCache, error) {
+	raw, err := q.rdb.Get(ctx, "cloudmedia:"+token).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m MediaCache
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // Lengths retorna o tamanho atual das filas (para telemetria).
 func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	inbound, _ = q.rdb.LLen(ctx, keyInbound).Result()
