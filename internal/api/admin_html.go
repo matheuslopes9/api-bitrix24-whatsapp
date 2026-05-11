@@ -181,6 +181,7 @@ const adminHomeHTML = `<!doctype html>
       <button id="cleanBanned" style="padding:0.5em 1em;background:#fef3c7;border:1px solid #fde68a;border-radius:5px;cursor:pointer;color:#92400e;">Limpar sess&otilde;es banned</button>
       <button id="cleanPlaceholders" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar portais placeholder</button>
       <button id="cleanSessionFiles" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar arquivos de sess&atilde;o (.db)</button>
+      <button id="cleanLegacyMsgs" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar msgs legacy</button>
     </div>
     <pre class="json" id="debugOut">Carregando...</pre>
   </div>
@@ -451,6 +452,10 @@ document.getElementById('cleanBanned').addEventListener('click',
   () => cleanupAction('/admin/api/cleanup/banned-sessions', 'Limpar sessões banned'));
 document.getElementById('cleanPlaceholders').addEventListener('click',
   () => cleanupAction('/admin/api/cleanup/placeholder-portals', 'Limpar portais placeholder'));
+
+document.getElementById('cleanLegacyMsgs').addEventListener('click',
+  () => cleanupAction('/admin/api/cleanup/legacy-messages',
+    'Apagar mensagens com from_jid/to_jid vazio ou "cloud@s.whatsapp.net" (lixo historico)'));
 
 document.getElementById('cleanSessionFiles').addEventListener('click', async () => {
   if (!confirm('Apagar arquivos .db de sessoes inativas/orfaas?\n\nIsso vai apagar:\n- .db de sessoes Cloud (que nao deveriam ter)\n- .db de sessoes nao-active no banco\n- .db-shm/.db-wal sem .db principal\n\nSessoes Multi-Device ATIVAS sao preservadas.')) return;

@@ -1162,6 +1162,24 @@ func (r *Repository) DeletePlaceholderPortals(ctx context.Context) (int64, error
 	return tag.RowsAffected(), nil
 }
 
+// DeleteLegacyMessages remove mensagens "lixo" do banco:
+//   - from_jid OU to_jid vazio/NULL (msgs antigas sem JID — pré-correções)
+//   - from_jid = 'cloud@s.whatsapp.net' (bug historico do stripDeviceSuffix
+//     que truncava 'cloud:1160...' para 'cloud')
+// Retorna contagem de linhas removidas.
+func (r *Repository) DeleteLegacyMessages(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM messages
+		WHERE from_jid IS NULL OR from_jid = ''
+		   OR to_jid IS NULL OR to_jid = ''
+		   OR from_jid = 'cloud@s.whatsapp.net'
+		   OR to_jid = 'cloud@s.whatsapp.net'`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // CountSessionsByDomain — versão por-domínio (mantida para uso pontual).
 func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (qr, cloud int, err error) {
 	row := r.pool.QueryRow(ctx, `

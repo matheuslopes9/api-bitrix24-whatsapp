@@ -410,6 +410,19 @@ func (h *handlers) adminCleanupBannedSessions(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"deleted": n})
 }
 
+// POST /admin/api/cleanup/legacy-messages — apaga msgs com from_jid/to_jid
+// vazio ou com o valor antigo 'cloud@s.whatsapp.net' (bug ja corrigido,
+// mas o lixo historico ainda polui relatorios).
+func (h *handlers) adminCleanupLegacyMessages(c *fiber.Ctx) error {
+	n, err := h.repo.DeleteLegacyMessages(c.Context())
+	if err != nil {
+		h.log.Error("admin: delete legacy messages failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: deleted legacy messages", zap.Int64("count", n))
+	return c.JSON(fiber.Map{"deleted": n})
+}
+
 // POST /admin/api/cleanup/session-files — remove .db/.db-shm/.db-wal orfaos
 // do diretorio de sessoes (Cloud que nao deveria ter arquivo + sessoes
 // nao-active + sidecars sem .db principal).
