@@ -138,7 +138,7 @@ func New(
 	bx.Post("/crm/upload", h.bitrixCRMUpload)
 	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
 
-	// ─── Relatórios ──────────────────────────────────────────────────────
+	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
 	stats.Get("/daily", h.dailyStats)
 	stats.Get("/queues", h.queueStats)
@@ -147,6 +147,17 @@ func New(
 	stats.Get("/hours", h.hourStats)
 	stats.Get("/contacts", h.contactStats)
 	stats.Get("/export", h.exportStats)
+
+	// ─── Relatórios (sem auth — para dashboard interno consumir do browser) ─
+	// Espelha /stats/* mas sem middleware. Usado pela aba Relatórios do
+	// /dashboard que carrega via fetch sem header X-API-Key.
+	ui.Get("/stats/daily", h.dailyStats)
+	ui.Get("/stats/queues", h.queueStats)
+	ui.Get("/stats/sessions", h.sessionStats)
+	ui.Get("/stats/types", h.typeStats)
+	ui.Get("/stats/hours", h.hourStats)
+	ui.Get("/stats/contacts", h.contactStats)
+	ui.Get("/stats/export", h.exportStats)
 
 	// ─── Simulador interno (testes sem WA/Bitrix reais) ─────────────────
 	app.Get("/sim", h.simPage)

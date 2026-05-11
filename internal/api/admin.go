@@ -133,7 +133,7 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 
 	now := time.Now()
 
-	// 3 queries agregadas — uma vez só, independente de N portais.
+	// 4 queries agregadas — uma vez só, independente de N portais.
 	sessionsByDomain, err := h.repo.AllDomainSessionCounts(ctx)
 	if err != nil {
 		h.log.Error("admin: AllDomainSessionCounts failed", zap.Error(err))
@@ -148,6 +148,13 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 	if err != nil {
 		h.log.Error("admin: AllDomainMessageCounts(1h) failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": "msg counts 1h: " + err.Error()})
+	}
+	// expiry dos tokens VIVOS (bitrix_tokens é atualizado a cada refresh,
+	// diferente de bitrix_portals.expires_at que so reflete o install inicial)
+	tokenExpByDomain, err := h.repo.AllDomainTokenExpiry(ctx)
+	if err != nil {
+		h.log.Error("admin: AllDomainTokenExpiry failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": "token expiry: " + err.Error()})
 	}
 
 	type tenantCard struct {
@@ -175,16 +182,29 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 			MemberID:    p.MemberID,
 			InstalledAt: p.InstalledAt,
 			UpdatedAt:   p.UpdatedAt,
-			TokenExpAt:  p.ExpiresAt,
 			OpenLineID:  p.OpenLineID,
 		}
-		switch {
-		case p.ExpiresAt.Before(now):
+		// Status do token: usa o expires_at do bitrix_tokens (atualizado a cada
+		// refresh, TTL ~1h do access). Se nao tem token na tabela, marca expirado.
+		// access_token vence em 1h, mas o refresh_token (TTL 30d) renova auto.
+		// Entao so consideramos "expired" se passou de 30 dias sem renovar — sinal
+		// de que o refresh tambem morreu e precisa reinstalar.
+		if exp, ok := tokenExpByDomain[p.Domain]; ok {
+			card.TokenExpAt = exp
+			refreshTokenLimit := exp.Add(30 * 24 * time.Hour) // exp do access + 30d do refresh
+			switch {
+			case now.After(refreshTokenLimit):
+				card.TokenStatus = "expired"
+			case now.After(refreshTokenLimit.Add(-3 * 24 * time.Hour)):
+				card.TokenStatus = "expiring"
+			default:
+				card.TokenStatus = "valid"
+			}
+		} else {
+			// Sem token salvo — provavelmente nunca foi feito refresh ou install
+			// nao completou. Mostra como problema.
+			card.TokenExpAt = p.ExpiresAt
 			card.TokenStatus = "expired"
-		case p.ExpiresAt.Before(now.Add(7 * 24 * time.Hour)):
-			card.TokenStatus = "expiring"
-		default:
-			card.TokenStatus = "valid"
 		}
 		if s, ok := sessionsByDomain[p.Domain]; ok {
 			card.ConnQR = s.QR

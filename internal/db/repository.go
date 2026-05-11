@@ -949,13 +949,19 @@ type DomainSessionCounts struct {
 
 // AllDomainSessionCounts agrupa sessoes WA por bitrix_account.domain
 // (QR = jid sem prefixo "cloud:", Cloud = jid com prefixo). Uma unica query.
+//
+// O JOIN normaliza device suffix (":NN@") em ambos os lados — sem isso,
+// quando o usuario reconecta o WA o jid em whatsapp_sessions ganha um
+// suffix novo (ex ":90") e o que tinhamos em bitrix_accounts.session_jid
+// (ex ":89") nao bate, retornando 0.
 func (r *Repository) AllDomainSessionCounts(ctx context.Context) (map[string]DomainSessionCounts, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ba.domain,
-			COUNT(*) FILTER (WHERE s.jid NOT LIKE 'cloud:%') AS qr_count,
-			COUNT(*) FILTER (WHERE s.jid LIKE 'cloud:%') AS cloud_count
+			COUNT(*) FILTER (WHERE REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') NOT LIKE 'cloud:%') AS qr_count,
+			COUNT(*) FILTER (WHERE REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') LIKE 'cloud:%') AS cloud_count
 		FROM bitrix_accounts ba
-		JOIN whatsapp_sessions s ON s.jid = ba.session_jid
+		JOIN whatsapp_sessions s
+		  ON REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
 		GROUP BY ba.domain`)
 	if err != nil {
 		return nil, err
@@ -979,7 +985,36 @@ type DomainMessageCounts struct {
 	Outbound int
 }
 
+// AllDomainTokenExpiry retorna o expires_at do token MAIS RECENTE de cada
+// dominio em bitrix_tokens. Esta tabela é atualizada a cada refresh (TTL 1h
+// do access_token Bitrix24), entao reflete o estado real da autenticacao.
+// Diferente de bitrix_portals.expires_at, que só é atualizado no install
+// inicial e fica desatualizado depois.
+func (r *Repository) AllDomainTokenExpiry(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT domain, MAX(expires_at) AS exp
+		FROM bitrix_tokens
+		GROUP BY domain`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var domain string
+		var exp time.Time
+		if err := rows.Scan(&domain, &exp); err != nil {
+			return nil, err
+		}
+		out[domain] = exp
+	}
+	return out, rows.Err()
+}
+
 // AllDomainMessageCounts retorna inbound/outbound de TODOS os dominios em UMA query.
+//
+// JOIN final por jid normalizado (device suffix removido) — mesma justificativa
+// de AllDomainSessionCounts.
 func (r *Repository) AllDomainMessageCounts(ctx context.Context, since time.Time) (map[string]DomainMessageCounts, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT ba.domain,
@@ -987,7 +1022,8 @@ func (r *Repository) AllDomainMessageCounts(ctx context.Context, since time.Time
 			COUNT(*) FILTER (WHERE m.direction = 'outbound') AS outbound
 		FROM messages m
 		JOIN whatsapp_sessions s ON s.id = m.session_id
-		JOIN bitrix_accounts ba ON ba.session_jid = s.jid
+		JOIN bitrix_accounts ba
+		  ON REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
 		WHERE m.created_at >= $1
 		GROUP BY ba.domain`, since)
 	if err != nil {

@@ -1632,7 +1632,7 @@ document.addEventListener('click', function(e) {
 function exportar(format) {
   exportMenuOpen = false;
   document.getElementById('export-dropdown').style.display = 'none';
-  var url = '/stats/export?days=' + periodoRelatorio + '&report=' + reportAtual + '&format=' + format;
+  var url = '/ui/stats/export?days=' + periodoRelatorio + '&report=' + reportAtual + '&format=' + format;
   window.location.href = url;
 }
 
@@ -1643,7 +1643,7 @@ function exportarTodos(format) {
   // Baixa cada relatório com delay de 500ms entre eles para não bloquear o browser
   reports.forEach(function(r, i) {
     setTimeout(function() {
-      var url = '/stats/export?days=' + periodoRelatorio + '&report=' + r + '&format=' + format;
+      var url = '/ui/stats/export?days=' + periodoRelatorio + '&report=' + r + '&format=' + format;
       var a = document.createElement('a');
       a.href = url;
       a.download = '';
@@ -1657,11 +1657,11 @@ function exportarTodos(format) {
 function carregarRelatorios(dias) {
   // Busca todos os dados em paralelo
   Promise.all([
-    fetch('/stats/daily?days='    + dias).then(function(r){return r.json();}),
-    fetch('/stats/sessions?days=' + dias).then(function(r){return r.json();}),
-    fetch('/stats/types?days='    + dias).then(function(r){return r.json();}),
-    fetch('/stats/hours?days='    + dias).then(function(r){return r.json();}),
-    fetch('/stats/contacts?days=' + dias + '&limit=20').then(function(r){return r.json();})
+    fetch('/ui/stats/daily?days='    + dias).then(function(r){return r.json();}),
+    fetch('/ui/stats/sessions?days=' + dias).then(function(r){return r.json();}),
+    fetch('/ui/stats/types?days='    + dias).then(function(r){return r.json();}),
+    fetch('/ui/stats/hours?days='    + dias).then(function(r){return r.json();}),
+    fetch('/ui/stats/contacts?days=' + dias + '&limit=20').then(function(r){return r.json();})
   ]).then(function(results) {
     var daily    = Array.isArray(results[0]) ? results[0] : [];
     var sessions = Array.isArray(results[1]) ? results[1] : [];
