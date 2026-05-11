@@ -410,6 +410,27 @@ func (h *handlers) adminCleanupBannedSessions(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"deleted": n})
 }
 
+// POST /admin/api/cleanup/session-files — remove .db/.db-shm/.db-wal orfaos
+// do diretorio de sessoes (Cloud que nao deveria ter arquivo + sessoes
+// nao-active + sidecars sem .db principal).
+func (h *handlers) adminCleanupSessionFiles(c *fiber.Ctx) error {
+	if h.waManager == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "WhatsApp Manager nao inicializado"})
+	}
+	removed, bytes, err := h.waManager.CleanupOrphanSessionFiles(c.Context())
+	if err != nil {
+		h.log.Error("admin: cleanup session files failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: session files cleaned",
+		zap.Int("removed", len(removed)), zap.Int64("bytes_freed", bytes))
+	return c.JSON(fiber.Map{
+		"removed":     removed,
+		"count":       len(removed),
+		"bytes_freed": bytes,
+	})
+}
+
 // POST /admin/api/cleanup/placeholder-portals — remove bitrix_portals com domain=member_id.
 func (h *handlers) adminCleanupPlaceholders(c *fiber.Ctx) error {
 	n, err := h.repo.DeletePlaceholderPortals(c.Context())

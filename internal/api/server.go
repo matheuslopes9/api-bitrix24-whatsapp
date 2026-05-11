@@ -182,6 +182,7 @@ func New(
 	admin.Post("/api/queue/flush", h.adminFlushQueue)
 	admin.Post("/api/cleanup/banned-sessions", h.adminCleanupBannedSessions)
 	admin.Post("/api/cleanup/placeholder-portals", h.adminCleanupPlaceholders)
+	admin.Post("/api/cleanup/session-files", h.adminCleanupSessionFiles)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

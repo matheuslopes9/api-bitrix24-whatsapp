@@ -180,6 +180,7 @@ const adminHomeHTML = `<!doctype html>
       <button id="reloadDebug" style="padding:0.5em 1em;background:white;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;">Recarregar</button>
       <button id="cleanBanned" style="padding:0.5em 1em;background:#fef3c7;border:1px solid #fde68a;border-radius:5px;cursor:pointer;color:#92400e;">Limpar sess&otilde;es banned</button>
       <button id="cleanPlaceholders" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar portais placeholder</button>
+      <button id="cleanSessionFiles" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar arquivos de sess&atilde;o (.db)</button>
     </div>
     <pre class="json" id="debugOut">Carregando...</pre>
   </div>
@@ -450,6 +451,19 @@ document.getElementById('cleanBanned').addEventListener('click',
   () => cleanupAction('/admin/api/cleanup/banned-sessions', 'Limpar sessões banned'));
 document.getElementById('cleanPlaceholders').addEventListener('click',
   () => cleanupAction('/admin/api/cleanup/placeholder-portals', 'Limpar portais placeholder'));
+
+document.getElementById('cleanSessionFiles').addEventListener('click', async () => {
+  if (!confirm('Apagar arquivos .db de sessoes inativas/orfaas?\n\nIsso vai apagar:\n- .db de sessoes Cloud (que nao deveriam ter)\n- .db de sessoes nao-active no banco\n- .db-shm/.db-wal sem .db principal\n\nSessoes Multi-Device ATIVAS sao preservadas.')) return;
+  try {
+    const r = await fetch('/admin/api/cleanup/session-files', { method: 'POST' });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); return; }
+    const mb = (data.bytes_freed / 1024 / 1024).toFixed(2);
+    alert('Removidos: ' + data.count + ' arquivos (' + mb + ' MB liberados)\n\n' + (data.removed||[]).join('\n'));
+    loadDebug();
+  } catch (e) { alert('Erro de rede: ' + e.message); }
+});
 
 load();
 // auto-refresh da aba de portais a cada 60s

@@ -53,6 +53,90 @@ func (m *Manager) SetMessageHandler(h MessageHandler) {
 	m.onMsg = h
 }
 
+// SessionsDir retorna o diretório de session files (uso de diagnostico).
+func (m *Manager) SessionsDir() string {
+	return m.cfg.SessionsDir
+}
+
+// CleanupOrphanSessionFiles remove .db/.db-shm/.db-wal de:
+//   - sessoes Cloud API (que NUNCA deveriam ter session file)
+//   - .db sem sessao ativa correspondente no banco
+//   - .db-shm/.db-wal sem .db principal (sidecars orfaos)
+//
+// Mantem so o que e necessario para sessoes QR ativas. Retorna lista de
+// arquivos removidos e tamanho total liberado.
+func (m *Manager) CleanupOrphanSessionFiles(ctx context.Context) (removed []string, bytesFreed int64, err error) {
+	dir := m.cfg.SessionsDir
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Lista phones de sessoes QR ativas (estes a gente preserva)
+	allSessions, err := m.repo.ListAllSessions(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	activeQRPhones := map[string]bool{}
+	for _, s := range allSessions {
+		if s.Type != db.SessionTypeCloudAPI && s.Status == db.SessionActive {
+			activeQRPhones[s.Phone] = true
+		}
+	}
+
+	// Indexa todos os .db existentes para detectar sidecars orfaos
+	existingDB := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".db") {
+			existingDB[strings.TrimSuffix(name, ".db")] = true
+		}
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		var phone string
+		switch {
+		case strings.HasSuffix(name, ".db"):
+			phone = strings.TrimSuffix(name, ".db")
+		case strings.HasSuffix(name, ".db-shm"):
+			phone = strings.TrimSuffix(name, ".db-shm")
+		case strings.HasSuffix(name, ".db-wal"):
+			phone = strings.TrimSuffix(name, ".db-wal")
+		default:
+			continue
+		}
+
+		// sidecar orfao (sem .db principal) — sempre remove
+		isSidecar := strings.HasSuffix(name, ".db-shm") || strings.HasSuffix(name, ".db-wal")
+		if isSidecar && !existingDB[phone] {
+			if info, _ := e.Info(); info != nil {
+				bytesFreed += info.Size()
+			}
+			path := filepath.Join(dir, name)
+			if rerr := os.Remove(path); rerr == nil {
+				removed = append(removed, name)
+			}
+			continue
+		}
+
+		// se phone nao bate com nenhuma sessao QR ativa, remove
+		if !activeQRPhones[phone] {
+			if info, _ := e.Info(); info != nil {
+				bytesFreed += info.Size()
+			}
+			path := filepath.Join(dir, name)
+			if rerr := os.Remove(path); rerr == nil {
+				removed = append(removed, name)
+			}
+		}
+	}
+	return removed, bytesFreed, nil
+}
+
 // DownloadMedia baixa bytes de mídia de uma mensagem WhatsApp.
 // msg deve implementar whatsmeow.DownloadableMessage.
 func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMessage) ([]byte, error) {
