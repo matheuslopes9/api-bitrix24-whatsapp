@@ -85,6 +85,27 @@ func (h *handlers) cloudWebhookReceive(c *fiber.Ctx) error {
 		return c.SendStatus(200)
 	}
 
+	// Log resumo do payload — permite diagnosticar se a Meta está mandando
+	// messages/statuses/erros (ex: arquivos > 100MB que ela bloqueia).
+	msgCount, statusCount, errorCount := 0, 0, 0
+	for _, entry := range payload.Entry {
+		for _, change := range entry.Changes {
+			msgCount += len(change.Value.Messages)
+			statusCount += len(change.Value.Statuses)
+			errorCount += len(change.Value.Errors)
+		}
+	}
+	h.log.Info("cloud webhook received",
+		zap.String("session_id", sessionIDStr),
+		zap.Int("messages", msgCount),
+		zap.Int("statuses", statusCount),
+		zap.Int("errors", errorCount),
+		zap.Int("body_bytes", len(body)))
+	if errorCount > 0 || (msgCount == 0 && statusCount == 0) {
+		// Dump completo do body quando há erro ou body inesperado.
+		h.log.Info("cloud webhook raw body", zap.String("body", string(body)))
+	}
+
 	// Para cada mudança, processa cada mensagem.
 	for _, entry := range payload.Entry {
 		for _, change := range entry.Changes {
@@ -337,11 +358,12 @@ type cloudChange struct {
 }
 
 type cloudChangeValue struct {
-	MessagingProduct string          `json:"messaging_product"`
-	Metadata         cloudMetadata   `json:"metadata"`
-	Contacts         []cloudContact  `json:"contacts"`
-	Messages         []cloudMessage  `json:"messages"`
-	Statuses         []cloudStatus   `json:"statuses"`
+	MessagingProduct string                   `json:"messaging_product"`
+	Metadata         cloudMetadata            `json:"metadata"`
+	Contacts         []cloudContact           `json:"contacts"`
+	Messages         []cloudMessage           `json:"messages"`
+	Statuses         []cloudStatus            `json:"statuses"`
+	Errors           []map[string]interface{} `json:"errors"`
 }
 
 type cloudMetadata struct {
