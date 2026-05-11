@@ -184,12 +184,16 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 			UpdatedAt:   p.UpdatedAt,
 			OpenLineID:  p.OpenLineID,
 		}
+		// Key normalizada para lookup nos maps agregados (que usam mesma
+		// normalizacao: strip https:// / http:// / www., lowercase).
+		key := normalizeDomainKey(p.Domain)
+
 		// Status do token: usa o expires_at do bitrix_tokens (atualizado a cada
 		// refresh, TTL ~1h do access). Se nao tem token na tabela, marca expirado.
 		// access_token vence em 1h, mas o refresh_token (TTL 30d) renova auto.
 		// Entao so consideramos "expired" se passou de 30 dias sem renovar — sinal
 		// de que o refresh tambem morreu e precisa reinstalar.
-		if exp, ok := tokenExpByDomain[p.Domain]; ok {
+		if exp, ok := tokenExpByDomain[key]; ok {
 			card.TokenExpAt = exp
 			refreshTokenLimit := exp.Add(30 * 24 * time.Hour) // exp do access + 30d do refresh
 			switch {
@@ -206,16 +210,16 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 			card.TokenExpAt = p.ExpiresAt
 			card.TokenStatus = "expired"
 		}
-		if s, ok := sessionsByDomain[p.Domain]; ok {
+		if s, ok := sessionsByDomain[key]; ok {
 			card.ConnQR = s.QR
 			card.ConnCloud = s.Cloud
 		}
-		if m, ok := msgs24hByDomain[p.Domain]; ok {
+		if m, ok := msgs24hByDomain[key]; ok {
 			card.MsgsInbound = m.Inbound
 			card.MsgsOutbound = m.Outbound
 			card.Msgs24h = m.Inbound + m.Outbound
 		}
-		if m, ok := msgs1hByDomain[p.Domain]; ok {
+		if m, ok := msgs1hByDomain[key]; ok {
 			card.Msgs1h = m.Inbound + m.Outbound
 		}
 		cards = append(cards, card)
@@ -347,6 +351,20 @@ func (h *handlers) adminFlushQueue(c *fiber.Ctx) error {
 	}
 	h.log.Info("admin: queue flushed", zap.Any("removed", removed))
 	return c.JSON(fiber.Map{"removed": removed})
+}
+
+// normalizeDomainKey deixa o domain no mesmo formato usado pelas queries
+// agregadas (que aplicam LOWER + REGEXP_REPLACE para strip protocolo/www).
+// Importante: bitrix_portals.domain e bitrix_accounts.domain podem ter
+// formatos diferentes em prod (com ou sem "https://"). Sem normalizar,
+// o lookup nos maps falha e o card mostra zero.
+func normalizeDomainKey(d string) string {
+	s := strings.ToLower(strings.TrimSpace(d))
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "www.")
+	s = strings.TrimSuffix(s, "/")
+	return s
 }
 
 // escapeHTML simples para mensagem de erro.
