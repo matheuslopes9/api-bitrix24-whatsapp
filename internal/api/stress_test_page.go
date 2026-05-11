@@ -26,6 +26,30 @@ func (h *handlers) stressTestPage(c *fiber.Ctx) error {
 	return c.SendString(stressTestHTML)
 }
 
+// stressTestConnectors retorna a lista de conectores cadastrados (QR + Cloud)
+// para popular o dropdown da página. Mostra connector_id, line, session_jid e tipo.
+func (h *handlers) stressTestConnectors(c *fiber.Ctx) error {
+	accts, err := h.repo.ListBitrixAccounts(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]fiber.Map, 0, len(accts))
+	for _, a := range accts {
+		kind := "qr"
+		if strings.HasPrefix(a.ConnectorID, "wa_cloud_") {
+			kind = "cloud"
+		}
+		out = append(out, fiber.Map{
+			"connector_id": a.ConnectorID,
+			"line":         a.OpenLineID,
+			"session_jid":  a.SessionJID,
+			"domain":       a.Domain,
+			"kind":         kind,
+		})
+	}
+	return c.JSON(fiber.Map{"connectors": out})
+}
+
 // stressTestRun executa o teste e retorna métricas em JSON.
 // Body JSON: {"concurrent":50,"msgs_per_conv":1,"connector":"...","line":220,"timeout_sec":30}
 func (h *handlers) stressTestRun(c *fiber.Ctx) error {
@@ -250,17 +274,12 @@ const stressTestHTML = `<!doctype html>
 
   <fieldset>
     <legend>Alvo</legend>
-    <div class="row">
-      <div>
-        <label for="connector">Connector ID</label>
-        <input type="text" id="connector" value="wa_cloud_1160607470462388">
-        <div class="hint">Use um connector que <strong>exista</strong> em bitrix_accounts.</div>
-      </div>
-      <div>
-        <label for="line">Open Line ID</label>
-        <input type="number" id="line" value="220">
-      </div>
-    </div>
+    <label for="connector_select">Conector</label>
+    <select id="connector_select" style="width:100%;padding:0.55em;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;font-family:inherit;font-size:0.95em;">
+      <option value="">Carregando…</option>
+    </select>
+    <div class="hint">Lista carregada de <code>bitrix_accounts</code>. QR e Cloud aparecem juntos.</div>
+
     <label for="timeout">Timeout HTTP por request (s)</label>
     <input type="number" id="timeout" value="30" min="5" max="120">
   </fieldset>
@@ -274,9 +293,39 @@ const stressTestHTML = `<!doctype html>
 const form = document.getElementById('form');
 const result = document.getElementById('result');
 const btn = document.getElementById('runBtn');
+const sel = document.getElementById('connector_select');
+
+// Popular dropdown ao carregar
+(async () => {
+  try {
+    const r = await fetch('/stress-test/connectors');
+    const data = await r.json();
+    if (!r.ok || !data.connectors) {
+      sel.innerHTML = '<option value="">Erro: ' + (data.error || 'falha ao listar') + '</option>';
+      return;
+    }
+    if (data.connectors.length === 0) {
+      sel.innerHTML = '<option value="">(nenhum conector cadastrado)</option>';
+      return;
+    }
+    sel.innerHTML = data.connectors.map(c => {
+      const label = '[' + c.kind.toUpperCase() + '] ' + c.connector_id + ' — line ' + c.line + ' — ' + c.session_jid;
+      const val = c.connector_id + '|' + c.line;
+      return '<option value="' + val + '">' + label + '</option>';
+    }).join('');
+  } catch (err) {
+    sel.innerHTML = '<option value="">Erro de rede: ' + err.message + '</option>';
+  }
+})();
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const sv = sel.value;
+  if (!sv || !sv.includes('|')) {
+    result.innerHTML = '<p class="err"><strong>Selecione um conector v&aacute;lido.</strong></p>';
+    return;
+  }
+  const [connector, lineStr] = sv.split('|');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Rodando...';
   result.innerHTML = '<p style="color:#666">Disparando requisi&ccedil;&otilde;es... aguarde.</p>';
@@ -284,8 +333,8 @@ form.addEventListener('submit', async (e) => {
   const body = {
     concurrent: parseInt(document.getElementById('concurrent').value, 10),
     msgs_per_conv: parseInt(document.getElementById('msgs').value, 10),
-    connector: document.getElementById('connector').value.trim(),
-    line: parseInt(document.getElementById('line').value, 10),
+    connector: connector,
+    line: parseInt(lineStr, 10),
     timeout_sec: parseInt(document.getElementById('timeout').value, 10),
   };
 

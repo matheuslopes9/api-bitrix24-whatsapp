@@ -160,6 +160,7 @@ func New(
 
 	// ─── Stress test interno (sem auth — proteja por firewall se necessário) ──
 	app.Get("/stress-test", h.stressTestPage)
+	app.Get("/stress-test/connectors", h.stressTestConnectors)
 	app.Post("/stress-test/run", h.stressTestRun)
 
 	// ─── Prometheus metrics ──────────────────────────────────────────────
