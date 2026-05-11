@@ -536,6 +536,7 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 type StatsSessionRow struct {
 	SessionJID    string `db:"session_jid"    json:"session_jid"`
 	Phone         string `db:"phone"          json:"phone"`
+	Kind          string `db:"kind"           json:"kind"` // "cloud" ou "qr"
 	TotalMessages int64  `db:"total_messages" json:"total_messages"`
 	InboundCount  int64  `db:"inbound_count"  json:"inbound_count"`
 	OutboundCount int64  `db:"outbound_count" json:"outbound_count"`
@@ -574,13 +575,11 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 	// reconexoes QR/Cloud nao quebrem o agrupamento. Quando whatsapp_sessions
 	// ainda existe, pega phone/jid dela; senão extrai do digit da chave.
 	rows, err := r.pool.Query(ctx, `
-		WITH msg_norm AS (
+		WITH msg_raw AS (
+			-- JID original (com prefixo cloud: e device suffix) — usado para
+			-- detectar Kind. Versao normalizada serve so para agrupar.
 			SELECT
-				REGEXP_REPLACE(
-					REPLACE(
-						CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END,
-						'cloud:', ''),
-					':[0-9]+@', '@') AS norm_jid,
+				CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END AS our_jid,
 				direction,
 				status
 			FROM messages
@@ -588,31 +587,34 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END IS NOT NULL
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END != ''
 		),
-		msg_phone AS (
+		msg_norm AS (
 			SELECT
-				norm_jid,
-				-- extrai numero do JID; se phone do banco for valor estranho
-				-- ("cloud", vazio, NULL), prefere SPLIT_PART do JID puro
-				SPLIT_PART(norm_jid, '@', 1) AS phone_from_jid,
+				REGEXP_REPLACE(REPLACE(our_jid, 'cloud:', ''), ':[0-9]+@', '@') AS norm_jid,
+				CASE WHEN our_jid LIKE 'cloud:%' THEN 'cloud' ELSE 'qr' END    AS kind,
+				SPLIT_PART(REGEXP_REPLACE(REPLACE(our_jid, 'cloud:', ''), ':[0-9]+@', '@'), '@', 1) AS phone_from_jid,
 				direction,
 				status
-			FROM msg_norm
-			WHERE norm_jid <> '' AND norm_jid LIKE '%@%'
+			FROM msg_raw
+			WHERE our_jid LIKE '%@%'
 		)
 		SELECT
-			COALESCE(NULLIF(MAX(s.jid), ''), m.norm_jid)                          AS session_jid,
+			COALESCE(NULLIF(MAX(s.jid), ''), m.norm_jid)                        AS session_jid,
+			-- prefere phone do banco, mas SO se for numerico. Senao usa o
+			-- numero extraido do JID. Isso resolve linhas com phone='cloud'
+			-- ou outro valor sujo de teste.
 			COALESCE(
-				NULLIF(MAX(s.phone), ''),
-				NULLIF(MAX(s.phone), 'cloud'),
+				NULLIF(MAX(s.phone) FILTER (WHERE s.phone ~ '^[0-9]+$'), ''),
 				m.phone_from_jid
-			)                                                                     AS phone,
-			COUNT(*)                                                              AS total_messages,
-			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END)             AS inbound_count,
-			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END)             AS outbound_count,
-			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END)             AS failed_count
-		FROM msg_phone m
+			)                                                                   AS phone,
+			MAX(m.kind)                                                         AS kind,
+			COUNT(*)                                                            AS total_messages,
+			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END)           AS inbound_count,
+			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END)           AS outbound_count,
+			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END)           AS failed_count
+		FROM msg_norm m
 		LEFT JOIN whatsapp_sessions s
 			ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
+		WHERE m.norm_jid <> ''
 		GROUP BY m.norm_jid, m.phone_from_jid
 		ORDER BY total_messages DESC
 	`, fmt.Sprintf("%d", days))
@@ -623,7 +625,7 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 	var out []StatsSessionRow
 	for rows.Next() {
 		var row StatsSessionRow
-		if err := rows.Scan(&row.SessionJID, &row.Phone, &row.TotalMessages, &row.InboundCount, &row.OutboundCount, &row.FailedCount); err != nil {
+		if err := rows.Scan(&row.SessionJID, &row.Phone, &row.Kind, &row.TotalMessages, &row.InboundCount, &row.OutboundCount, &row.FailedCount); err != nil {
 			return nil, err
 		}
 		out = append(out, row)

@@ -655,9 +655,9 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <div style="overflow-x:auto;">
         <table class="tbl">
           <thead><tr>
-            <th>Número</th><th>Total</th><th style="color:#60a5fa;">Recebidas</th><th style="color:#c084fc;">Enviadas</th><th style="color:#f87171;">Falhas</th>
+            <th>Número</th><th>Tipo</th><th>Total</th><th style="color:#60a5fa;">Recebidas</th><th style="color:#c084fc;">Enviadas</th><th style="color:#f87171;">Falhas</th>
           </tr></thead>
-          <tbody id="r-sessoes"><tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Carregando...</td></tr></tbody>
+          <tbody id="r-sessoes"><tr><td colspan="6" style="text-align:center;padding:24px;color:#334155;">Carregando...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1714,12 +1714,17 @@ function carregarRelatorios(dias) {
     // ── Por sessão/número ──
     var tbodySess = document.getElementById('r-sessoes');
     if (sessions.length === 0) {
-      tbodySess.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#334155;">Sem dados no período</td></tr>';
+      tbodySess.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#334155;">Sem dados no período</td></tr>';
     } else {
       tbodySess.innerHTML = sessions.map(function(row) {
-        var tel = row.phone ? '+' + row.phone : row.session_jid;
+        // phone só vira "+ddd..." se for puramente numérico; senão mostra o JID cru.
+        var tel = (row.phone && /^[0-9]+$/.test(row.phone)) ? '+' + row.phone : (row.session_jid || row.phone || '—');
+        var pill = row.kind === 'cloud'
+          ? '<span style="font-size:10px;background:rgba(59,130,246,.18);color:#60a5fa;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">OFICIAL</span>'
+          : '<span style="font-size:10px;background:rgba(37,211,102,.15);color:#25D366;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">NÃO OFICIAL</span>';
         return '<tr>'
           + '<td style="font-weight:600;color:#e2e8f0;">' + tel + '</td>'
+          + '<td>' + pill + '</td>'
           + '<td style="font-weight:500;">' + (row.total_messages||0) + '</td>'
           + '<td style="color:#60a5fa;">' + (row.inbound_count||0) + '</td>'
           + '<td style="color:#c084fc;">' + (row.outbound_count||0) + '</td>'
