@@ -338,6 +338,43 @@ func (h *handlers) adminDebug(c *fiber.Ctx) error {
 	`).Scan(&joinCount)
 	out["join_test_accounts_x_sessions"] = joinCount
 
+	// Diagnostico: phones distintos nas sessoes (pra detectar valor estranho como "cloud")
+	rows, err = pool.Query(ctx, `SELECT DISTINCT phone FROM whatsapp_sessions WHERE phone IS NOT NULL`)
+	if err == nil {
+		var phones []string
+		for rows.Next() {
+			var p string
+			rows.Scan(&p)
+			phones = append(phones, p)
+		}
+		rows.Close()
+		out["whatsapp_sessions_distinct_phones"] = phones
+	}
+
+	// Diagnostico: 5 amostras de mensagens com from_jid ou to_jid problematico
+	rows, err = pool.Query(ctx, `
+		SELECT direction, from_jid, to_jid, created_at
+		FROM messages
+		WHERE from_jid IS NULL OR from_jid = '' OR to_jid IS NULL OR to_jid = ''
+		   OR from_jid NOT LIKE '%@%' OR to_jid NOT LIKE '%@%'
+		LIMIT 10`)
+	if err == nil {
+		var weird []fiber.Map
+		for rows.Next() {
+			var dir, fromJID, toJID string
+			var createdAt time.Time
+			rows.Scan(&dir, &fromJID, &toJID, &createdAt)
+			weird = append(weird, fiber.Map{
+				"direction":  dir,
+				"from_jid":   fromJID,
+				"to_jid":     toJID,
+				"created_at": createdAt,
+			})
+		}
+		rows.Close()
+		out["messages_with_weird_jid"] = weird
+	}
+
 	return c.JSON(out)
 }
 

@@ -585,18 +585,35 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 				status
 			FROM messages
 			WHERE created_at >= NOW() - ($1 || ' days')::interval
+			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END IS NOT NULL
+			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END != ''
+		),
+		msg_phone AS (
+			SELECT
+				norm_jid,
+				-- extrai numero do JID; se phone do banco for valor estranho
+				-- ("cloud", vazio, NULL), prefere SPLIT_PART do JID puro
+				SPLIT_PART(norm_jid, '@', 1) AS phone_from_jid,
+				direction,
+				status
+			FROM msg_norm
+			WHERE norm_jid <> '' AND norm_jid LIKE '%@%'
 		)
 		SELECT
-			COALESCE(MAX(s.jid), m.norm_jid)                        AS session_jid,
-			COALESCE(MAX(s.phone), SPLIT_PART(m.norm_jid, '@', 1))  AS phone,
-			COUNT(*)                                                AS total_messages,
-			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
-			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count,
-			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END) AS failed_count
-		FROM msg_norm m
+			COALESCE(NULLIF(MAX(s.jid), ''), m.norm_jid)                          AS session_jid,
+			COALESCE(
+				NULLIF(MAX(s.phone), ''),
+				NULLIF(MAX(s.phone), 'cloud'),
+				m.phone_from_jid
+			)                                                                     AS phone,
+			COUNT(*)                                                              AS total_messages,
+			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END)             AS inbound_count,
+			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END)             AS outbound_count,
+			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END)             AS failed_count
+		FROM msg_phone m
 		LEFT JOIN whatsapp_sessions s
 			ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
-		GROUP BY m.norm_jid
+		GROUP BY m.norm_jid, m.phone_from_jid
 		ORDER BY total_messages DESC
 	`, fmt.Sprintf("%d", days))
 	if err != nil {
@@ -683,10 +700,16 @@ func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]Sta
 				direction
 			FROM messages
 			WHERE created_at >= NOW() - ($1 || ' days')::interval
+			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END IS NOT NULL
+			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END != ''
 		)
 		SELECT
 			m.norm_jid                                              AS wa_jid,
-			COALESCE(MAX(c.wa_phone), SPLIT_PART(m.norm_jid, '@', 1)) AS wa_phone,
+			COALESCE(
+				NULLIF(MAX(c.wa_phone), ''),
+				NULLIF(MAX(c.wa_phone), 'cloud'),
+				SPLIT_PART(m.norm_jid, '@', 1)
+			)                                                       AS wa_phone,
 			COALESCE(MAX(c.wa_name), '')                            AS wa_name,
 			COUNT(*)                                                AS total_messages,
 			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
@@ -694,6 +717,7 @@ func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]Sta
 		FROM msg_norm m
 		LEFT JOIN contact_mapping c
 			ON REGEXP_REPLACE(REPLACE(c.wa_jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
+		WHERE m.norm_jid <> '' AND m.norm_jid LIKE '%@%'
 		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
 		LIMIT $2
