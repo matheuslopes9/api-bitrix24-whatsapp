@@ -184,6 +184,8 @@ func New(
 	admin.Post("/api/cleanup/placeholder-portals", h.adminCleanupPlaceholders)
 	admin.Post("/api/cleanup/session-files", h.adminCleanupSessionFiles)
 	admin.Post("/api/cleanup/legacy-messages", h.adminCleanupLegacyMessages)
+	admin.Post("/api/tenant/cleanup/legacy-messages", h.adminTenantCleanupLegacyMessages)
+	admin.Post("/api/tenant/cleanup/session-files", h.adminTenantCleanupSessionFiles)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

@@ -410,6 +410,69 @@ func (h *handlers) adminCleanupBannedSessions(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"deleted": n})
 }
 
+// POST /admin/api/tenant/cleanup/legacy-messages?domain=... — apaga msgs
+// "lixo" (from_jid/to_jid vazio ou cloud@s.whatsapp.net) SO daquele tenant.
+// Body opcional ignorado.
+func (h *handlers) adminTenantCleanupLegacyMessages(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
+	}
+	key := normalizeDomainKey(domain)
+	n, err := h.repo.DeleteLegacyMessagesByDomain(c.Context(), key)
+	if err != nil {
+		h.log.Error("admin: tenant cleanup legacy msgs failed",
+			zap.String("domain", domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: tenant legacy msgs deleted",
+		zap.String("domain", domain), zap.Int64("count", n))
+	return c.JSON(fiber.Map{"deleted": n, "domain": domain})
+}
+
+// POST /admin/api/tenant/cleanup/session-files?domain=... — apaga arquivos
+// .db/.db-shm/.db-wal dos telefones QR vinculados a esse tenant.
+// USAR COM CUIDADO: forca reescaneamento de QR desse cliente.
+func (h *handlers) adminTenantCleanupSessionFiles(c *fiber.Ctx) error {
+	if h.waManager == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "WhatsApp Manager nao inicializado"})
+	}
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
+	}
+	key := normalizeDomainKey(domain)
+	phones, err := h.repo.ListPhonesByDomain(c.Context(), key)
+	if err != nil {
+		h.log.Error("admin: list phones by domain failed",
+			zap.String("domain", domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if len(phones) == 0 {
+		return c.JSON(fiber.Map{
+			"removed": []string{}, "count": 0, "bytes_freed": 0,
+			"note": "Nenhum telefone QR encontrado para esse tenant",
+		})
+	}
+	removed, bytes, err := h.waManager.CleanupSessionFilesForPhones(phones)
+	if err != nil {
+		h.log.Error("admin: tenant cleanup session files failed",
+			zap.String("domain", domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: tenant session files cleaned",
+		zap.String("domain", domain),
+		zap.Strings("phones", phones),
+		zap.Int("removed", len(removed)),
+		zap.Int64("bytes_freed", bytes))
+	return c.JSON(fiber.Map{
+		"phones":      phones,
+		"removed":     removed,
+		"count":       len(removed),
+		"bytes_freed": bytes,
+	})
+}
+
 // POST /admin/api/cleanup/legacy-messages — apaga msgs com from_jid/to_jid
 // vazio ou com o valor antigo 'cloud@s.whatsapp.net' (bug ja corrigido,
 // mas o lixo historico ainda polui relatorios).

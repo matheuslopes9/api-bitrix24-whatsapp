@@ -82,6 +82,17 @@ const adminHomeHTML = `<!doctype html>
   .token.expired { background: #fee2e2; color: #991b1b; }
   .loading, .empty { text-align: center; color: #64748b; padding: 3em; }
 
+  /* Menu de acoes no card */
+  .card { position: relative; }
+  .card-menu-btn { position: absolute; top: 0.7em; right: 0.7em; background: transparent; border: 0; color: #94a3b8; cursor: pointer; padding: 0.25em 0.5em; border-radius: 4px; font-size: 1.1em; line-height: 1; }
+  .card-menu-btn:hover { background: #f1f5f9; color: #0f172a; }
+  .card-menu { position: absolute; top: 2.4em; right: 0.7em; background: white; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10; min-width: 220px; display: none; }
+  .card-menu.open { display: block; }
+  .card-menu button { width: 100%; text-align: left; padding: 0.6em 0.9em; background: white; border: 0; cursor: pointer; font-size: 0.85em; color: #1e293b; font-family: inherit; }
+  .card-menu button:hover { background: #f8fafc; }
+  .card-menu button.danger { color: #b91c1c; }
+  .card-menu .divider { height: 1px; background: #e2e8f0; margin: 0.2em 0; }
+
   /* Abas */
   .tabs { display: flex; gap: 0.3em; margin-bottom: 1.5em; border-bottom: 1px solid #cbd5e1; }
   .tab { padding: 0.7em 1.4em; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.95em; color: #64748b; font-family: inherit; font-weight: 500; }
@@ -254,8 +265,14 @@ function cardHTML(t) {
   const installed = new Date(t.installed_at).toLocaleDateString('pt-BR');
   const tokenLabel = t.token_status === 'valid' ? 'Token v&aacute;lido' : (t.token_status === 'expiring' ? 'Token expirando' : 'Token expirado');
 
+  const domainAttr = encodeURIComponent(t.domain);
   return '' +
-    '<div class="card ' + cls + '">' +
+    '<div class="card ' + cls + '" data-domain="' + escapeHTML(t.domain) + '">' +
+      '<button class="card-menu-btn" onclick="toggleCardMenu(event, this)" title="A&ccedil;&otilde;es">&#8942;</button>' +
+      '<div class="card-menu">' +
+        '<button onclick="tenantAction(\'legacy-messages\',\'' + domainAttr + '\', this)">Limpar msgs legacy</button>' +
+        '<button class="danger" onclick="tenantAction(\'session-files\',\'' + domainAttr + '\', this)">Limpar arquivos .db (QR)</button>' +
+      '</div>' +
       '<div class="domain">' + escapeHTML(t.domain) + '</div>' +
       '<div class="meta">Instalado em ' + installed + ' &middot; Open Line ' + (t.open_line_id || '—') + '</div>' +
       '<div class="conns">' + conns.join('') + '</div>' +
@@ -267,6 +284,55 @@ function cardHTML(t) {
       '</div>' +
       '<span class="token ' + t.token_status + '">' + tokenLabel + '</span>' +
     '</div>';
+}
+
+function toggleCardMenu(ev, btn) {
+  ev.stopPropagation();
+  const menu = btn.parentElement.querySelector('.card-menu');
+  // fecha outros menus abertos
+  document.querySelectorAll('.card-menu.open').forEach(m => { if (m !== menu) m.classList.remove('open'); });
+  menu.classList.toggle('open');
+}
+
+// fecha menu ao clicar fora
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('.card-menu') && !ev.target.classList.contains('card-menu-btn')) {
+    document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+  }
+});
+
+async function tenantAction(action, domainEnc, btn) {
+  const domain = decodeURIComponent(domainEnc);
+  let confirmMsg, endpoint;
+  if (action === 'legacy-messages') {
+    confirmMsg = 'Apagar msgs legacy (from_jid/to_jid vazio ou "cloud@s.whatsapp.net") do tenant\n\n' + domain + '?';
+    endpoint = '/admin/api/tenant/cleanup/legacy-messages?domain=' + domainEnc;
+  } else if (action === 'session-files') {
+    confirmMsg = 'Apagar arquivos .db dos telefones QR (Multi-Device) deste tenant?\n\n' + domain + '\n\nO cliente vai precisar escanear o QR novamente!';
+    endpoint = '/admin/api/tenant/cleanup/session-files?domain=' + domainEnc;
+  } else {
+    return;
+  }
+  if (!confirm(confirmMsg)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(endpoint, { method: 'POST' });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); return; }
+    if (action === 'legacy-messages') {
+      alert((data.deleted || 0) + ' mensagens removidas para ' + domain);
+    } else {
+      const mb = ((data.bytes_freed || 0) / 1024 / 1024).toFixed(2);
+      alert((data.count || 0) + ' arquivos removidos (' + mb + ' MB)\nTelefones: ' + (data.phones || []).join(', '));
+    }
+    load(); // recarrega cards
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+  }
 }
 
 function escapeHTML(s) {

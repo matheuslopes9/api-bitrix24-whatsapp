@@ -58,6 +58,57 @@ func (m *Manager) SessionsDir() string {
 	return m.cfg.SessionsDir
 }
 
+// CleanupSessionFilesForPhones remove .db/.db-shm/.db-wal de telefones
+// especificos. Util para limpar dados de um tenant especifico (deletar
+// arquivos de um cliente que está sendo desinstalado, ou para
+// resetar a sessão QR de um cliente sem afetar outros).
+//
+// Diferente de CleanupOrphanSessionFiles, este metodo apaga TUDO dos
+// phones listados (mesmo se a sessão estiver active). Caller deve
+// confirmar com o usuario antes.
+func (m *Manager) CleanupSessionFilesForPhones(phones []string) (removed []string, bytesFreed int64, err error) {
+	if len(phones) == 0 {
+		return nil, 0, nil
+	}
+	dir := m.cfg.SessionsDir
+	phoneSet := map[string]bool{}
+	for _, p := range phones {
+		phoneSet[p] = true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		var phone string
+		switch {
+		case strings.HasSuffix(name, ".db"):
+			phone = strings.TrimSuffix(name, ".db")
+		case strings.HasSuffix(name, ".db-shm"):
+			phone = strings.TrimSuffix(name, ".db-shm")
+		case strings.HasSuffix(name, ".db-wal"):
+			phone = strings.TrimSuffix(name, ".db-wal")
+		default:
+			continue
+		}
+		if !phoneSet[phone] {
+			continue
+		}
+		if info, _ := e.Info(); info != nil {
+			bytesFreed += info.Size()
+		}
+		path := filepath.Join(dir, name)
+		if rerr := os.Remove(path); rerr == nil {
+			removed = append(removed, name)
+		}
+	}
+	return removed, bytesFreed, nil
+}
+
 // CleanupOrphanSessionFiles remove .db/.db-shm/.db-wal de:
 //   - sessoes Cloud API (que NUNCA deveriam ter session file)
 //   - .db sem sessao ativa correspondente no banco

@@ -1180,6 +1180,62 @@ func (r *Repository) DeleteLegacyMessages(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+// DeleteLegacyMessagesByDomain remove mensagens "lixo" SO daquele dominio Bitrix.
+// Filtra messages pela JID da sessao usada (whatsapp_sessions.id = m.session_id
+// → bitrix_accounts.session_jid → bitrix_accounts.domain). Mensagens com
+// session_id NULL ou orfaa nao sao afetadas (use DeleteLegacyMessages global
+// pra essas — sao do tempo pre-validacao).
+func (r *Repository) DeleteLegacyMessagesByDomain(ctx context.Context, domain string) (int64, error) {
+	// Normaliza pra comparar sem se importar com https:// / www.
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM messages
+		WHERE id IN (
+			SELECT m.id FROM messages m
+			JOIN whatsapp_sessions s ON s.id = m.session_id
+			JOIN bitrix_accounts ba
+			  ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@')
+			   = REGEXP_REPLACE(REPLACE(ba.session_jid, 'cloud:', ''), ':[0-9]+@', '@')
+			WHERE LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) = $1
+			  AND (
+				   m.from_jid IS NULL OR m.from_jid = ''
+				OR m.to_jid IS NULL OR m.to_jid = ''
+				OR m.from_jid = 'cloud@s.whatsapp.net'
+				OR m.to_jid = 'cloud@s.whatsapp.net'
+			  )
+		)`, domain)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ListPhonesByDomain retorna os telefones QR (nao-Cloud) associados a um dominio
+// Bitrix. Usado para limpeza de session files por tenant.
+func (r *Repository) ListPhonesByDomain(ctx context.Context, domain string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT s.phone
+		FROM bitrix_accounts ba
+		JOIN whatsapp_sessions s
+		  ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@')
+		   = REGEXP_REPLACE(REPLACE(ba.session_jid, 'cloud:', ''), ':[0-9]+@', '@')
+		WHERE LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) = $1
+		  AND s.type != 'cloud_api'
+		  AND s.phone IS NOT NULL AND s.phone <> ''`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var phones []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		phones = append(phones, p)
+	}
+	return phones, rows.Err()
+}
+
 // CountSessionsByDomain — versão por-domínio (mantida para uso pontual).
 func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (qr, cloud int, err error) {
 	row := r.pool.QueryRow(ctx, `
