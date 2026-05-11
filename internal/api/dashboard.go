@@ -861,28 +861,31 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
 
     <!-- ─── Form Multi-Device ─── -->
     <div id="ns-mode-qr">
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">N&uacute;mero do WhatsApp</label>
       <div style="display:flex;gap:8px;margin-bottom:18px;">
-        <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;"/>
-        <button class="btn btn-primary" id="modal-btn-conectar" onclick="iniciarSessao()">Conectar</button>
+        <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;min-width:0;"/>
+        <button class="btn btn-primary" id="modal-btn-conectar" onclick="iniciarSessao()" style="white-space:nowrap;flex-shrink:0;">Conectar</button>
       </div>
 
-      <div id="modal-qr-area" style="display:none;text-align:center;">
-        <div id="modal-badge-qr" style="margin-bottom:12px;"></div>
-        <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px;display:inline-block;margin-bottom:8px;">
-          <div style="position:relative;width:200px;height:200px;">
-            <img id="modal-qr-img" src="" width="200" height="200" style="position:absolute;top:0;left:0;display:none;border-radius:8px;"/>
-            <div id="modal-qr-placeholder" style="position:absolute;top:0;left:0;width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;text-align:center;">Aguardando QR...</div>
+      <div id="modal-qr-area" style="display:none;">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+          <div id="modal-badge-qr"></div>
+          <div style="background:#ffffff;border-radius:12px;padding:12px;box-shadow:0 4px 20px rgba(0,0,0,.4);">
+            <div style="position:relative;width:200px;height:200px;">
+              <img id="modal-qr-img" src="" width="200" height="200" style="position:absolute;top:0;left:0;display:none;"/>
+              <div id="modal-qr-placeholder" style="position:absolute;top:0;left:0;width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:13px;text-align:center;background:#f1f5f9;border-radius:4px;">Aguardando QR...</div>
+            </div>
           </div>
+          <div style="font-size:12px;color:#94a3b8;height:18px;font-weight:500;" id="modal-timer"></div>
         </div>
-        <div style="font-size:12px;color:#475569;height:16px;" id="modal-timer"></div>
       </div>
 
-      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:13px;margin-top:14px;font-size:12.5px;color:#475569;line-height:1.9;">
-        <strong style="color:#94a3b8;display:block;margin-bottom:4px;">Como escanear o QR code:</strong>
-        1. Abra o WhatsApp no celular<br>
-        2. Toque em <strong style="color:#94a3b8;">⋮ → Aparelhos conectados</strong><br>
-        3. Toque em <strong style="color:#94a3b8;">Conectar um aparelho</strong><br>
-        4. Aponte a câmera para o QR acima
+      <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px 16px;margin-top:14px;font-size:12.5px;color:#94a3b8;line-height:1.8;">
+        <strong style="color:#cbd5e1;display:block;margin-bottom:6px;font-size:12px;letter-spacing:.02em;">Como escanear:</strong>
+        <div>1. Abra o WhatsApp no celular</div>
+        <div>2. Toque em <strong style="color:#cbd5e1;">&#8942; &rarr; Aparelhos conectados</strong></div>
+        <div>3. Toque em <strong style="color:#cbd5e1;">Conectar um aparelho</strong></div>
+        <div>4. Aponte a c&acirc;mera para o QR acima</div>
       </div>
     </div>
 
