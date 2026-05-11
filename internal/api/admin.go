@@ -228,6 +228,26 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 	})
 }
 
+// POST /admin/api/queue/flush — limpa filas do Redis.
+// Body JSON: {"kinds":["inbound","outbound","dead"]}. Default: limpa só outbound
+// (inbound real e dead-letter ficam preservados a menos que pedidos).
+func (h *handlers) adminFlushQueue(c *fiber.Ctx) error {
+	var req struct {
+		Kinds []string `json:"kinds"`
+	}
+	_ = c.BodyParser(&req)
+	if len(req.Kinds) == 0 {
+		req.Kinds = []string{"outbound"}
+	}
+	removed, err := h.q.Flush(c.Context(), req.Kinds)
+	if err != nil {
+		h.log.Error("admin: queue flush failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: queue flushed", zap.Any("removed", removed))
+	return c.JSON(fiber.Map{"removed": removed})
+}
+
 // escapeHTML simples para mensagem de erro.
 func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")

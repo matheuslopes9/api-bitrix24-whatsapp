@@ -223,6 +223,32 @@ func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	return
 }
 
+// Flush descarta TODOS os jobs das filas especificadas. Retorna os contadores
+// removidos. Útil para limpar acúmulo de testes ou em emergências.
+// kinds aceita "inbound", "outbound", "dead" — passar []string{"inbound","outbound","dead"} limpa tudo.
+func (q *Queue) Flush(ctx context.Context, kinds []string) (removed map[string]int64, err error) {
+	removed = map[string]int64{}
+	for _, k := range kinds {
+		var key string
+		switch k {
+		case "inbound":
+			key = keyInbound
+		case "outbound":
+			key = keyOutbound
+		case "dead":
+			key = keyDead
+		default:
+			continue
+		}
+		n, _ := q.rdb.LLen(ctx, key).Result()
+		if _, derr := q.rdb.Del(ctx, key).Result(); derr != nil {
+			return removed, derr
+		}
+		removed[k] = n
+	}
+	return removed, nil
+}
+
 func (q *Queue) push(ctx context.Context, key string, v interface{}) error {
 	data, err := json.Marshal(v)
 	if err != nil {

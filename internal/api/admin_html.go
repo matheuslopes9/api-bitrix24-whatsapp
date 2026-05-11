@@ -89,6 +89,7 @@ const adminHomeHTML = `<!doctype html>
   <div class="top-actions">
     <span class="badge" id="totalBadge">— portais</span>
     <button id="refreshBtn" style="background:#475569;color:white;border:0;padding:0.4em 1em;border-radius:5px;cursor:pointer;font-size:0.85em;">Atualizar</button>
+    <button id="flushBtn" style="background:#b91c1c;color:white;border:0;padding:0.4em 1em;border-radius:5px;cursor:pointer;font-size:0.85em;">Limpar filas</button>
     <a href="/admin/logout" class="logout">Sair</a>
   </div>
 </header>
@@ -196,6 +197,29 @@ document.getElementById('refreshBtn').addEventListener('click', load);
 document.getElementById('search').addEventListener('input', renderGrid);
 document.getElementById('filterAll').addEventListener('click', () => { filterMode = 'all'; renderGrid(); });
 document.getElementById('filterIssues').addEventListener('click', () => { filterMode = 'issues'; renderGrid(); });
+
+document.getElementById('flushBtn').addEventListener('click', async () => {
+  const choice = prompt('Limpar quais filas? Digite: outbound, inbound, dead — ou "tudo" para os 3.\n\nA fila INBOUND nao deveria ser limpa em producao (msgs reais de clientes).', 'outbound');
+  if (!choice) return;
+  let kinds;
+  if (choice.toLowerCase() === 'tudo') kinds = ['inbound','outbound','dead'];
+  else kinds = choice.split(',').map(s => s.trim()).filter(Boolean);
+  if (kinds.length === 0) return;
+  if (!confirm('Confirma limpar: ' + kinds.join(', ') + '?')) return;
+  try {
+    const r = await fetch('/admin/api/queue/flush', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kinds: kinds })
+    });
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); return; }
+    alert('Removidos:\n' + Object.entries(data.removed).map(([k,v]) => '  ' + k + ': ' + v).join('\n'));
+    load();
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+  }
+});
 
 load();
 // auto-refresh a cada 60s

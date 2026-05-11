@@ -43,6 +43,7 @@ type Client struct {
 	repo *db.Repository
 	http *http.Client
 	log  *zap.Logger
+	rl   *rateLimiter // rate limit por (domain, method) — 2 req/s
 }
 
 func NewClient(repo *db.Repository, log *zap.Logger) *Client {
@@ -50,6 +51,7 @@ func NewClient(repo *db.Repository, log *zap.Logger) *Client {
 		repo: repo,
 		http: &http.Client{Timeout: 15 * time.Second},
 		log:  log,
+		rl:   newRateLimiter(),
 	}
 }
 
@@ -190,12 +192,51 @@ func (c *Client) token(ctx context.Context, creds TenantCreds) (*db.BitrixToken,
 // ─── REST Helper ─────────────────────────────────────────────────────────
 
 func (c *Client) call(ctx context.Context, creds TenantCreds, method string, params map[string]interface{}) (json.RawMessage, error) {
+	// Retry loop para tratar QUERY_LIMIT_EXCEEDED — Bitrix as vezes recusa
+	// mesmo apos nosso rate limiter (concorrencia entre instancias, ou outras
+	// integracoes no mesmo portal). Backoff exponencial 200ms -> 400ms -> 800ms.
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(200*(1<<(attempt-1))) * time.Millisecond
+			c.log.Warn("bitrix call: retrying after rate limit",
+				zap.String("method", method),
+				zap.Int("attempt", attempt),
+				zap.Duration("backoff", backoff))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		raw, err := c.callOnce(ctx, creds, method, params)
+		if err == nil {
+			return raw, nil
+		}
+		lastErr = err
+		if !isRateLimitError(err) {
+			return nil, err // erro nao retryable
+		}
+	}
+	return nil, lastErr
+}
+
+// callOnce executa UMA chamada REST ao Bitrix24, respeitando o rate limiter
+// por (domain, method).
+func (c *Client) callOnce(ctx context.Context, creds TenantCreds, method string, params map[string]interface{}) (json.RawMessage, error) {
 	t, err := c.token(ctx, creds)
 	if err != nil {
 		return nil, err
 	}
 
 	domain := normalizeDomain(creds.Domain)
+
+	// Bloqueia ate ter slot no rate limit (2 req/s por dominio+method).
+	if err := c.rl.wait(ctx, domain, method); err != nil {
+		return nil, err
+	}
+
 	body, _ := json.Marshal(params)
 	reqURL := fmt.Sprintf("%s/rest/%s.json?auth=%s", domain, method, t.AccessToken)
 

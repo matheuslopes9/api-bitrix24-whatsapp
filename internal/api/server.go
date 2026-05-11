@@ -178,6 +178,7 @@ func New(
 	admin.Get("/", h.adminHome)
 	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
+	admin.Post("/api/queue/flush", h.adminFlushQueue)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)
