@@ -163,6 +163,15 @@ func New(
 	app.Get("/stress-test/connectors", h.stressTestConnectors)
 	app.Post("/stress-test/run", h.stressTestRun)
 
+	// ─── Painel super-admin ──────────────────────────────────────────────
+	// /admin/login é público; /admin e /admin/api/* exigem cookie assinado.
+	app.Get("/admin/login", h.adminLoginPage)
+	app.Post("/admin/login", h.adminLoginSubmit)
+	app.Get("/admin/logout", h.adminLogout)
+	admin := app.Group("/admin", h.requireAdminAuth)
+	admin.Get("/", h.adminHome)
+	admin.Get("/api/tenants", h.adminListTenants)
+
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())
 

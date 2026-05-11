@@ -18,10 +18,12 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port      string
-	Env       string
-	Secret    string
-	PublicURL string // APP_BASE_URL — URL pública do servidor (ex: https://meuapp.easypanel.host)
+	Port          string
+	Env           string
+	Secret        string
+	PublicURL     string // APP_BASE_URL — URL pública do servidor (ex: https://meuapp.easypanel.host)
+	AdminUser     string // ADMIN_USER — login do super-admin para /admin
+	AdminPassword string // ADMIN_PASSWORD — senha em texto plano (compare time-constant)
 }
 
 type PostgresConfig struct {
@@ -75,10 +77,12 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		App: AppConfig{
-			Port:      viper.GetString("APP_PORT"),
-			Env:       viper.GetString("APP_ENV"),
-			Secret:    viper.GetString("APP_SECRET"),
-			PublicURL: viper.GetString("APP_BASE_URL"),
+			Port:          viper.GetString("APP_PORT"),
+			Env:           viper.GetString("APP_ENV"),
+			Secret:        viper.GetString("APP_SECRET"),
+			PublicURL:     viper.GetString("APP_BASE_URL"),
+			AdminUser:     viper.GetString("ADMIN_USER"),
+			AdminPassword: viper.GetString("ADMIN_PASSWORD"),
 		},
 		Postgres: PostgresConfig{
 			Host:         viper.GetString("POSTGRES_HOST"),

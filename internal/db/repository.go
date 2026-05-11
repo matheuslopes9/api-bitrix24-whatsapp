@@ -938,3 +938,34 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 	}
 	return portals, nil
 }
+
+// CountSessionsByDomain conta sessões WA agrupadas como QR/Cloud para um domínio Bitrix.
+// QR = jid sem prefixo "cloud:", Cloud = jid com prefixo. Considera apenas
+// sessões cujo bitrix_account.domain bate.
+func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (qr, cloud int, err error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE s.jid NOT LIKE 'cloud:%') AS qr_count,
+			COUNT(*) FILTER (WHERE s.jid LIKE 'cloud:%') AS cloud_count
+		FROM bitrix_accounts ba
+		JOIN whatsapp_sessions s ON s.jid = ba.session_jid
+		WHERE ba.domain = $1`, domain)
+	err = row.Scan(&qr, &cloud)
+	return
+}
+
+// CountMessagesByDomain conta msgs inbound e outbound desde `since` para um domínio Bitrix.
+// Liga messages.session_id → whatsapp_sessions.id → bitrix_accounts.session_jid (com strip
+// do device suffix) → bitrix_accounts.domain.
+func (r *Repository) CountMessagesByDomain(ctx context.Context, domain string, since time.Time) (inbound, outbound int, err error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE m.direction = 'inbound') AS inbound,
+			COUNT(*) FILTER (WHERE m.direction = 'outbound') AS outbound
+		FROM messages m
+		JOIN whatsapp_sessions s ON s.id = m.session_id
+		JOIN bitrix_accounts ba ON ba.session_jid = s.jid
+		WHERE ba.domain = $1 AND m.created_at >= $2`, domain, since)
+	err = row.Scan(&inbound, &outbound)
+	return
+}
