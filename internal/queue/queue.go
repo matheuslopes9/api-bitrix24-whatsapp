@@ -60,6 +60,7 @@ type OutboundJob struct {
 	FileURL      string `json:"file_url,omitempty"`      // downloadLink do evento
 	FileName     string `json:"file_name,omitempty"`
 	FileMime     string `json:"file_mime,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`     // bytes — vem no webhook do Bitrix (files[0][size])
 
 	// Nome do operador que enviou (para salvar no histórico)
 	OperatorName string `json:"operator_name,omitempty"`

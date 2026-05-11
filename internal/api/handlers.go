@@ -988,6 +988,11 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	fileDownloadLink := c.FormValue("data[MESSAGES][0][message][files][0][downloadLink]")
 	fileName := c.FormValue("data[MESSAGES][0][message][files][0][name]")
 	fileMime := c.FormValue("data[MESSAGES][0][message][files][0][mime]")
+	fileSizeStr := c.FormValue("data[MESSAGES][0][message][files][0][size]")
+	var fileSize int64
+	if fileSizeStr != "" {
+		fmt.Sscanf(fileSizeStr, "%d", &fileSize)
+	}
 
 	// Se não veio form-encoded, tenta JSON (send_message via connector.data.set)
 	if connector == "" && strings.Contains(c.Get("Content-Type"), "application/json") {
@@ -1009,6 +1014,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 						DownloadLink string `json:"downloadLink"`
 						Name         string `json:"name"`
 						Mime         string `json:"mime"`
+						Size         int64  `json:"size"`
 					} `json:"files"`
 				} `json:"message"`
 			} `json:"MESSAGES"`
@@ -1027,6 +1033,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 					fileDownloadLink = msg.Message.Files[0].DownloadLink
 					fileName = msg.Message.Files[0].Name
 					fileMime = msg.Message.Files[0].Mime
+					fileSize = msg.Message.Files[0].Size
 				}
 			}
 			h.log.Info("connector event: parsed as JSON")
@@ -1129,6 +1136,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 			FileURL:         fileDownloadLink,
 			FileName:        fileName,
 			FileMime:        fileMime,
+			FileSize:        fileSize,
 		}
 		if err := h.q.PushOutbound(ctx, job); err != nil {
 			h.log.Error("cloud event: push outbound failed", zap.Error(err))
@@ -1170,6 +1178,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 				FileURL:         fileDownloadLink,
 				FileName:        fileName,
 				FileMime:        fileMime,
+				FileSize:        fileSize,
 			}); err != nil {
 				h.log.Error("connector event: push outbound failed (fallback)", zap.Error(err))
 				return c.SendStatus(fiber.StatusOK)
@@ -1229,6 +1238,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		FileURL:         fileDownloadLink,
 		FileName:        fileName,
 		FileMime:        fileMime,
+		FileSize:        fileSize,
 	}); err != nil {
 		h.log.Error("connector event: push outbound failed", zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)

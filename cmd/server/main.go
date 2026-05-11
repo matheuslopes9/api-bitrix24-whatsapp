@@ -129,6 +129,19 @@ func main() {
 		fileName := job.FileName
 
 		if job.FileURL != "" {
+			// Pre-check: o webhook do Bitrix já manda o tamanho (files[0][size]).
+			// Bloqueia ANTES do download — evita baixar 3GB pra descobrir que falha,
+			// e evita retries com GOAWAY do servidor Bitrix em arquivos grandes.
+			if job.FileSize > whatsapp.MaxQRMediaBytes {
+				sizeGB := float64(job.FileSize) / (1024 * 1024 * 1024)
+				log.Error("qr outbound: file too large (pre-check via webhook size)",
+					zap.String("file_name", job.FileName),
+					zap.Float64("size_gb", sizeGB))
+				notifyQROperatorError(c, bitrixClient, repo, log, job,
+					fmt.Sprintf("Arquivo %s (%.2f GB) excede o limite de 2 GB do WhatsApp.",
+						job.FileName, sizeGB))
+				return nil
+			}
 			// Baixa o arquivo do Bitrix
 			var dlErr error
 			fileData, dlErr = downloadURL(job.FileURL)

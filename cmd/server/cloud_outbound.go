@@ -50,6 +50,19 @@ func handleCloudOutbound(
 	fileName := job.FileName
 
 	if job.FileURL != "" {
+		// Pre-check: o webhook do Bitrix já manda o tamanho (files[0][size]).
+		// Bloqueia ANTES do download — evita baixar 200MB+ pra descobrir falha,
+		// e evita o GOAWAY do servidor Bitrix em arquivos grandes (limite Cloud = 100MB).
+		if job.FileSize > whatsapp.MaxInboundMediaBytes {
+			sizeMB := float64(job.FileSize) / (1024 * 1024)
+			log.Error("cloud outbound: file too large (pre-check via webhook size)",
+				zap.String("file_name", job.FileName),
+				zap.Float64("size_mb", sizeMB))
+			notifyOperatorError(c, bitrixClient, repo, log, job,
+				fmt.Sprintf("Arquivo %s (%.1f MB) excede o limite de 100 MB do WhatsApp Business API.",
+					job.FileName, sizeMB))
+			return nil
+		}
 		var dlErr error
 		fileData, dlErr = downloadURL(job.FileURL)
 		if dlErr != nil {
