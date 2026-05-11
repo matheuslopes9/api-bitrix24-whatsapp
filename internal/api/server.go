@@ -158,6 +158,10 @@ func New(
 	app.Get("/sim/lidmap", h.simLIDMap)
 	app.Post("/sim/clear", h.simClear)
 
+	// ─── Stress test interno (sem auth — proteja por firewall se necessário) ──
+	app.Get("/stress-test", h.stressTestPage)
+	app.Post("/stress-test/run", h.stressTestRun)
+
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())
 
