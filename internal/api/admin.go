@@ -228,6 +228,107 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 	})
 }
 
+// GET /admin/api/debug — dump diagnóstico das tabelas-chave.
+// Conta linhas em cada tabela + retorna primeiros N registros (sem dados sensíveis).
+// Útil para diagnosticar quando o painel mostra zeros e a gente não sabe onde está
+// quebrando.
+func (h *handlers) adminDebug(c *fiber.Ctx) error {
+	ctx := c.Context()
+	pool := h.repo.Pool()
+	out := fiber.Map{}
+
+	// Contagens
+	counts := fiber.Map{}
+	for _, tbl := range []string{"bitrix_portals", "bitrix_accounts", "bitrix_tokens", "whatsapp_sessions", "messages"} {
+		var n int64
+		if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM "+tbl).Scan(&n); err != nil {
+			counts[tbl] = "err: " + err.Error()
+		} else {
+			counts[tbl] = n
+		}
+	}
+	out["counts"] = counts
+
+	// Sample bitrix_portals
+	rows, err := pool.Query(ctx, `SELECT domain, member_id, open_line_id, expires_at, installed_at FROM bitrix_portals ORDER BY installed_at DESC LIMIT 10`)
+	if err == nil {
+		var portals []fiber.Map
+		for rows.Next() {
+			var domain, memberID string
+			var openLine int
+			var exp, installedAt time.Time
+			rows.Scan(&domain, &memberID, &openLine, &exp, &installedAt)
+			portals = append(portals, fiber.Map{
+				"domain":       domain,
+				"member_id":    memberID,
+				"open_line_id": openLine,
+				"expires_at":   exp,
+				"installed_at": installedAt,
+			})
+		}
+		rows.Close()
+		out["bitrix_portals_sample"] = portals
+	}
+
+	// Sample bitrix_accounts
+	rows, err = pool.Query(ctx, `SELECT session_jid, domain, open_line_id, connector_id, status FROM bitrix_accounts ORDER BY created_at DESC LIMIT 10`)
+	if err == nil {
+		var accts []fiber.Map
+		for rows.Next() {
+			var sessionJID, domain, connID, status string
+			var openLine int
+			rows.Scan(&sessionJID, &domain, &openLine, &connID, &status)
+			accts = append(accts, fiber.Map{
+				"session_jid":  sessionJID,
+				"domain":       domain,
+				"open_line_id": openLine,
+				"connector_id": connID,
+				"status":       status,
+			})
+		}
+		rows.Close()
+		out["bitrix_accounts_sample"] = accts
+	}
+
+	// Sample whatsapp_sessions
+	rows, err = pool.Query(ctx, `SELECT jid, phone, status, type FROM whatsapp_sessions ORDER BY created_at DESC LIMIT 10`)
+	if err == nil {
+		var sess []fiber.Map
+		for rows.Next() {
+			var jid, phone, status, typ string
+			rows.Scan(&jid, &phone, &status, &typ)
+			sess = append(sess, fiber.Map{"jid": jid, "phone": phone, "status": status, "type": typ})
+		}
+		rows.Close()
+		out["whatsapp_sessions_sample"] = sess
+	}
+
+	// Domains únicos em bitrix_accounts (pra comparar com bitrix_portals.domain)
+	rows, err = pool.Query(ctx, `SELECT DISTINCT domain FROM bitrix_accounts`)
+	if err == nil {
+		var domains []string
+		for rows.Next() {
+			var d string
+			rows.Scan(&d)
+			domains = append(domains, d)
+		}
+		rows.Close()
+		out["bitrix_accounts_distinct_domains"] = domains
+	}
+
+	// Teste do JOIN normalizado: quantas linhas casam?
+	var joinCount int64
+	pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM bitrix_accounts ba
+		JOIN whatsapp_sessions s
+		  ON REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
+	`).Scan(&joinCount)
+	out["join_test_accounts_x_sessions"] = joinCount
+
+	return c.JSON(out)
+}
+
 // POST /admin/api/queue/flush — limpa filas do Redis.
 // Body JSON: {"kinds":["inbound","outbound","dead"]}. Default: limpa só outbound
 // (inbound real e dead-letter ficam preservados a menos que pedidos).

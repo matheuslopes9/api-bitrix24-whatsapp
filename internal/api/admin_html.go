@@ -81,6 +81,37 @@ const adminHomeHTML = `<!doctype html>
   .token.expiring { background: #fef3c7; color: #92400e; }
   .token.expired { background: #fee2e2; color: #991b1b; }
   .loading, .empty { text-align: center; color: #64748b; padding: 3em; }
+
+  /* Abas */
+  .tabs { display: flex; gap: 0.3em; margin-bottom: 1.5em; border-bottom: 1px solid #cbd5e1; }
+  .tab { padding: 0.7em 1.4em; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.95em; color: #64748b; font-family: inherit; font-weight: 500; }
+  .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+  .tab:hover:not(.active) { color: #0f172a; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Stress test */
+  fieldset { border: 1px solid #cbd5e1; border-radius: 6px; padding: 1em 1.4em; margin-bottom: 1em; background: white; }
+  legend { font-weight: 600; padding: 0 0.5em; color: #0f172a; }
+  fieldset label { display: block; margin: 0.6em 0 0.2em; font-size: 0.92em; color: #334155; }
+  fieldset input, fieldset select { width: 100%; padding: 0.55em; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-family: inherit; font-size: 0.95em; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+  .hint { font-size: 0.82em; color: #64748b; margin-top: 0.3em; }
+  #runStressBtn { background: #2563eb; color: white; border: 0; padding: 0.8em 1.6em; border-radius: 5px; font-size: 1em; font-weight: 600; cursor: pointer; }
+  #runStressBtn:hover { background: #1d4ed8; }
+  #runStressBtn:disabled { background: #94a3b8; cursor: not-allowed; }
+  .stress-result { margin-top: 1.5em; }
+  .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8em; margin: 1em 0; }
+  .metric { background: white; padding: 0.8em; border-radius: 6px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .metric .ml { font-size: 0.78em; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+  .metric .mv { font-size: 1.5em; font-weight: 700; margin-top: 0.2em; }
+  .latency-table { width: 100%; border-collapse: collapse; margin-top: 1em; background: white; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .latency-table td, .latency-table th { padding: 0.7em 1em; text-align: left; border-bottom: 1px solid #eee; }
+  .latency-table th { background: #f8fafc; font-size: 0.85em; }
+  pre.json { background: #1e293b; color: #e2e8f0; padding: 1em; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
+  .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -0.15em; margin-right: 0.5em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ok { color: #16a34a; } .warn-c { color: #d97706; } .err-c { color: #dc2626; }
 </style>
 </head>
 <body>
@@ -94,16 +125,59 @@ const adminHomeHTML = `<!doctype html>
   </div>
 </header>
 <main>
-  <div class="summary" id="summary"></div>
-
-  <div class="toolbar">
-    <input type="text" id="search" placeholder="Buscar dom&iacute;nio...">
-    <button id="filterAll">Todos</button>
-    <button id="filterIssues">S&oacute; com problemas</button>
+  <div class="tabs">
+    <button class="tab active" data-tab="tenants">Portais</button>
+    <button class="tab" data-tab="stress">Stress Test</button>
+    <button class="tab" data-tab="debug">Debug</button>
   </div>
 
-  <div id="grid" class="grid">
-    <div class="loading">Carregando...</div>
+  <div id="tab-tenants" class="tab-content active">
+    <div class="summary" id="summary"></div>
+    <div class="toolbar">
+      <input type="text" id="search" placeholder="Buscar dom&iacute;nio...">
+      <button id="filterAll">Todos</button>
+      <button id="filterIssues">S&oacute; com problemas</button>
+    </div>
+    <div id="grid" class="grid">
+      <div class="loading">Carregando...</div>
+    </div>
+  </div>
+
+  <div id="tab-stress" class="tab-content">
+    <p style="color:#64748b;margin-top:0;">Dispara N POSTs concorrentes em <code>/bitrix/connector/event</code> simulando o evento <code>ONIMCONNECTORMESSAGEADD</code>. Bate no pr&oacute;prio processo (loopback).</p>
+    <form id="stressForm">
+      <fieldset>
+        <legend>Carga</legend>
+        <div class="row2">
+          <div>
+            <label for="s-concurrent">Conversas simult&acirc;neas</label>
+            <input type="number" id="s-concurrent" value="50" min="1" max="500">
+            <div class="hint">Cada conversa = um chat_id distinto. Max 500.</div>
+          </div>
+          <div>
+            <label for="s-msgs">Msgs por conversa</label>
+            <input type="number" id="s-msgs" value="1" min="1" max="50">
+            <div class="hint">Sequenciais dentro de cada goroutine. Max 50.</div>
+          </div>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Alvo</legend>
+        <label for="s-connector">Conector</label>
+        <select id="s-connector"><option value="">Carregando...</option></select>
+        <div class="hint">Lista carregada de <code>bitrix_accounts</code>. QR e Cloud aparecem juntos.</div>
+        <label for="s-timeout">Timeout HTTP por request (s)</label>
+        <input type="number" id="s-timeout" value="30" min="5" max="120">
+      </fieldset>
+      <button type="submit" id="runStressBtn">Rodar teste</button>
+    </form>
+    <div id="stressResult" class="stress-result"></div>
+  </div>
+
+  <div id="tab-debug" class="tab-content">
+    <p style="color:#64748b;margin-top:0;">Dump diagn&oacute;stico das tabelas-chave (contagens + amostras). Use para identificar quando o painel mostra zeros e voc&ecirc; n&atilde;o sabe onde est&aacute; quebrando.</p>
+    <button id="reloadDebug" style="padding:0.5em 1em;background:white;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;margin-bottom:1em;">Recarregar</button>
+    <pre class="json" id="debugOut">Carregando...</pre>
   </div>
 </main>
 
@@ -221,9 +295,145 @@ document.getElementById('flushBtn').addEventListener('click', async () => {
   }
 });
 
+// ─── Abas ────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + target));
+    if (target === 'stress' && !stressConnectorsLoaded) loadStressConnectors();
+    if (target === 'debug') loadDebug();
+  });
+});
+
+// ─── Stress Test ─────────────────────────────────────────────────────────
+let stressConnectorsLoaded = false;
+async function loadStressConnectors() {
+  const sel = document.getElementById('s-connector');
+  try {
+    const r = await fetch('/stress-test/connectors');
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok || !data.connectors) {
+      sel.innerHTML = '<option value="">Erro: ' + (data.error || 'falha') + '</option>';
+      return;
+    }
+    if (data.connectors.length === 0) {
+      sel.innerHTML = '<option value="">(nenhum conector cadastrado)</option>';
+      return;
+    }
+    sel.innerHTML = data.connectors.map(c => {
+      const label = '[' + c.kind.toUpperCase() + '] ' + c.connector_id + ' — line ' + c.line;
+      const val = c.connector_id + '|' + c.line;
+      return '<option value="' + val + '">' + escapeHTML(label) + '</option>';
+    }).join('');
+    stressConnectorsLoaded = true;
+  } catch (err) {
+    sel.innerHTML = '<option value="">Erro de rede: ' + err.message + '</option>';
+  }
+}
+
+document.getElementById('stressForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const sel = document.getElementById('s-connector');
+  const btn = document.getElementById('runStressBtn');
+  const result = document.getElementById('stressResult');
+  const sv = sel.value;
+  if (!sv || !sv.includes('|')) {
+    result.innerHTML = '<p class="err-c"><strong>Selecione um conector v&aacute;lido.</strong></p>';
+    return;
+  }
+  const [connector, lineStr] = sv.split('|');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Rodando...';
+  result.innerHTML = '<p style="color:#64748b">Disparando requisi&ccedil;&otilde;es... aguarde.</p>';
+
+  const body = {
+    concurrent: parseInt(document.getElementById('s-concurrent').value, 10),
+    msgs_per_conv: parseInt(document.getElementById('s-msgs').value, 10),
+    connector: connector,
+    line: parseInt(lineStr, 10),
+    timeout_sec: parseInt(document.getElementById('s-timeout').value, 10),
+  };
+  try {
+    const r = await fetch('/stress-test/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) {
+      result.innerHTML = '<p class="err-c"><strong>Erro:</strong> ' + (data.error || r.status) + '</p>';
+      return;
+    }
+    renderStressResult(data);
+  } catch (err) {
+    result.innerHTML = '<p class="err-c"><strong>Erro de rede:</strong> ' + err.message + '</p>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Rodar teste';
+  }
+});
+
+function renderStressResult(d) {
+  const result = document.getElementById('stressResult');
+  const successPct = (100 * d.success / d.total).toFixed(1);
+  const pctClass = d.success === d.total ? 'ok' : (successPct >= 95 ? 'warn-c' : 'err-c');
+  const lat = d.latency_ms || {};
+  const elapsed = (d.elapsed_ms / 1000).toFixed(2);
+  const tput = d.throughput.toFixed(1);
+
+  let html = '<h3>Resultado</h3>';
+  html += '<div class="metric-grid">';
+  html += sMetric('Tempo total', elapsed + 's');
+  html += sMetric('Throughput', tput + ' req/s');
+  html += sMetric('Sucesso', successPct + '%', pctClass);
+  html += sMetric('Total', d.total);
+  html += '</div>';
+
+  if (d.latency_ms) {
+    html += '<h4>Lat&ecirc;ncia</h4>';
+    html += '<table class="latency-table">';
+    html += '<tr><th>min</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>';
+    html += '<tr>';
+    html += '<td>' + lat.min + ' ms</td><td>' + lat.avg + ' ms</td><td>' + lat.p50 + ' ms</td>';
+    html += '<td>' + lat.p95 + ' ms</td><td>' + lat.p99 + ' ms</td><td>' + lat.max + ' ms</td>';
+    html += '</tr></table>';
+  }
+  html += '<h4>Status HTTP</h4>';
+  html += '<pre class="json">' + JSON.stringify(d.status_counts, null, 2) + '</pre>';
+  if (d.errors > 0) {
+    html += '<h4 class="err-c">Erros (' + d.errors + ')</h4>';
+    html += '<pre class="json">' + (d.first_errors || []).join('\n') + '</pre>';
+  }
+  result.innerHTML = html;
+}
+
+function sMetric(label, value, cls) {
+  return '<div class="metric"><div class="ml">' + label + '</div><div class="mv ' + (cls||'') + '">' + value + '</div></div>';
+}
+
+// ─── Debug ───────────────────────────────────────────────────────────────
+async function loadDebug() {
+  const out = document.getElementById('debugOut');
+  out.textContent = 'Carregando...';
+  try {
+    const r = await fetch('/admin/api/debug');
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    out.textContent = 'Erro de rede: ' + err.message;
+  }
+}
+document.getElementById('reloadDebug').addEventListener('click', loadDebug);
+
 load();
-// auto-refresh a cada 60s
-setInterval(load, 60000);
+// auto-refresh da aba de portais a cada 60s
+setInterval(() => {
+  if (document.getElementById('tab-tenants').classList.contains('active')) load();
+}, 60000);
 </script>
 </body>
 </html>`

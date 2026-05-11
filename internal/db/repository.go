@@ -14,6 +14,11 @@ type Repository struct {
 	pool *pgxpool.Pool
 }
 
+// Pool expõe o pgxpool para diagnostico (usado pelo painel admin).
+func (r *Repository) Pool() *pgxpool.Pool {
+	return r.pool
+}
+
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
