@@ -9,12 +9,12 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
 const adminCookieName = "uctalk_admin"
@@ -47,16 +47,23 @@ func verifyAdminCookie(secret, raw string) bool {
 	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
 }
 
-// requireAdminAuth — middleware: verifica cookie. Redirect para /admin/login se falhar.
+// requireAdminAuth — middleware: verifica cookie.
+//   - APIs (paths que contém /api/ ou /run, ou método != GET) retornam 401 JSON
+//   - Páginas HTML retornam redirect 302 para /admin/login (UX de browser)
 func (h *handlers) requireAdminAuth(c *fiber.Ctx) error {
 	if h.cfg.App.AdminUser == "" || h.cfg.App.AdminPassword == "" {
 		return c.Status(503).SendString("admin desabilitado: defina ADMIN_USER e ADMIN_PASSWORD no .env")
 	}
 	cookie := c.Cookies(adminCookieName)
-	if !verifyAdminCookie(h.cfg.App.Secret, cookie) {
-		return c.Redirect("/admin/login", fiber.StatusFound)
+	if verifyAdminCookie(h.cfg.App.Secret, cookie) {
+		return c.Next()
 	}
-	return c.Next()
+	path := c.Path()
+	isAPI := strings.Contains(path, "/api/") || strings.HasSuffix(path, "/run") || strings.HasSuffix(path, "/connectors") || c.Method() != fiber.MethodGet
+	if isAPI {
+		return c.Status(401).JSON(fiber.Map{"error": "unauthorized"})
+	}
+	return c.Redirect("/admin/login", fiber.StatusFound)
 }
 
 // GET /admin/login — formulário de login.
@@ -114,15 +121,35 @@ func (h *handlers) adminHome(c *fiber.Ctx) error {
 
 // GET /admin/api/tenants — dados JSON para popular os cards.
 // Agrega por portal Bitrix (bitrix_portals): conexões WA (QR/Cloud), msgs 24h/1h,
-// status do token OAuth.
+// status do token OAuth. Usa queries agregadas (GROUP BY) — 3 queries no total,
+// independente da quantidade de portais. Escala para 1000+ tenants.
 func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 	ctx := c.Context()
 	portals, err := h.repo.ListBitrixPortals(ctx)
 	if err != nil {
+		h.log.Error("admin: ListBitrixPortals failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	now := time.Now()
+
+	// 3 queries agregadas — uma vez só, independente de N portais.
+	sessionsByDomain, err := h.repo.AllDomainSessionCounts(ctx)
+	if err != nil {
+		h.log.Error("admin: AllDomainSessionCounts failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": "session counts: " + err.Error()})
+	}
+	msgs24hByDomain, err := h.repo.AllDomainMessageCounts(ctx, now.Add(-24*time.Hour))
+	if err != nil {
+		h.log.Error("admin: AllDomainMessageCounts(24h) failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": "msg counts 24h: " + err.Error()})
+	}
+	msgs1hByDomain, err := h.repo.AllDomainMessageCounts(ctx, now.Add(-time.Hour))
+	if err != nil {
+		h.log.Error("admin: AllDomainMessageCounts(1h) failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": "msg counts 1h: " + err.Error()})
+	}
+
 	type tenantCard struct {
 		ID           string    `json:"id"`
 		Domain       string    `json:"domain"`
@@ -140,7 +167,7 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		MsgsOutbound int       `json:"msgs_outbound_24h"`
 	}
 
-	out := make([]tenantCard, 0, len(portals))
+	cards := make([]tenantCard, 0, len(portals))
 	for _, p := range portals {
 		card := tenantCard{
 			ID:          p.ID.String(),
@@ -151,32 +178,33 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 			TokenExpAt:  p.ExpiresAt,
 			OpenLineID:  p.OpenLineID,
 		}
-		// Status do token
-		if p.ExpiresAt.Before(now) {
+		switch {
+		case p.ExpiresAt.Before(now):
 			card.TokenStatus = "expired"
-		} else if p.ExpiresAt.Before(now.Add(7 * 24 * time.Hour)) {
+		case p.ExpiresAt.Before(now.Add(7 * 24 * time.Hour)):
 			card.TokenStatus = "expiring"
-		} else {
+		default:
 			card.TokenStatus = "valid"
 		}
-		// Conexões WA por dominio
-		qr, cloud, _ := h.repo.CountSessionsByDomain(ctx, p.Domain)
-		card.ConnQR = qr
-		card.ConnCloud = cloud
-		// Atividade
-		in24, out24, _ := h.repo.CountMessagesByDomain(ctx, p.Domain, now.Add(-24*time.Hour))
-		in1, out1, _ := h.repo.CountMessagesByDomain(ctx, p.Domain, now.Add(-time.Hour))
-		card.Msgs24h = in24 + out24
-		card.Msgs1h = in1 + out1
-		card.MsgsInbound = in24
-		card.MsgsOutbound = out24
-		out = append(out, card)
+		if s, ok := sessionsByDomain[p.Domain]; ok {
+			card.ConnQR = s.QR
+			card.ConnCloud = s.Cloud
+		}
+		if m, ok := msgs24hByDomain[p.Domain]; ok {
+			card.MsgsInbound = m.Inbound
+			card.MsgsOutbound = m.Outbound
+			card.Msgs24h = m.Inbound + m.Outbound
+		}
+		if m, ok := msgs1hByDomain[p.Domain]; ok {
+			card.Msgs1h = m.Inbound + m.Outbound
+		}
+		cards = append(cards, card)
 	}
 
 	return c.JSON(fiber.Map{
-		"tenants":     out,
-		"total":       len(out),
-		"generated_at": time.Now().Format(time.RFC3339),
+		"tenants":      cards,
+		"total":        len(cards),
+		"generated_at": now.Format(time.RFC3339),
 	})
 }
 
@@ -188,6 +216,3 @@ func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
 }
-
-// _ avoid unused fmt
-var _ = fmt.Sprintf

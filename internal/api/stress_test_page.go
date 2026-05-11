@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -97,7 +96,6 @@ func (h *handlers) stressTestRun(c *fiber.Ctx) error {
 	total := req.Concurrent * req.MsgsPerConv
 	resultsCh := make(chan result, total)
 
-	var sent atomic.Int64
 	startAll := time.Now()
 	var wg sync.WaitGroup
 	imChatBase := 9000 + rand.Intn(100000) // evita colisão entre runs
@@ -118,7 +116,6 @@ func (h *handlers) stressTestRun(c *fiber.Ctx) error {
 				status, errStr := postStressForm(client, endpoint, body)
 				latency := time.Since(start)
 				resultsCh <- result{latency: latency, status: status, errMsg: errStr}
-				sent.Add(1)
 			}
 		}(i)
 	}

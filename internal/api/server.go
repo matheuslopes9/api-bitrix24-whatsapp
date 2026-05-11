@@ -158,11 +158,6 @@ func New(
 	app.Get("/sim/lidmap", h.simLIDMap)
 	app.Post("/sim/clear", h.simClear)
 
-	// ─── Stress test interno (sem auth — proteja por firewall se necessário) ──
-	app.Get("/stress-test", h.stressTestPage)
-	app.Get("/stress-test/connectors", h.stressTestConnectors)
-	app.Post("/stress-test/run", h.stressTestRun)
-
 	// ─── Painel super-admin ──────────────────────────────────────────────
 	// /admin/login é público; /admin e /admin/api/* exigem cookie assinado.
 	app.Get("/admin/login", h.adminLoginPage)
@@ -170,7 +165,15 @@ func New(
 	app.Get("/admin/logout", h.adminLogout)
 	admin := app.Group("/admin", h.requireAdminAuth)
 	admin.Get("/", h.adminHome)
+	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
+
+	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
+	stress := app.Group("/stress-test", h.requireAdminAuth)
+	stress.Get("/", h.stressTestPage)
+	stress.Get("", h.stressTestPage) // alias sem barra final
+	stress.Get("/connectors", h.stressTestConnectors)
+	stress.Post("/run", h.stressTestRun)
 
 	// ─── Prometheus metrics ──────────────────────────────────────────────
 	app.Get("/metrics", metrics.Handler())

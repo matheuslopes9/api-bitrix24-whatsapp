@@ -939,9 +939,73 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 	return portals, nil
 }
 
-// CountSessionsByDomain conta sessões WA agrupadas como QR/Cloud para um domínio Bitrix.
-// QR = jid sem prefixo "cloud:", Cloud = jid com prefixo. Considera apenas
-// sessões cujo bitrix_account.domain bate.
+// DomainSessionCounts retorna QR e Cloud por dominio em UMA query — usado
+// pelo painel admin para evitar N+1 sobre N portais.
+type DomainSessionCounts struct {
+	Domain string
+	QR     int
+	Cloud  int
+}
+
+// AllDomainSessionCounts agrupa sessoes WA por bitrix_account.domain
+// (QR = jid sem prefixo "cloud:", Cloud = jid com prefixo). Uma unica query.
+func (r *Repository) AllDomainSessionCounts(ctx context.Context) (map[string]DomainSessionCounts, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ba.domain,
+			COUNT(*) FILTER (WHERE s.jid NOT LIKE 'cloud:%') AS qr_count,
+			COUNT(*) FILTER (WHERE s.jid LIKE 'cloud:%') AS cloud_count
+		FROM bitrix_accounts ba
+		JOIN whatsapp_sessions s ON s.jid = ba.session_jid
+		GROUP BY ba.domain`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]DomainSessionCounts{}
+	for rows.Next() {
+		var d DomainSessionCounts
+		if err := rows.Scan(&d.Domain, &d.QR, &d.Cloud); err != nil {
+			return nil, err
+		}
+		out[d.Domain] = d
+	}
+	return out, rows.Err()
+}
+
+// DomainMessageCounts agrupa contagem de msgs por dominio desde `since`.
+type DomainMessageCounts struct {
+	Domain   string
+	Inbound  int
+	Outbound int
+}
+
+// AllDomainMessageCounts retorna inbound/outbound de TODOS os dominios em UMA query.
+func (r *Repository) AllDomainMessageCounts(ctx context.Context, since time.Time) (map[string]DomainMessageCounts, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ba.domain,
+			COUNT(*) FILTER (WHERE m.direction = 'inbound') AS inbound,
+			COUNT(*) FILTER (WHERE m.direction = 'outbound') AS outbound
+		FROM messages m
+		JOIN whatsapp_sessions s ON s.id = m.session_id
+		JOIN bitrix_accounts ba ON ba.session_jid = s.jid
+		WHERE m.created_at >= $1
+		GROUP BY ba.domain`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]DomainMessageCounts{}
+	for rows.Next() {
+		var d DomainMessageCounts
+		if err := rows.Scan(&d.Domain, &d.Inbound, &d.Outbound); err != nil {
+			return nil, err
+		}
+		out[d.Domain] = d
+	}
+	return out, rows.Err()
+}
+
+// CountSessionsByDomain — versão por-domínio (mantida para uso pontual).
 func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (qr, cloud int, err error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT
@@ -954,9 +1018,7 @@ func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (
 	return
 }
 
-// CountMessagesByDomain conta msgs inbound e outbound desde `since` para um domínio Bitrix.
-// Liga messages.session_id → whatsapp_sessions.id → bitrix_accounts.session_jid (com strip
-// do device suffix) → bitrix_accounts.domain.
+// CountMessagesByDomain — versão por-domínio (mantida para uso pontual).
 func (r *Repository) CountMessagesByDomain(ctx context.Context, domain string, since time.Time) (inbound, outbound int, err error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT

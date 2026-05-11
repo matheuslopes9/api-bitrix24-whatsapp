@@ -114,7 +114,7 @@ async function load() {
   document.getElementById('grid').innerHTML = '<div class="loading">Carregando...</div>';
   try {
     const r = await fetch('/admin/api/tenants');
-    if (r.status === 302 || r.redirected) { window.location = '/admin/login'; return; }
+    if (r.status === 401 || r.redirected) { window.location = '/admin/login'; return; }
     const data = await r.json();
     if (!r.ok) {
       document.getElementById('grid').innerHTML = '<div class="empty">Erro: ' + (data.error || r.status) + '</div>';
