@@ -245,8 +245,8 @@ function renderGrid() {
 function cardHTML(t) {
   const cls = t.token_status === 'expired' ? 'expired' : (t.token_status === 'expiring' ? 'expiring' : '');
   const conns = [];
-  if (t.connections_qr > 0) conns.push('<span class="pill qr">' + t.connections_qr + ' QR</span>');
-  if (t.connections_cloud > 0) conns.push('<span class="pill cloud">' + t.connections_cloud + ' Cloud</span>');
+  if (t.connections_qr > 0) conns.push('<span class="pill qr">' + t.connections_qr + ' Multi-Device</span>');
+  if (t.connections_cloud > 0) conns.push('<span class="pill cloud">' + t.connections_cloud + ' Oficial</span>');
   if (conns.length === 0) conns.push('<span class="pill none">Sem conex&atilde;o</span>');
 
   const installed = new Date(t.installed_at).toLocaleDateString('pt-BR');
@@ -327,7 +327,8 @@ async function loadStressConnectors() {
       return;
     }
     sel.innerHTML = data.connectors.map(c => {
-      const label = '[' + c.kind.toUpperCase() + '] ' + c.connector_id + ' — line ' + c.line;
+      const kindLabel = c.kind === 'cloud' ? 'Oficial' : 'Multi-Device';
+      const label = '[' + kindLabel + '] ' + c.connector_id + ' — line ' + c.line;
       const val = c.connector_id + '|' + c.line;
       return '<option value="' + val + '">' + escapeHTML(label) + '</option>';
     }).join('');

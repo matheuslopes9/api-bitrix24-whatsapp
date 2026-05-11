@@ -331,11 +331,11 @@ input:focus{border-color:#25D366}
 
   <!-- Toggle entre QR Code e API Oficial -->
   <div class="conn-tabs" style="display:flex;gap:6px;background:#f3f4f6;border-radius:10px;padding:4px;margin-bottom:20px">
-    <button class="conn-tab active" id="tab-qr" onclick="setMode('qr')" style="flex:1;padding:9px;border:none;background:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.06)">📱 QR Code</button>
+    <button class="conn-tab active" id="tab-qr" onclick="setMode('qr')" style="flex:1;padding:9px;border:none;background:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#111;box-shadow:0 1px 3px rgba(0,0,0,.06)">📱 Multi-Device</button>
     <button class="conn-tab" id="tab-cloud" onclick="setMode('cloud')" style="flex:1;padding:9px;border:none;background:transparent;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#666">☁️ API Oficial</button>
   </div>
 
-  <!-- ─── Modo QR Code ─── -->
+  <!-- ─── Modo Multi-Device ─── -->
   <div id="mode-qr">
     <div class="form-row">
       <input type="text" id="phone" placeholder="5519910001772" maxlength="20"/>

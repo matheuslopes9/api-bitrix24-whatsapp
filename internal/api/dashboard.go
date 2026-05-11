@@ -543,9 +543,9 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="btn-refresh-icon"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
           Atualizar status
         </button>
-        <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalNovaSessao('qr')" title="Conectar via QR code (whatsmeow)">
+        <button class="btn btn-primary" id="btn-nova-sessao" onclick="abrirModalNovaSessao('qr')" title="Conectar via Multi-Device (whatsmeow)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          QR Code
+          Multi-Device
         </button>
         <button class="btn btn-ghost" id="btn-nova-sessao-cloud" onclick="abrirModalNovaSessao('cloud')" title="Conectar via WhatsApp Business API (Meta Oficial)" style="border:1px solid rgba(59,130,246,.4);color:#60a5fa;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -851,15 +851,15 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div style="font-size:17px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">Nova Sessão WhatsApp</div>
-    <div style="font-size:13px;color:#475569;margin-bottom:16px;">Escolha entre QR Code ou WhatsApp Business API</div>
+    <div style="font-size:13px;color:#475569;margin-bottom:16px;">Escolha entre Multi-Device ou WhatsApp Business API</div>
 
     <!-- Tabs -->
     <div style="display:flex;gap:6px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:4px;margin-bottom:18px;">
-      <button id="ns-tab-qr" onclick="trocarTipoSessao('qr')" style="flex:1;padding:9px;border:none;background:rgba(37,211,102,.18);color:#25D366;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">📱 QR Code</button>
+      <button id="ns-tab-qr" onclick="trocarTipoSessao('qr')" style="flex:1;padding:9px;border:none;background:rgba(37,211,102,.18);color:#25D366;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">📱 Multi-Device</button>
       <button id="ns-tab-cloud" onclick="trocarTipoSessao('cloud')" style="flex:1;padding:9px;border:none;background:transparent;color:#64748b;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">☁️ API Oficial</button>
     </div>
 
-    <!-- ─── Form QR Code ─── -->
+    <!-- ─── Form Multi-Device ─── -->
     <div id="ns-mode-qr">
       <div style="display:flex;gap:8px;margin-bottom:18px;">
         <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;"/>
@@ -1264,7 +1264,7 @@ function carregarSessoes() {
         + '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#1e293b" stroke-width="1.5" style="margin:0 auto 14px;display:block;"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>'
         + '<p style="color:#334155;font-size:14px;margin-bottom:16px;">Nenhum número conectado ainda</p>'
         + '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">'
-        + '<button class="btn btn-primary" onclick="abrirModalNovaSessao(\'qr\')">📱 Conectar via QR Code</button>'
+        + '<button class="btn btn-primary" onclick="abrirModalNovaSessao(\'qr\')">📱 Conectar via Multi-Device</button>'
         + '<button class="btn btn-ghost" onclick="abrirModalNovaSessao(\'cloud\')" style="border:1px solid rgba(59,130,246,.4);color:#60a5fa;">☁️ API Oficial (Meta)</button>'
         + '</div>'
         + '</div>';
@@ -1289,7 +1289,7 @@ function carregarSessoes() {
         jidLabel = jid;
         iconBg = 'rgba(37,211,102,.12)';
         iconColor = '#25D366';
-        badgeTipo = '<span style="font-size:10px;background:rgba(37,211,102,.15);color:#25D366;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">QR CODE</span>';
+        badgeTipo = '<span style="font-size:10px;background:rgba(37,211,102,.15);color:#25D366;padding:3px 9px;border-radius:11px;font-weight:700;letter-spacing:.04em;">MULTI-DEVICE</span>';
       }
       var btnWebhook = '';
       if (tipo === 'cloud_api') {
