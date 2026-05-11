@@ -351,6 +351,27 @@ func (h *handlers) adminDebug(c *fiber.Ctx) error {
 		out["whatsapp_sessions_distinct_phones"] = phones
 	}
 
+	// Diagnostico: from_jid distintos das msgs outbound recentes
+	rows, err = pool.Query(ctx, `
+		SELECT from_jid, COUNT(*) AS cnt
+		FROM messages
+		WHERE direction = 'outbound'
+		  AND created_at >= NOW() - INTERVAL '7 days'
+		GROUP BY from_jid
+		ORDER BY cnt DESC
+		LIMIT 10`)
+	if err == nil {
+		var fjs []fiber.Map
+		for rows.Next() {
+			var fj string
+			var cnt int64
+			rows.Scan(&fj, &cnt)
+			fjs = append(fjs, fiber.Map{"from_jid": fj, "count": cnt})
+		}
+		rows.Close()
+		out["messages_distinct_from_jid_7d"] = fjs
+	}
+
 	// Diagnostico: 5 amostras de mensagens com from_jid ou to_jid problematico
 	rows, err = pool.Query(ctx, `
 		SELECT direction, from_jid, to_jid, created_at

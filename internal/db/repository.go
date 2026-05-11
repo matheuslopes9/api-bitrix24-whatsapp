@@ -589,9 +589,19 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 		),
 		msg_norm AS (
 			SELECT
-				REGEXP_REPLACE(REPLACE(our_jid, 'cloud:', ''), ':[0-9]+@', '@') AS norm_jid,
-				CASE WHEN our_jid LIKE 'cloud:%' THEN 'cloud' ELSE 'qr' END    AS kind,
-				SPLIT_PART(REGEXP_REPLACE(REPLACE(our_jid, 'cloud:', ''), ':[0-9]+@', '@'), '@', 1) AS phone_from_jid,
+				-- Bug historico: stripDeviceSuffix() removia o ":" do prefixo
+				-- "cloud:" e gravava "cloud@s.whatsapp.net" no banco. Tratamos
+				-- esse caso aqui como sinonimo de Cloud (sem id especifico).
+				CASE
+					WHEN our_jid = 'cloud@s.whatsapp.net' THEN 'cloud-legacy'
+					WHEN our_jid LIKE 'cloud:%' THEN
+						REGEXP_REPLACE(REPLACE(our_jid, 'cloud:', ''), ':[0-9]+@', '@')
+					ELSE REGEXP_REPLACE(our_jid, ':[0-9]+@', '@')
+				END AS norm_jid,
+				CASE
+					WHEN our_jid LIKE 'cloud:%' OR our_jid = 'cloud@s.whatsapp.net' THEN 'cloud'
+					ELSE 'qr'
+				END AS kind,
 				direction,
 				status
 			FROM msg_raw
@@ -599,12 +609,18 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 		)
 		SELECT
 			COALESCE(NULLIF(MAX(s.jid), ''), m.norm_jid)                        AS session_jid,
-			-- prefere phone do banco, mas SO se for numerico. Senao usa o
-			-- numero extraido do JID. Isso resolve linhas com phone='cloud'
-			-- ou outro valor sujo de teste.
+			-- phone preferencialmente do banco (se numerico). Senao, para
+			-- linha 'cloud-legacy' tenta pegar a unica sessao Cloud ativa;
+			-- para QR, usa SPLIT_PART do JID puro.
 			COALESCE(
 				NULLIF(MAX(s.phone) FILTER (WHERE s.phone ~ '^[0-9]+$'), ''),
-				m.phone_from_jid
+				CASE WHEN MAX(m.kind) = 'cloud' THEN (
+					SELECT phone FROM whatsapp_sessions
+					WHERE type = 'cloud_api' AND status = 'active' AND phone ~ '^[0-9]+$'
+					ORDER BY created_at DESC LIMIT 1
+				) END,
+				NULLIF(SPLIT_PART(m.norm_jid, '@', 1), 'cloud-legacy'),
+				SPLIT_PART(m.norm_jid, '@', 1)
 			)                                                                   AS phone,
 			MAX(m.kind)                                                         AS kind,
 			COUNT(*)                                                            AS total_messages,
@@ -613,9 +629,10 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END)           AS failed_count
 		FROM msg_norm m
 		LEFT JOIN whatsapp_sessions s
-			ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
+			ON (m.norm_jid <> 'cloud-legacy'
+				AND REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid)
 		WHERE m.norm_jid <> ''
-		GROUP BY m.norm_jid, m.phone_from_jid
+		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
 	`, fmt.Sprintf("%d", days))
 	if err != nil {

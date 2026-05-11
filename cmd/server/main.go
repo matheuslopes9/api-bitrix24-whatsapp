@@ -548,7 +548,15 @@ func buildMessageHandler(
 // stripDeviceSuffix remove o device suffix ":NN" do JID, mantendo o servidor.
 // "5519987717792:48@s.whatsapp.net" → "5519987717792@s.whatsapp.net"
 // "127586399207476:48@lid"          → "127586399207476@lid"
+//
+// Preserva o prefixo "cloud:" das sessoes Cloud API — sem isso, o : do
+// prefixo era confundido com device suffix e o JID virava "cloud@s.whatsapp.net",
+// perdendo o phone_number_id. Esse bug poluiu o banco de msgs com 27k+
+// from_jid="cloud@s.whatsapp.net" que viram orfas no relatorio.
 func stripDeviceSuffix(jid string) string {
+	if strings.HasPrefix(jid, "cloud:") {
+		return jid // Cloud API: o ":" faz parte da identidade, nao e device
+	}
 	at := strings.Index(jid, "@")
 	if at == -1 {
 		return jid
