@@ -341,6 +341,28 @@ func (h *handlers) adminDebug(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+// POST /admin/api/cleanup/banned-sessions — remove whatsapp_sessions com status='banned'.
+func (h *handlers) adminCleanupBannedSessions(c *fiber.Ctx) error {
+	n, err := h.repo.DeleteBannedSessions(c.Context())
+	if err != nil {
+		h.log.Error("admin: delete banned sessions failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: deleted banned sessions", zap.Int64("count", n))
+	return c.JSON(fiber.Map{"deleted": n})
+}
+
+// POST /admin/api/cleanup/placeholder-portals — remove bitrix_portals com domain=member_id.
+func (h *handlers) adminCleanupPlaceholders(c *fiber.Ctx) error {
+	n, err := h.repo.DeletePlaceholderPortals(c.Context())
+	if err != nil {
+		h.log.Error("admin: delete placeholder portals failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: deleted placeholder portals", zap.Int64("count", n))
+	return c.JSON(fiber.Map{"deleted": n})
+}
+
 // POST /admin/api/queue/flush — limpa filas do Redis.
 // Body JSON: {"kinds":["inbound","outbound","dead"]}. Default: limpa só outbound
 // (inbound real e dead-letter ficam preservados a menos que pedidos).

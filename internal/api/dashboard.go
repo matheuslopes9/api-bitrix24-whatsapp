@@ -869,10 +869,12 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <div id="modal-qr-area" style="display:none;text-align:center;">
         <div id="modal-badge-qr" style="margin-bottom:12px;"></div>
         <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:12px;padding:10px;display:inline-block;margin-bottom:8px;">
-          <img id="modal-qr-img" src="" width="200" height="200" style="display:none;border-radius:8px;"/>
-          <div id="modal-qr-placeholder" style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;">Aguardando QR...</div>
+          <div style="position:relative;width:200px;height:200px;">
+            <img id="modal-qr-img" src="" width="200" height="200" style="position:absolute;top:0;left:0;display:none;border-radius:8px;"/>
+            <div id="modal-qr-placeholder" style="position:absolute;top:0;left:0;width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#334155;font-size:13px;text-align:center;">Aguardando QR...</div>
+          </div>
         </div>
-        <div style="font-size:12px;color:#475569;" id="modal-timer"></div>
+        <div style="font-size:12px;color:#475569;height:16px;" id="modal-timer"></div>
       </div>
 
       <div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:13px;margin-top:14px;font-size:12.5px;color:#475569;line-height:1.9;">
@@ -1071,6 +1073,7 @@ var chartDist = null;
 var qrInterval = null;
 var qrTimer = null;
 var qrCountdown = 0;
+var qrLastCode = ''; // ultimo conteudo de QR mostrado — evita resetar timer a cada poll
 
 // ─── Isolamento por portal ────────────────────────────────────────────────────
 // Quando a URL contém ?portal=empresa.bitrix24.com.br, o dashboard filtra
@@ -1572,17 +1575,27 @@ function fazerQRPoll(phone) {
       setTimeout(function() { fecharModalQR(); carregarSessoes(); carregarVisaoGeral(); }, 2000);
     } else if (d.status === 'ready' && d.qr) {
       var img = document.getElementById('modal-qr-img');
-      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&ecc=L&data=' + encodeURIComponent(d.qr);
-      img.style.display = 'block';
-      document.getElementById('modal-qr-placeholder').style.display = 'none';
-      setBadgeModal('blue', 'Escaneie o QR code');
-      qrCountdown = 25;
-      if (qrTimer) clearInterval(qrTimer);
-      qrTimer = setInterval(function() {
-        qrCountdown--;
+      // Atualiza img + reinicia timer SOMENTE se o conteudo do QR mudou.
+      // Sem isso, cada poll de 2s reseta o contador e a img re-baixa.
+      if (d.qr !== qrLastCode) {
+        qrLastCode = d.qr;
+        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&ecc=L&data=' + encodeURIComponent(d.qr);
+        img.style.display = 'block';
+        document.getElementById('modal-qr-placeholder').style.display = 'none';
+        setBadgeModal('blue', 'Escaneie o QR code');
+        qrCountdown = 30;
+        if (qrTimer) clearInterval(qrTimer);
+        qrTimer = setInterval(function() {
+          qrCountdown--;
+          if (qrCountdown <= 0) {
+            clearInterval(qrTimer);
+            setText('modal-timer', 'Atualizando...');
+            return;
+          }
+          setText('modal-timer', 'QR expira em ' + qrCountdown + 's');
+        }, 1000);
         setText('modal-timer', 'QR expira em ' + qrCountdown + 's');
-        if (qrCountdown <= 0) { clearInterval(qrTimer); setText('modal-timer', 'Atualizando...'); }
-      }, 1000);
+      }
     } else {
       setBadgeModal('yellow', 'Aguardando QR code...');
     }
@@ -1598,6 +1611,7 @@ function setBadgeModal(cor, texto) {
 function pararQRPoll() {
   if (qrInterval) { clearInterval(qrInterval); qrInterval = null; }
   if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  qrLastCode = '';
 }
 
 // ─── Relatórios ───────────────────────────────────────────────────────────────

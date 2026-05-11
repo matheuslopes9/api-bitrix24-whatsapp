@@ -1064,6 +1064,27 @@ func (r *Repository) AllDomainMessageCounts(ctx context.Context, since time.Time
 	return out, rows.Err()
 }
 
+// DeleteBannedSessions remove rows com status='banned' (sessoes antigas que
+// sobraram a cada reconexao QR — whatsmeow cria uma row nova por device
+// suffix). Mantem 'active' e 'disconnected'. Retorna quantas removeu.
+func (r *Repository) DeleteBannedSessions(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM whatsapp_sessions WHERE status = 'banned'`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeletePlaceholderPortals remove portais com domain == member_id (placeholders
+// nao migrados do install Partner App). Retorna quantos removeu.
+func (r *Repository) DeletePlaceholderPortals(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM bitrix_portals WHERE domain = member_id`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // CountSessionsByDomain — versão por-domínio (mantida para uso pontual).
 func (r *Repository) CountSessionsByDomain(ctx context.Context, domain string) (qr, cloud int, err error) {
 	row := r.pool.QueryRow(ctx, `

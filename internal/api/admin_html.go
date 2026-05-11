@@ -176,7 +176,11 @@ const adminHomeHTML = `<!doctype html>
 
   <div id="tab-debug" class="tab-content">
     <p style="color:#64748b;margin-top:0;">Dump diagn&oacute;stico das tabelas-chave (contagens + amostras). Use para identificar quando o painel mostra zeros e voc&ecirc; n&atilde;o sabe onde est&aacute; quebrando.</p>
-    <button id="reloadDebug" style="padding:0.5em 1em;background:white;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;margin-bottom:1em;">Recarregar</button>
+    <div style="display:flex;gap:0.5em;flex-wrap:wrap;margin-bottom:1em;">
+      <button id="reloadDebug" style="padding:0.5em 1em;background:white;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;">Recarregar</button>
+      <button id="cleanBanned" style="padding:0.5em 1em;background:#fef3c7;border:1px solid #fde68a;border-radius:5px;cursor:pointer;color:#92400e;">Limpar sess&otilde;es banned</button>
+      <button id="cleanPlaceholders" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar portais placeholder</button>
+    </div>
     <pre class="json" id="debugOut">Carregando...</pre>
   </div>
 </main>
@@ -428,6 +432,23 @@ async function loadDebug() {
   }
 }
 document.getElementById('reloadDebug').addEventListener('click', loadDebug);
+
+async function cleanupAction(endpoint, label) {
+  if (!confirm('Confirma: ' + label + '?')) return;
+  try {
+    const r = await fetch(endpoint, { method: 'POST' });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); return; }
+    alert(label + ': ' + (data.deleted || 0) + ' removidos.');
+    loadDebug();
+    load(); // atualiza tambem o card de Portais
+  } catch (e) { alert('Erro de rede: ' + e.message); }
+}
+document.getElementById('cleanBanned').addEventListener('click',
+  () => cleanupAction('/admin/api/cleanup/banned-sessions', 'Limpar sessões banned'));
+document.getElementById('cleanPlaceholders').addEventListener('click',
+  () => cleanupAction('/admin/api/cleanup/placeholder-portals', 'Limpar portais placeholder'));
 
 load();
 // auto-refresh da aba de portais a cada 60s
