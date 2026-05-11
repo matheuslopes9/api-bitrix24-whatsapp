@@ -491,11 +491,11 @@ func (r *Repository) DebugMessageStats(ctx context.Context, phone string) (map[s
 // ─── Relatórios ───────────────────────────────────────────────────────────
 
 type StatsRow struct {
-	Date            time.Time `db:"date"`
-	TotalMessages   int64     `db:"total_messages"`
-	InboundCount    int64     `db:"inbound_count"`
-	OutboundCount   int64     `db:"outbound_count"`
-	AvgResponseSecs float64   `db:"avg_response_secs"`
+	Date            time.Time `db:"date"              json:"date"`
+	TotalMessages   int64     `db:"total_messages"    json:"total_messages"`
+	InboundCount    int64     `db:"inbound_count"     json:"inbound_count"`
+	OutboundCount   int64     `db:"outbound_count"    json:"outbound_count"`
+	AvgResponseSecs float64   `db:"avg_response_secs" json:"avg_response_secs"`
 }
 
 func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, error) {
@@ -529,36 +529,36 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 
 // StatsSessionRow — mensagens agrupadas por sessão (número WA)
 type StatsSessionRow struct {
-	SessionJID    string  `db:"session_jid"`
-	Phone         string  `db:"phone"`
-	TotalMessages int64   `db:"total_messages"`
-	InboundCount  int64   `db:"inbound_count"`
-	OutboundCount int64   `db:"outbound_count"`
-	FailedCount   int64   `db:"failed_count"`
+	SessionJID    string `db:"session_jid"    json:"session_jid"`
+	Phone         string `db:"phone"          json:"phone"`
+	TotalMessages int64  `db:"total_messages" json:"total_messages"`
+	InboundCount  int64  `db:"inbound_count"  json:"inbound_count"`
+	OutboundCount int64  `db:"outbound_count" json:"outbound_count"`
+	FailedCount   int64  `db:"failed_count"   json:"failed_count"`
 }
 
 // StatsTypeRow — mensagens agrupadas por tipo (text, image, audio…)
 type StatsTypeRow struct {
-	MessageType   string `db:"message_type"`
-	TotalMessages int64  `db:"total_messages"`
-	InboundCount  int64  `db:"inbound_count"`
-	OutboundCount int64  `db:"outbound_count"`
+	MessageType   string `db:"message_type"   json:"message_type"`
+	TotalMessages int64  `db:"total_messages" json:"total_messages"`
+	InboundCount  int64  `db:"inbound_count"  json:"inbound_count"`
+	OutboundCount int64  `db:"outbound_count" json:"outbound_count"`
 }
 
 // StatsHourRow — volume por hora do dia
 type StatsHourRow struct {
-	Hour          int   `db:"hour"`
-	TotalMessages int64 `db:"total_messages"`
+	Hour          int   `db:"hour"           json:"hour"`
+	TotalMessages int64 `db:"total_messages" json:"total_messages"`
 }
 
 // StatsContactRow — top contatos por volume
 type StatsContactRow struct {
-	WAJID         string `db:"wa_jid"`
-	WAPhone       string `db:"wa_phone"`
-	WAName        string `db:"wa_name"`
-	TotalMessages int64  `db:"total_messages"`
-	InboundCount  int64  `db:"inbound_count"`
-	OutboundCount int64  `db:"outbound_count"`
+	WAJID         string `db:"wa_jid"         json:"wa_jid"`
+	WAPhone       string `db:"wa_phone"       json:"wa_phone"`
+	WAName        string `db:"wa_name"        json:"wa_name"`
+	TotalMessages int64  `db:"total_messages" json:"total_messages"`
+	InboundCount  int64  `db:"inbound_count"  json:"inbound_count"`
+	OutboundCount int64  `db:"outbound_count" json:"outbound_count"`
 }
 
 func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSessionRow, error) {
