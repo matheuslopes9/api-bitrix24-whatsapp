@@ -567,18 +567,36 @@ type StatsContactRow struct {
 }
 
 func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSessionRow, error) {
+	// Agrupa pelo telefone do "nosso" lado:
+	//   - outbound: from_jid (a sessao enviou)
+	//   - inbound:  to_jid   (a sessao recebeu)
+	// Strip do device suffix (":NN@") e do prefixo "cloud:" para que
+	// reconexoes QR/Cloud nao quebrem o agrupamento. Quando whatsapp_sessions
+	// ainda existe, pega phone/jid dela; senão extrai do digit da chave.
 	rows, err := r.pool.Query(ctx, `
+		WITH msg_norm AS (
+			SELECT
+				REGEXP_REPLACE(
+					REPLACE(
+						CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END,
+						'cloud:', ''),
+					':[0-9]+@', '@') AS norm_jid,
+				direction,
+				status
+			FROM messages
+			WHERE created_at >= NOW() - ($1 || ' days')::interval
+		)
 		SELECT
-			COALESCE(s.jid, 'desconhecido')    AS session_jid,
-			COALESCE(s.phone, 'desconhecido')  AS phone,
-			COUNT(*)                           AS total_messages,
+			COALESCE(MAX(s.jid), m.norm_jid)                        AS session_jid,
+			COALESCE(MAX(s.phone), SPLIT_PART(m.norm_jid, '@', 1))  AS phone,
+			COUNT(*)                                                AS total_messages,
 			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
 			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count,
 			SUM(CASE WHEN m.status    = 'failed'   THEN 1 ELSE 0 END) AS failed_count
-		FROM messages m
-		LEFT JOIN whatsapp_sessions s ON s.id = m.session_id
-		WHERE m.created_at >= NOW() - ($1 || ' days')::interval
-		GROUP BY s.jid, s.phone
+		FROM msg_norm m
+		LEFT JOIN whatsapp_sessions s
+			ON REGEXP_REPLACE(REPLACE(s.jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
+		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
 	`, fmt.Sprintf("%d", days))
 	if err != nil {
@@ -649,18 +667,34 @@ func (r *Repository) GetStatsByHour(ctx context.Context, days int) ([]StatsHourR
 }
 
 func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]StatsContactRow, error) {
+	// Agrupa pelo telefone do contato (o "outro lado"):
+	//   - outbound: to_jid   (nos enviamos PARA ele)
+	//   - inbound:  from_jid (ele enviou PARA nos)
+	// Strip device suffix e prefixo cloud:. Quando contact_mapping existe,
+	// pega name/phone dele; senão exibe o numero extraído do JID normalizado.
 	rows, err := r.pool.Query(ctx, `
+		WITH msg_norm AS (
+			SELECT
+				REGEXP_REPLACE(
+					REPLACE(
+						CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END,
+						'cloud:', ''),
+					':[0-9]+@', '@') AS norm_jid,
+				direction
+			FROM messages
+			WHERE created_at >= NOW() - ($1 || ' days')::interval
+		)
 		SELECT
-			COALESCE(c.wa_jid, 'desconhecido')   AS wa_jid,
-			COALESCE(c.wa_phone, '')              AS wa_phone,
-			COALESCE(c.wa_name, '')               AS wa_name,
-			COUNT(*)                              AS total_messages,
+			m.norm_jid                                              AS wa_jid,
+			COALESCE(MAX(c.wa_phone), SPLIT_PART(m.norm_jid, '@', 1)) AS wa_phone,
+			COALESCE(MAX(c.wa_name), '')                            AS wa_name,
+			COUNT(*)                                                AS total_messages,
 			SUM(CASE WHEN m.direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
 			SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count
-		FROM messages m
-		LEFT JOIN contact_mapping c ON c.id = m.contact_id
-		WHERE m.created_at >= NOW() - ($1 || ' days')::interval
-		GROUP BY c.wa_jid, c.wa_phone, c.wa_name
+		FROM msg_norm m
+		LEFT JOIN contact_mapping c
+			ON REGEXP_REPLACE(REPLACE(c.wa_jid, 'cloud:', ''), ':[0-9]+@', '@') = m.norm_jid
+		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
 		LIMIT $2
 	`, fmt.Sprintf("%d", days), limit)
