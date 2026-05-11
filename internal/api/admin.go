@@ -176,6 +176,14 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 
 	cards := make([]tenantCard, 0, len(portals))
 	for _, p := range portals {
+		// Esconde placeholders: quando o app é instalado via Marketplace, o
+		// install handler cria uma row com domain = member_id (porque o domain
+		// real só chega depois pelo BX24.getAuth no iframe). Se o cliente
+		// abriu o iframe, criamos uma segunda row com o domain certo —
+		// e a row placeholder vira lixo. Filtramos aqui para nao poluir o painel.
+		if p.Domain == p.MemberID {
+			continue
+		}
 		card := tenantCard{
 			ID:          p.ID.String(),
 			Domain:      p.Domain,

@@ -963,13 +963,24 @@ type DomainSessionCounts struct {
 // A chave do map retornado é o domain JÁ NORMALIZADO (lowercase, sem proto)
 // — o caller (admin) também normaliza p.Domain antes de buscar.
 func (r *Repository) AllDomainSessionCounts(ctx context.Context) (map[string]DomainSessionCounts, error) {
+	// Filtra sessoes ATIVAS — sessoes banned/disconnected ficam no banco como
+	// historico (whatsmeow gera uma row nova por device suffix a cada
+	// reconexao). Sem o filtro, o painel conta todas e infla a contagem.
+	// Usamos DISTINCT ON pelo jid normalizado para garantir 1 contagem por
+	// numero/sessao logica, mesmo que tenham varios devices ativos.
 	rows, err := r.pool.Query(ctx, `
+		WITH active_sessions AS (
+			SELECT DISTINCT ON (REGEXP_REPLACE(jid, ':[0-9]+@', '@'))
+			       REGEXP_REPLACE(jid, ':[0-9]+@', '@') AS norm_jid
+			FROM whatsapp_sessions
+			WHERE status = 'active'
+		)
 		SELECT LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) AS d,
-			COUNT(*) FILTER (WHERE REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') NOT LIKE 'cloud:%') AS qr_count,
-			COUNT(*) FILTER (WHERE REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') LIKE 'cloud:%') AS cloud_count
+			COUNT(*) FILTER (WHERE s.norm_jid NOT LIKE 'cloud:%') AS qr_count,
+			COUNT(*) FILTER (WHERE s.norm_jid LIKE 'cloud:%') AS cloud_count
 		FROM bitrix_accounts ba
-		JOIN whatsapp_sessions s
-		  ON REGEXP_REPLACE(s.jid, ':[0-9]+@', '@') = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
+		JOIN active_sessions s
+		  ON s.norm_jid = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
 		GROUP BY d`)
 	if err != nil {
 		return nil, err
