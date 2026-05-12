@@ -126,6 +126,8 @@ func New(
 	bx.Post("/partner/link", h.bitrixPartnerLink)     // Vincula sessão WA ao portal após QR scan
 	app.Get("/bitrix-connect", h.bitrixConnectPage)   // Application URL (abre em iframe no Bitrix24)
 	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
+	app.Get("/bitrix-app", h.bitrixAppMenu)           // LEFT_MENU placement — usuarios liberados
+	app.Post("/bitrix-app", h.bitrixAppMenu)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
 	bx.Get("/crm/tab", h.bitrixCRMTab)
@@ -188,6 +190,7 @@ func New(
 	admin.Post("/api/tenant/cleanup/legacy-messages", h.adminTenantCleanupLegacyMessages)
 	admin.Post("/api/tenant/cleanup/session-files", h.adminTenantCleanupSessionFiles)
 	admin.Get("/api/tenant/users", h.adminTenantListUsers)
+	admin.Get("/api/tenant/user-info", h.adminTenantUserInfo)
 	admin.Post("/api/tenant/permissions", h.adminTenantSetPermission)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────

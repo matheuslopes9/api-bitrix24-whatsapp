@@ -1068,66 +1068,80 @@ type BitrixUser struct {
 	Position  string `json:"position"`
 }
 
-// GetUsers lista todos os usuarios do portal Bitrix24. Pagina automaticamente.
-// Usa user.get (ou user.search se disponivel) — limit 50 por request padrao.
-// Filtra so usuarios ATIVOS por padrao para evitar lista poluida.
-func (c *Client) GetUsers(ctx context.Context, creds TenantCreds) ([]BitrixUser, error) {
-	var all []BitrixUser
-	start := 0
-	for {
-		raw, err := c.call(ctx, creds, "user.get", map[string]interface{}{
-			"start": start,
-			"FILTER": map[string]interface{}{
-				"ACTIVE": true,
-			},
-		})
-		if err != nil {
-			return nil, err
-		}
-		// Resposta: array de objetos com campos ID, NAME, LAST_NAME, EMAIL, etc.
-		var rows []map[string]interface{}
-		if err := json.Unmarshal(raw, &rows); err != nil {
-			// Pode vir como objeto {"result":[...]} dependendo do shape — c.call ja desempacotou result.
-			break
-		}
-		if len(rows) == 0 {
-			break
-		}
-		for _, r := range rows {
-			u := BitrixUser{
-				ID:       fmt.Sprintf("%v", r["ID"]),
-				Name:     stringField(r, "NAME"),
-				LastName: stringField(r, "LAST_NAME"),
-				Email:    stringField(r, "EMAIL"),
-				Position: stringField(r, "WORK_POSITION"),
-			}
-			// ACTIVE: pode vir como bool, "Y"/"N", ou true/false
-			if v, ok := r["ACTIVE"]; ok {
-				switch x := v.(type) {
-				case bool:
-					u.Active = x
-				case string:
-					u.Active = strings.EqualFold(x, "Y") || strings.EqualFold(x, "true")
-				}
-			} else {
-				u.Active = true
-			}
-			// IS_ADMIN raramente vem em user.get; tem que chamar user.admin separado se precisar.
-			if v, ok := r["ADMIN_NOTES"]; ok && v != nil {
-				_ = v // placeholder — Bitrix nao expoe is_admin diretamente em user.get
-			}
-			all = append(all, u)
-		}
-		// Paginacao: user.get retorna ate 50; se veio 50 tenta a proxima
-		if len(rows) < 50 {
-			break
-		}
-		start += 50
-		if start > 5000 { // safety cap (100 paginas)
-			break
+// GetUserByIDs busca informacoes de usuarios pelo ID via im.user.list.get
+// (scope `im`, que o app ja possui — diferente do user.get que exige scope `user`
+// e nao esta disponivel para nosso app Marketplace).
+//
+// Aceita slice de IDs (strings ou int convertidos para string). Retorna os
+// usuarios na mesma ordem. Usuarios nao encontrados sao omitidos do retorno.
+func (c *Client) GetUserByIDs(ctx context.Context, creds TenantCreds, userIDs []string) ([]BitrixUser, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	// im.user.list.get aceita ID como array de inteiros
+	idsInt := make([]int, 0, len(userIDs))
+	for _, s := range userIDs {
+		var n int
+		_, _ = fmt.Sscanf(s, "%d", &n)
+		if n > 0 {
+			idsInt = append(idsInt, n)
 		}
 	}
-	return all, nil
+	if len(idsInt) == 0 {
+		return nil, nil
+	}
+	raw, err := c.call(ctx, creds, "im.user.list.get", map[string]interface{}{
+		"ID":          idsInt,
+		"RESULT_TYPE": "array",
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Resposta: array de objetos. Campos lowercase: id, name, first_name, last_name,
+	// email, work_position, active, etc.
+	var rows []map[string]interface{}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		// fallback: pode vir como mapa keyed por ID
+		var byID map[string]map[string]interface{}
+		if err2 := json.Unmarshal(raw, &byID); err2 == nil {
+			for _, r := range byID {
+				rows = append(rows, r)
+			}
+		} else {
+			return nil, err
+		}
+	}
+	out := make([]BitrixUser, 0, len(rows))
+	for _, r := range rows {
+		u := BitrixUser{
+			ID:       stringField(r, "id"),
+			Name:     stringField(r, "first_name"),
+			LastName: stringField(r, "last_name"),
+			Email:    stringField(r, "email"),
+			Position: stringField(r, "work_position"),
+		}
+		if u.ID == "" {
+			u.ID = stringField(r, "ID")
+		}
+		// active: pode ser bool ou "Y"/"N"
+		if v, ok := r["active"]; ok {
+			switch x := v.(type) {
+			case bool:
+				u.Active = x
+			case string:
+				u.Active = strings.EqualFold(x, "Y") || strings.EqualFold(x, "true")
+			}
+		} else {
+			u.Active = true
+		}
+		// O 'name' completo (se o backend ja juntou) pode estar em 'name'
+		if u.Name == "" && u.LastName == "" {
+			full := stringField(r, "name")
+			u.Name = full
+		}
+		out = append(out, u)
+	}
+	return out, nil
 }
 
 func stringField(m map[string]interface{}, key string) string {

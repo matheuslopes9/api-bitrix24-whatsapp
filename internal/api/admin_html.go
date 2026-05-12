@@ -216,12 +216,29 @@ const adminHomeHTML = `<!doctype html>
         <button class="close" onclick="closePermissionsModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <input type="text" class="perm-search" id="permSearch" placeholder="Buscar por nome ou email...">
-        <div id="permList" class="perm-list"><div class="loading">Carregando usu&aacute;rios...</div></div>
+        <div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:0.8em 1em;margin-bottom:1em">
+          <div style="font-size:0.85em;color:#334155;margin-bottom:0.5em;font-weight:600">Liberar novo usu&aacute;rio</div>
+          <div style="display:flex;gap:0.5em;align-items:flex-end;flex-wrap:wrap">
+            <div style="flex:1;min-width:120px">
+              <label style="font-size:0.78em;color:#64748b;display:block;margin-bottom:0.2em">ID do usu&aacute;rio Bitrix</label>
+              <input type="number" id="permNewUserID" placeholder="Ex: 12" style="width:100%;padding:0.45em 0.7em;border:1px solid #cbd5e1;border-radius:5px;font-size:0.9em;font-family:inherit">
+            </div>
+            <button id="permLookupBtn" onclick="lookupPermUser()" style="padding:0.5em 1em;background:#475569;color:white;border:0;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;font-family:inherit">Buscar info</button>
+          </div>
+          <div id="permPreview" style="display:none;margin-top:0.7em;padding:0.7em;background:white;border:1px solid #cbd5e1;border-radius:5px">
+            <div id="permPreviewBody" style="font-size:0.88em;color:#1e293b;margin-bottom:0.6em"></div>
+            <button id="permGrantBtn" onclick="grantPermUser()" style="padding:0.5em 1em;background:#16a34a;color:white;border:0;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;font-family:inherit">&check; Liberar acesso</button>
+          </div>
+          <div style="font-size:0.78em;color:#94a3b8;margin-top:0.6em">
+            Para encontrar o ID, acesse o perfil do usu&aacute;rio no Bitrix24. A URL ser&aacute; <code>/company/personal/user/<b>ID</b>/</code>.
+          </div>
+        </div>
+        <div style="font-size:0.85em;color:#334155;font-weight:600;margin-bottom:0.5em">Usu&aacute;rios liberados</div>
+        <div id="permList" class="perm-list"><div class="loading">Carregando...</div></div>
       </div>
       <div class="modal-footer">
         <span id="permStatus">&mdash;</span>
-        <span style="color:#94a3b8">Lista vazia = ningu&eacute;m tem acesso. Libere ao menos 1 usu&aacute;rio.</span>
+        <span style="color:#94a3b8">Lista vazia = ningu&eacute;m tem acesso.</span>
       </div>
     </div>
   </div>
@@ -581,28 +598,31 @@ document.getElementById('cleanSessionFiles').addEventListener('click', async () 
 
 // ─── Modal de Permissoes CRM ─────────────────────────────────────────────
 let _permDomain = '';
-let _permUsers = [];
+let _permGranted = [];      // usuarios ja liberados
+let _permPreviewUser = null; // user buscado mas ainda nao liberado
 
 async function openPermissionsModal(domainEnc) {
   const domain = decodeURIComponent(domainEnc);
   _permDomain = domain;
+  _permPreviewUser = null;
   document.getElementById('permDomainLabel').textContent = domain;
-  document.getElementById('permList').innerHTML = '<div class="loading">Carregando usu&aacute;rios...</div>';
+  document.getElementById('permList').innerHTML = '<div class="loading">Carregando...</div>';
   document.getElementById('permStatus').textContent = '—';
-  document.getElementById('permSearch').value = '';
+  document.getElementById('permNewUserID').value = '';
+  document.getElementById('permPreview').style.display = 'none';
   document.getElementById('permModal').classList.add('open');
-  // fecha qualquer card-menu aberto
   document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
-  await loadPermUsers();
+  await loadPermGranted();
 }
 
 function closePermissionsModal() {
   document.getElementById('permModal').classList.remove('open');
   _permDomain = '';
-  _permUsers = [];
+  _permGranted = [];
+  _permPreviewUser = null;
 }
 
-async function loadPermUsers() {
+async function loadPermGranted() {
   try {
     const r = await fetch('/admin/api/tenant/users?domain=' + encodeURIComponent(_permDomain));
     if (r.status === 401) { window.location = '/admin/login'; return; }
@@ -611,73 +631,116 @@ async function loadPermUsers() {
       document.getElementById('permList').innerHTML = '<div class="empty">Erro: ' + escapeHTML(data.error || r.status) + '</div>';
       return;
     }
-    _permUsers = data.users || [];
-    renderPermList();
-    document.getElementById('permStatus').textContent =
-      (data.granted || 0) + ' liberado(s) de ' + _permUsers.length + ' usu&aacute;rios ativos';
+    _permGranted = data.users || [];
+    renderPermGrantedList();
+    document.getElementById('permStatus').textContent = _permGranted.length + ' usu&aacute;rio(s) liberado(s)';
   } catch (e) {
     document.getElementById('permList').innerHTML = '<div class="empty">Erro de rede: ' + escapeHTML(e.message) + '</div>';
   }
 }
 
-function renderPermList() {
-  const q = (document.getElementById('permSearch').value || '').toLowerCase();
-  let list = _permUsers;
-  if (q) {
-    list = list.filter(u => (
-      (u.name || '').toLowerCase().includes(q) ||
-      (u.last_name || '').toLowerCase().includes(q) ||
-      (u.email || '').toLowerCase().includes(q) ||
-      String(u.id).includes(q)
-    ));
-  }
-  if (list.length === 0) {
-    document.getElementById('permList').innerHTML = '<div class="empty">Nenhum usu&aacute;rio encontrado</div>';
+function renderPermGrantedList() {
+  if (_permGranted.length === 0) {
+    document.getElementById('permList').innerHTML = '<div class="empty" style="text-align:center;padding:1.5em;color:#94a3b8;font-size:0.9em">Nenhum usu&aacute;rio liberado ainda</div>';
     return;
   }
-  document.getElementById('permList').innerHTML = list.map(u => {
-    const fullName = ((u.name || '') + ' ' + (u.last_name || '')).trim() || ('User #' + u.id);
-    const cls = u.has_access ? ' granted' : '';
-    const btn = u.has_access
-      ? '<button class="grant-btn rm" onclick="permAction(\'' + u.id + '\',\'' + escapeHTML(fullName).replace(/\x27/g,'') + '\',\'revoke\',this)">Remover</button>'
-      : '<button class="grant-btn add" onclick="permAction(\'' + u.id + '\',\'' + escapeHTML(fullName).replace(/\x27/g,'') + '\',\'grant\',this)">Liberar</button>';
+  document.getElementById('permList').innerHTML = _permGranted.map(u => {
+    const name = u.name || ('User #' + u.id);
     return ''
-      + '<div class="perm-row' + cls + '">'
+      + '<div class="perm-row granted">'
       +   '<div class="info">'
-      +     '<div class="name">' + escapeHTML(fullName) + ' <span style="color:#94a3b8;font-weight:400;font-size:0.8em">#' + u.id + '</span></div>'
-      +     (u.email ? '<div class="email">' + escapeHTML(u.email) + '</div>' : '')
-      +     (u.position ? '<div class="pos">' + escapeHTML(u.position) + '</div>' : '')
+      +     '<div class="name">' + escapeHTML(name) + ' <span style="color:#94a3b8;font-weight:400;font-size:0.8em">#' + u.id + '</span></div>'
+      +     (u.granted_at ? '<div class="pos">Liberado em ' + escapeHTML(u.granted_at) + '</div>' : '')
       +   '</div>'
-      +   btn
+      +   '<button class="grant-btn rm" onclick="revokePermUser(\'' + u.id + '\', this)">Remover</button>'
       + '</div>';
   }).join('');
 }
 
-async function permAction(userID, userName, action, btn) {
+async function lookupPermUser() {
+  const userID = (document.getElementById('permNewUserID').value || '').trim();
+  if (!userID || !/^\d+$/.test(userID)) {
+    alert('Informe um ID num&eacute;rico v&aacute;lido');
+    return;
+  }
+  // Verifica se ja esta liberado
+  if (_permGranted.find(u => u.id === userID)) {
+    alert('Usu&aacute;rio ' + userID + ' j&aacute; est&aacute; liberado');
+    return;
+  }
+  const btn = document.getElementById('permLookupBtn');
+  btn.disabled = true;
+  btn.textContent = 'Buscando...';
+  try {
+    const r = await fetch('/admin/api/tenant/user-info?domain=' + encodeURIComponent(_permDomain) + '&user_id=' + encodeURIComponent(userID));
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) {
+      alert('Erro: ' + (data.error || r.status));
+      document.getElementById('permPreview').style.display = 'none';
+      return;
+    }
+    _permPreviewUser = data;
+    const html = ''
+      + '<div style="font-weight:600;font-size:1em;margin-bottom:0.2em">' + escapeHTML(data.name) + ' <span style="color:#94a3b8;font-weight:400;font-size:0.85em">#' + data.id + '</span></div>'
+      + (data.email ? '<div style="font-size:0.82em;color:#64748b">' + escapeHTML(data.email) + '</div>' : '')
+      + (data.position ? '<div style="font-size:0.78em;color:#94a3b8">' + escapeHTML(data.position) + '</div>' : '')
+      + (data.active === false ? '<div style="font-size:0.78em;color:#dc2626;margin-top:0.3em">&#9888; Usu&aacute;rio inativo no Bitrix</div>' : '');
+    document.getElementById('permPreviewBody').innerHTML = html;
+    document.getElementById('permPreview').style.display = 'block';
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Buscar info';
+  }
+}
+
+async function grantPermUser() {
+  if (!_permPreviewUser) return;
+  const u = _permPreviewUser;
+  const btn = document.getElementById('permGrantBtn');
+  btn.disabled = true;
+  btn.textContent = 'Liberando...';
+  try {
+    const r = await fetch('/admin/api/tenant/permissions?domain=' + encodeURIComponent(_permDomain), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: u.id, user_name: u.name, action: 'grant' }),
+    });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); btn.disabled = false; btn.textContent = '&check; Liberar acesso'; return; }
+    // Reset preview + recarrega lista
+    _permPreviewUser = null;
+    document.getElementById('permPreview').style.display = 'none';
+    document.getElementById('permNewUserID').value = '';
+    await loadPermGranted();
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '&check; Liberar acesso';
+  }
+}
+
+async function revokePermUser(userID, btn) {
+  if (!confirm('Remover acesso do usu&aacute;rio #' + userID + '?')) return;
   btn.disabled = true;
   try {
     const r = await fetch('/admin/api/tenant/permissions?domain=' + encodeURIComponent(_permDomain), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userID, user_name: userName, action: action }),
+      body: JSON.stringify({ user_id: userID, action: 'revoke' }),
     });
     if (r.status === 401) { window.location = '/admin/login'; return; }
     const data = await r.json();
     if (!r.ok) { alert('Erro: ' + (data.error || r.status)); btn.disabled = false; return; }
-    // Atualiza estado local sem refetch completo
-    const u = _permUsers.find(x => x.id === userID);
-    if (u) u.has_access = (action === 'grant');
-    renderPermList();
-    const grantedCount = _permUsers.filter(x => x.has_access).length;
-    document.getElementById('permStatus').textContent =
-      grantedCount + ' liberado(s) de ' + _permUsers.length + ' usu&aacute;rios ativos';
+    await loadPermGranted();
   } catch (e) {
     alert('Erro de rede: ' + e.message);
     btn.disabled = false;
   }
 }
-
-document.getElementById('permSearch').addEventListener('input', renderPermList);
 
 load();
 // auto-refresh da aba de portais a cada 60s

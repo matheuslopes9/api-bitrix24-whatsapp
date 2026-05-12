@@ -1567,25 +1567,106 @@ init();
 </body>
 </html>`
 
-// RegisterPlacementsForPortal registra placement.bind para os 3 tipos de entidade CRM.
-// Chamado após instalar ou ativar o connector.
+// GET/POST /bitrix-app — pagina servida no LEFT_MENU placement do Bitrix24.
+// Mostra UI completa (lista de conversas + chat) para usuarios liberados.
+// Checa permissao via mesma rota /bitrix/crm/check-access do CRM tab.
+func (h *handlers) bitrixAppMenu(c *fiber.Ctx) error {
+	return c.Type("html").SendString(bitrixAppMenuHTML)
+}
+
+// HTML simples que carrega BX24, valida o user_id contra check-access e
+// embute o CRM tab via iframe (com modo "lista geral", sem entity_id).
+const bitrixAppMenuHTML = `<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<title>UC Talk</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:#0f172a;color:#e2e8f0;font-family:-apple-system,system-ui,sans-serif}
+  #wrap{height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .denied{max-width:480px}
+  .denied .icon{width:88px;height:88px;border-radius:50%;background:rgba(239,68,68,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 18px}
+  .denied h2{margin:0 0 12px;font-size:18px;font-weight:700}
+  .denied p{color:#94a3b8;line-height:1.6;font-size:14px;margin:0 0 24px}
+  .denied .ft{font-size:11px;color:#475569}
+  iframe{width:100%;height:100vh;border:0;display:block}
+</style>
+</head>
+<body>
+<div id="wrap"><div style="color:#64748b;font-size:14px">Carregando...</div></div>
+<script src="https://api.bitrix24.com/api/v1/"></script>
+<script>
+var _baseUrl = window.location.origin;
+BX24.init(function() {
+  var domain = (BX24.getDomain ? BX24.getDomain() : '') || '';
+  BX24.callMethod('profile', {}, function(res) {
+    var u = res.data() || {};
+    var userID = String(u.ID || '');
+    if (!userID || !domain) {
+      showDenied('N&atilde;o foi poss&iacute;vel identificar o usu&aacute;rio.');
+      return;
+    }
+    fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID))
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        if (data.allowed) {
+          // Permissao OK — carrega o CRM tab em modo "menu" (sem entity_id especifico).
+          document.getElementById('wrap').outerHTML =
+            '<iframe src="' + _baseUrl + '/bitrix/crm/tab?menu=1&domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
+        } else {
+          showDenied(data.configured
+            ? 'Seu usu&aacute;rio n&atilde;o tem permiss&atilde;o para acessar o UC Talk. Pe&ccedil;a a um administrador da UC Technology para liberar seu acesso.'
+            : 'O acesso ao UC Talk ainda n&atilde;o foi configurado neste portal. Entre em contato com a UC Technology.');
+        }
+      })
+      .catch(function(err) { showDenied('Erro ao verificar permiss&otilde;es: ' + err.message); });
+  });
+});
+
+function showDenied(msg) {
+  document.getElementById('wrap').innerHTML =
+    '<div class="denied">'
+    + '<div class="icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>'
+    + '<h2>Acesso negado</h2>'
+    + '<p>' + msg + '</p>'
+    + '<div class="ft">UC Talk &middot; suporte@uctechnology.com.br</div>'
+    + '</div>';
+}
+</script>
+</body>
+</html>`
+
+// RegisterPlacementsForPortal registra placement.bind para os 3 tipos de entidade CRM
+// e tambem para o menu lateral esquerdo. Chamado após instalar ou ativar o connector.
 func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain string, creds bitrix.TenantCreds) {
 	base := h.cfg.App.BaseURL()
 	tabURL := base + "/bitrix/crm/tab"
-	placements := []string{
+	appURL := base + "/bitrix-app"
+
+	// CRM tabs (abas dentro de contato/lead/deal)
+	crmPlacements := []string{
 		"CRM_CONTACT_DETAIL_TAB",
 		"CRM_LEAD_DETAIL_TAB",
 		"CRM_DEAL_DETAIL_TAB",
 	}
-	for _, p := range placements {
+	for _, p := range crmPlacements {
 		if err := h.bitrixClient.BindPlacement(ctx, creds, p, tabURL, "UC Talk"); err != nil {
 			h.log.Warn("placement.bind failed",
 				zap.String("placement", p),
 				zap.String("domain", domain),
-				zap.Error(err),
-			)
+				zap.Error(err))
 		} else {
 			h.log.Info("placement.bind ok", zap.String("placement", p), zap.String("domain", domain))
 		}
+	}
+
+	// Menu lateral esquerdo — item "UC Talk" para usuarios liberados acessarem
+	// a interface fora do contexto de contato/lead/deal.
+	if err := h.bitrixClient.BindPlacement(ctx, creds, "LEFT_MENU", appURL, "UC Talk"); err != nil {
+		h.log.Warn("placement.bind LEFT_MENU failed",
+			zap.String("domain", domain), zap.Error(err))
+	} else {
+		h.log.Info("placement.bind LEFT_MENU ok", zap.String("domain", domain))
 	}
 }

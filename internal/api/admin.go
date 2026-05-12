@@ -540,53 +540,78 @@ func (h *handlers) adminFlushQueue(c *fiber.Ctx) error {
 
 // ─── CRM Permissions ─────────────────────────────────────────────────────
 
-// GET /admin/api/tenant/users?domain=... — lista usuarios do portal Bitrix
-// com flag has_access indicando se ja foram liberados para o CRM.
+// GET /admin/api/tenant/users?domain=... — lista usuarios LIBERADOS desse tenant.
+// Como o app nao tem scope `user`, nao listamos todos do portal — apenas os
+// que ja estao em crm_user_permissions. UI permite buscar mais por ID via
+// /admin/api/tenant/user-info.
 func (h *handlers) adminTenantListUsers(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	if domain == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
 	}
 	ctx := c.Context()
-	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
-	if err != nil || portal == nil {
-		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado: " + domain})
-	}
-	creds := h.portalToCreds(portal)
-	users, err := h.bitrixClient.GetUsers(ctx, creds)
-	if err != nil {
-		h.log.Error("admin: GetUsers failed", zap.String("domain", domain), zap.Error(err))
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	// Marca quem tem permissao
 	key := normalizeDomainKey(domain)
 	perms, err := h.repo.ListCrmPermissionsByDomain(ctx, key)
 	if err != nil {
 		h.log.Error("admin: ListCrmPermissions failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	allowed := map[string]bool{}
-	for _, p := range perms {
-		allowed[p.UserID] = true
-	}
 	type userOut struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
-		LastName  string `json:"last_name"`
-		Email     string `json:"email"`
-		Position  string `json:"position"`
-		Active    bool   `json:"active"`
 		HasAccess bool   `json:"has_access"`
+		GrantedAt string `json:"granted_at,omitempty"`
 	}
-	out := make([]userOut, 0, len(users))
-	for _, u := range users {
+	out := make([]userOut, 0, len(perms))
+	for _, p := range perms {
 		out = append(out, userOut{
-			ID: u.ID, Name: u.Name, LastName: u.LastName, Email: u.Email,
-			Position: u.Position, Active: u.Active,
-			HasAccess: allowed[u.ID],
+			ID:        p.UserID,
+			Name:      p.UserName,
+			HasAccess: true,
+			GrantedAt: p.GrantedAt.Format("2006-01-02 15:04"),
 		})
 	}
-	return c.JSON(fiber.Map{"users": out, "total": len(out), "granted": len(perms)})
+	return c.JSON(fiber.Map{"users": out, "granted": len(perms)})
+}
+
+// GET /admin/api/tenant/user-info?domain=...&user_id=...
+// Busca info de UM user no Bitrix via im.user.list.get (scope `im`).
+// Usado pelo modal admin antes de liberar (preview do nome).
+func (h *handlers) adminTenantUserInfo(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	userID := strings.TrimSpace(c.Query("user_id"))
+	if domain == "" || userID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e user_id obrigatorios"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, []string{userID})
+	if err != nil {
+		h.log.Error("admin: GetUserByIDs failed",
+			zap.String("domain", domain), zap.String("user_id", userID), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if len(users) == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "usuario " + userID + " nao encontrado no portal"})
+	}
+	u := users[0]
+	fullName := strings.TrimSpace(u.Name + " " + u.LastName)
+	if fullName == "" {
+		fullName = "User #" + u.ID
+	}
+	return c.JSON(fiber.Map{
+		"id":        u.ID,
+		"name":      fullName,
+		"first":     u.Name,
+		"last":      u.LastName,
+		"email":     u.Email,
+		"position":  u.Position,
+		"active":    u.Active,
+	})
 }
 
 // POST /admin/api/tenant/permissions?domain=...
