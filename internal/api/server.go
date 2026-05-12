@@ -85,6 +85,7 @@ func New(
 	// ─── Permissões CRM (sem auth admin — uso interno do dashboard) ──────
 	ui.Get("/permissions/list", h.uiPermissionsList)
 	ui.Get("/permissions/user-info", h.uiPermissionsUserInfo)
+	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
 	ui.Post("/permissions/grant", h.uiPermissionsGrant)
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
 

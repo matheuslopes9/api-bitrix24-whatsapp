@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -1066,6 +1068,83 @@ type BitrixUser struct {
 	Active    bool   `json:"active"`
 	IsAdmin   bool   `json:"is_admin"`
 	Position  string `json:"position"`
+}
+
+// ListAllUsers tenta listar TODOS os usuarios ativos do portal iterando IDs
+// de 1 ate maxID (default 500) em chunks de 50 via im.user.list.get.
+// Bitrix nao tem metodo que liste todos sem scope `user` — esta eh a
+// abordagem mais robusta com scopes que temos (im).
+//
+// As chamadas sao feitas em paralelo (10 goroutines simultaneas) com pequeno
+// rate limit interno. Usuarios inexistentes/inativos sao silenciosamente
+// omitidos pelo Bitrix. Retorno: lista deduplicada e ordenada por nome.
+func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int) ([]BitrixUser, error) {
+	if maxID <= 0 {
+		maxID = 500
+	}
+	const chunkSize = 50
+	const concurrency = 10
+
+	type chunkResult struct {
+		users []BitrixUser
+		err   error
+	}
+
+	// Monta lista de chunks: [1..50], [51..100], ...
+	var chunks [][]string
+	for start := 1; start <= maxID; start += chunkSize {
+		end := start + chunkSize - 1
+		if end > maxID {
+			end = maxID
+		}
+		ids := make([]string, 0, end-start+1)
+		for id := start; id <= end; id++ {
+			ids = append(ids, fmt.Sprintf("%d", id))
+		}
+		chunks = append(chunks, ids)
+	}
+
+	sem := make(chan struct{}, concurrency)
+	results := make(chan chunkResult, len(chunks))
+	var wg sync.WaitGroup
+	for _, ch := range chunks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(ids []string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			users, err := c.GetUserByIDs(ctx, creds, ids)
+			results <- chunkResult{users: users, err: err}
+		}(ch)
+	}
+	wg.Wait()
+	close(results)
+
+	seen := map[string]bool{}
+	var all []BitrixUser
+	for r := range results {
+		if r.err != nil {
+			c.log.Warn("ListAllUsers chunk failed", zap.Error(r.err))
+			continue
+		}
+		for _, u := range r.users {
+			if u.ID == "" || seen[u.ID] {
+				continue
+			}
+			seen[u.ID] = true
+			all = append(all, u)
+		}
+	}
+	// Ordena por nome (Active primeiro)
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].Active != all[j].Active {
+			return all[i].Active && !all[j].Active
+		}
+		ni := strings.ToLower(all[i].Name + " " + all[i].LastName)
+		nj := strings.ToLower(all[j].Name + " " + all[j].LastName)
+		return ni < nj
+	})
+	return all, nil
 }
 
 // GetUserByIDs busca informacoes de usuarios pelo ID via im.user.list.get

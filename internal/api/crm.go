@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
@@ -77,6 +79,89 @@ func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{"users": out, "granted": len(perms), "domain": domain})
+}
+
+// Cache em memoria de usuarios listados por dominio. TTL 10min.
+// Sem locks complexos — uma race condition aqui so causa 1 chamada extra ao
+// Bitrix, nao corrompe dado.
+type allUsersCacheEntry struct {
+	users     []bitrix.BitrixUser
+	cachedAt  time.Time
+}
+
+var (
+	allUsersCacheMu sync.RWMutex
+	allUsersCache   = map[string]allUsersCacheEntry{}
+)
+
+const allUsersCacheTTL = 10 * time.Minute
+
+// GET /ui/permissions/all-users?refresh=1 — lista todos usuarios ativos do portal.
+// Itera IDs 1..500 em batches via im.user.list.get. Cache de 10min por dominio.
+func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	refresh := c.Query("refresh") == "1"
+	key := strings.ToLower(domain)
+
+	if !refresh {
+		allUsersCacheMu.RLock()
+		entry, ok := allUsersCache[key]
+		allUsersCacheMu.RUnlock()
+		if ok && time.Since(entry.cachedAt) < allUsersCacheTTL {
+			return c.JSON(buildAllUsersResponse(ctx, h, key, entry.users, true))
+		}
+	}
+
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, domain)
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado: " + domain})
+	}
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.ListAllUsers(ctx, creds, 500)
+	if err != nil {
+		h.log.Error("ui: ListAllUsers failed", zap.String("domain", domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	allUsersCacheMu.Lock()
+	allUsersCache[key] = allUsersCacheEntry{users: users, cachedAt: time.Now()}
+	allUsersCacheMu.Unlock()
+	h.log.Info("ui: ListAllUsers ok", zap.String("domain", domain), zap.Int("count", len(users)))
+	return c.JSON(buildAllUsersResponse(ctx, h, key, users, false))
+}
+
+// buildAllUsersResponse adiciona flag has_access para cada user (cruza com
+// crm_user_permissions). Retorno enxuto para o frontend.
+func buildAllUsersResponse(ctx context.Context, h *handlers, domainKey string, users []bitrix.BitrixUser, fromCache bool) fiber.Map {
+	perms, _ := h.repo.ListCrmPermissionsByDomain(ctx, domainKey)
+	granted := map[string]bool{}
+	for _, p := range perms {
+		granted[p.UserID] = true
+	}
+	out := make([]fiber.Map, 0, len(users))
+	for _, u := range users {
+		full := strings.TrimSpace(u.Name + " " + u.LastName)
+		if full == "" {
+			full = "User #" + u.ID
+		}
+		out = append(out, fiber.Map{
+			"id":         u.ID,
+			"name":       full,
+			"email":      u.Email,
+			"position":   u.Position,
+			"active":     u.Active,
+			"has_access": granted[u.ID],
+		})
+	}
+	return fiber.Map{
+		"users":      out,
+		"total":      len(out),
+		"granted":    len(perms),
+		"from_cache": fromCache,
+	}
 }
 
 // GET /ui/permissions/user-info?user_id=N — busca info de 1 user no Bitrix.
