@@ -159,6 +159,21 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			   AND ba.connector_id NOT LIKE 'wa_qr_%'
 			   AND ba.connector_id NOT LIKE 'wa_cloud_%';
 		`},
+		{"015_crm_user_permissions", `
+			-- Controle de acesso ao CRM tab por usuario Bitrix.
+			-- Modelo estrito: se nenhum row existe pra um dominio, NINGUEM acessa.
+			-- Para liberar, super-admin insere (domain, user_id).
+			CREATE TABLE IF NOT EXISTS crm_user_permissions (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				domain      TEXT NOT NULL,
+				user_id     TEXT NOT NULL,
+				user_name   TEXT NOT NULL DEFAULT '',
+				granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				granted_by  TEXT NOT NULL DEFAULT 'super-admin',
+				UNIQUE (domain, user_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_crm_user_permissions_domain ON crm_user_permissions (domain);
+		`},
 	}
 
 	for _, m := range migrations {

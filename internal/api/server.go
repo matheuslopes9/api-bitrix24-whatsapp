@@ -137,6 +137,7 @@ func New(
 	bx.Get("/crm/history", h.bitrixCRMHistory)
 	bx.Post("/crm/upload", h.bitrixCRMUpload)
 	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
+	bx.Get("/crm/check-access", h.bitrixCRMCheckAccess)
 
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
@@ -186,6 +187,8 @@ func New(
 	admin.Post("/api/cleanup/legacy-messages", h.adminCleanupLegacyMessages)
 	admin.Post("/api/tenant/cleanup/legacy-messages", h.adminTenantCleanupLegacyMessages)
 	admin.Post("/api/tenant/cleanup/session-files", h.adminTenantCleanupSessionFiles)
+	admin.Get("/api/tenant/users", h.adminTenantListUsers)
+	admin.Post("/api/tenant/permissions", h.adminTenantSetPermission)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

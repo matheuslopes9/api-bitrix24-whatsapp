@@ -30,6 +30,30 @@ func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
 	return c.Type("html").SendString(crmTabHTML)
 }
 
+// GET /bitrix/crm/check-access?domain=...&user_id=...
+// Retorna { allowed: bool, configured: bool }
+//   - configured: tenant tem pelo menos 1 user liberado (config foi feita)
+//   - allowed: este user esta na lista
+// JS do CRM tab chama isso antes de carregar a interface. Se !allowed,
+// mostra pagina amigavel de "Sem permissao".
+func (h *handlers) bitrixCRMCheckAccess(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	userID := strings.TrimSpace(c.Query("user_id"))
+	if domain == "" || userID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e user_id obrigatorios"})
+	}
+	key := normalizeDomainKey(domain)
+	allowed, total, err := h.repo.HasCrmAccess(c.Context(), key, userID)
+	if err != nil {
+		h.log.Error("crm check access failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"allowed":    allowed,
+		"configured": total > 0,
+	})
+}
+
 // GET /bitrix/crm/entity?domain=...&entity_type=contact|lead|deal&entity_id=...
 // Retorna { phone, name } do contato/lead/deal para o iframe popular o formulário.
 func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
@@ -1062,19 +1086,54 @@ function init() {
         + '</div>';
     }
 
-    // Info do operador logado via BX24.js
+    // Info do operador logado via BX24.js — depois disso, checa permissao
     BX24.callMethod('profile', {}, function(res) {
       var u = res.data() || {};
       var name  = [u.NAME, u.LAST_NAME].filter(Boolean).join(' ') || u.ID || 'Operador';
       var email = u.EMAIL || '';
+      var userID = String(u.ID || '');
       document.getElementById('op-name').textContent     = name;
       document.getElementById('op-email').textContent    = email;
       document.getElementById('op-initials').textContent = initials(name);
-    });
 
-    loadSessions();
-    loadEntity();
+      // ── Checagem de permissao de acesso ao CRM tab ──
+      if (!userID || !_domain) {
+        // Sem user_id ou dominio nao consegue checar — bloqueia por seguranca
+        showAccessDenied('N&atilde;o foi poss&iacute;vel identificar o usu&aacute;rio');
+        return;
+      }
+      var checkUrl = _baseUrl + '/bitrix/crm/check-access'
+        + '?domain=' + encodeURIComponent(_domain)
+        + '&user_id=' + encodeURIComponent(userID);
+      fetch(checkUrl).then(function(r){ return r.json(); }).then(function(data) {
+        if (data.allowed) {
+          // Permissao OK — segue fluxo normal
+          loadSessions();
+          loadEntity();
+        } else {
+          showAccessDenied(data.configured
+            ? 'Seu usu&aacute;rio n&atilde;o tem permiss&atilde;o para acessar o CRM. Pe&ccedil;a a um administrador da UC Technology para liberar seu acesso.'
+            : 'O acesso ao CRM ainda n&atilde;o foi configurado neste portal. Entre em contato com a UC Technology para configurar permiss&otilde;es.');
+        }
+      }).catch(function(err) {
+        showAccessDenied('Erro ao verificar permiss&otilde;es: ' + err.message);
+      });
+    });
   });
+}
+
+// Substitui a UI inteira por pagina amigavel de acesso negado.
+function showAccessDenied(msg) {
+  var html = ''
+    + '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;padding:32px;text-align:center;background:#0f172a;color:#e2e8f0;font-family:-apple-system,system-ui,sans-serif">'
+    +   '<div style="width:88px;height:88px;border-radius:50%;background:rgba(239,68,68,.12);display:flex;align-items:center;justify-content:center;margin-bottom:18px">'
+    +     '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+    +   '</div>'
+    +   '<h2 style="margin:0 0 12px;font-size:18px;font-weight:700">Acesso negado</h2>'
+    +   '<p style="max-width:480px;color:#94a3b8;line-height:1.6;font-size:14px;margin:0 0 24px">' + msg + '</p>'
+    +   '<div style="font-size:11px;color:#475569">UC Talk &middot; suporte@uctechnology.com.br</div>'
+    + '</div>';
+  document.body.innerHTML = html;
 }
 
 // ── Operador ─────────────────────────────────────────────────────────────

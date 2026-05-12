@@ -1209,6 +1209,80 @@ func (r *Repository) DeleteLegacyMessagesByDomain(ctx context.Context, domain st
 	return tag.RowsAffected(), nil
 }
 
+// ─── CRM User Permissions ────────────────────────────────────────────────
+
+// CrmUserPermission representa um usuário Bitrix24 liberado para acessar o CRM tab
+// de um dominio especifico.
+type CrmUserPermission struct {
+	ID        uuid.UUID `db:"id"          json:"id"`
+	Domain    string    `db:"domain"      json:"domain"`
+	UserID    string    `db:"user_id"     json:"user_id"`
+	UserName  string    `db:"user_name"   json:"user_name"`
+	GrantedAt time.Time `db:"granted_at"  json:"granted_at"`
+	GrantedBy string    `db:"granted_by"  json:"granted_by"`
+}
+
+// ListCrmPermissionsByDomain retorna todos os usuários liberados para o domain.
+func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain string) ([]*CrmUserPermission, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, domain, user_id, user_name, granted_at, granted_by
+		FROM crm_user_permissions
+		WHERE domain = $1
+		ORDER BY user_name`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*CrmUserPermission
+	for rows.Next() {
+		var p CrmUserPermission
+		if err := rows.Scan(&p.ID, &p.Domain, &p.UserID, &p.UserName, &p.GrantedAt, &p.GrantedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// GrantCrmPermission libera um usuário Bitrix para acessar o CRM do domain.
+// Idempotente: se ja existe, atualiza user_name (snapshot) e mantem granted_at.
+func (r *Repository) GrantCrmPermission(ctx context.Context, domain, userID, userName, grantedBy string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, granted_by)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4)
+		ON CONFLICT (domain, user_id) DO UPDATE SET user_name = EXCLUDED.user_name`,
+		domain, userID, userName, grantedBy)
+	return err
+}
+
+// RevokeCrmPermission remove a permissao de um usuário para o domain. Retorna
+// true se algo foi removido.
+func (r *Repository) RevokeCrmPermission(ctx context.Context, domain, userID string) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM crm_user_permissions WHERE domain = $1 AND user_id = $2`, domain, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// HasCrmAccess checa se um user_id tem permissao para o domain.
+// Politica estrita: se nenhuma linha existe pro domain, NINGUEM acessa.
+// Retorna (allowed, totalRows). totalRows permite ao caller distinguir
+// entre "lista vazia (config inicial pendente)" e "usuario nao listado".
+func (r *Repository) HasCrmAccess(ctx context.Context, domain, userID string) (allowed bool, totalRows int, err error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE user_id = $2) AS mine
+		FROM crm_user_permissions WHERE domain = $1`, domain, userID)
+	var mine int
+	if err := row.Scan(&totalRows, &mine); err != nil {
+		return false, 0, err
+	}
+	return mine > 0, totalRows, nil
+}
+
 // ListPhonesByDomain retorna os telefones QR (nao-Cloud) associados a um dominio
 // Bitrix. Usado para limpeza de session files por tenant.
 func (r *Repository) ListPhonesByDomain(ctx context.Context, domain string) ([]string, error) {

@@ -93,6 +93,29 @@ const adminHomeHTML = `<!doctype html>
   .card-menu button.danger { color: #b91c1c; }
   .card-menu .divider { height: 1px; background: #e2e8f0; margin: 0.2em 0; }
 
+  /* Modal de permissoes */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.6); z-index: 100; align-items: center; justify-content: center; padding: 1em; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: white; border-radius: 10px; width: 100%; max-width: 720px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .modal-hdr { padding: 1em 1.4em; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
+  .modal-hdr h2 { margin: 0; font-size: 1.1em; }
+  .modal-hdr .close { background: none; border: 0; cursor: pointer; font-size: 1.3em; color: #64748b; padding: 0.1em 0.4em; }
+  .modal-body { padding: 1em 1.4em; overflow-y: auto; flex: 1; }
+  .perm-search { width: 100%; padding: 0.55em 0.8em; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.95em; margin-bottom: 0.8em; font-family: inherit; }
+  .perm-list { display: flex; flex-direction: column; gap: 0.3em; }
+  .perm-row { display: flex; align-items: center; gap: 0.8em; padding: 0.7em 0.9em; border: 1px solid #e2e8f0; border-radius: 6px; }
+  .perm-row.granted { border-color: #86efac; background: #f0fdf4; }
+  .perm-row .info { flex: 1; min-width: 0; }
+  .perm-row .name { font-weight: 600; font-size: 0.95em; }
+  .perm-row .email { font-size: 0.78em; color: #64748b; word-break: break-all; }
+  .perm-row .pos { font-size: 0.75em; color: #94a3b8; }
+  .perm-row .grant-btn { padding: 0.4em 0.9em; border-radius: 5px; cursor: pointer; font-size: 0.85em; font-weight: 600; font-family: inherit; }
+  .perm-row .grant-btn.add { background: #2563eb; color: white; border: 0; }
+  .perm-row .grant-btn.add:hover { background: #1d4ed8; }
+  .perm-row .grant-btn.rm { background: white; color: #b91c1c; border: 1px solid #fecaca; }
+  .perm-row .grant-btn.rm:hover { background: #fee2e2; }
+  .modal-footer { padding: 0.8em 1.4em; border-top: 1px solid #e2e8f0; font-size: 0.82em; color: #64748b; display: flex; justify-content: space-between; }
+
   /* Abas */
   .tabs { display: flex; gap: 0.3em; margin-bottom: 1.5em; border-bottom: 1px solid #cbd5e1; }
   .tab { padding: 0.7em 1.4em; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.95em; color: #64748b; font-family: inherit; font-weight: 500; }
@@ -185,6 +208,24 @@ const adminHomeHTML = `<!doctype html>
     <div id="stressResult" class="stress-result"></div>
   </div>
 
+  <!-- Modal de Permissoes CRM -->
+  <div id="permModal" class="modal-overlay" onclick="if(event.target===this)closePermissionsModal()">
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <h2>Permiss&otilde;es CRM &mdash; <span id="permDomainLabel"></span></h2>
+        <button class="close" onclick="closePermissionsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="perm-search" id="permSearch" placeholder="Buscar por nome ou email...">
+        <div id="permList" class="perm-list"><div class="loading">Carregando usu&aacute;rios...</div></div>
+      </div>
+      <div class="modal-footer">
+        <span id="permStatus">&mdash;</span>
+        <span style="color:#94a3b8">Lista vazia = ningu&eacute;m tem acesso. Libere ao menos 1 usu&aacute;rio.</span>
+      </div>
+    </div>
+  </div>
+
   <div id="tab-debug" class="tab-content">
     <p style="color:#64748b;margin-top:0;">Dump diagn&oacute;stico das tabelas-chave (contagens + amostras). Use para identificar quando o painel mostra zeros e voc&ecirc; n&atilde;o sabe onde est&aacute; quebrando.</p>
     <div style="display:flex;gap:0.5em;flex-wrap:wrap;margin-bottom:1em;">
@@ -270,6 +311,8 @@ function cardHTML(t) {
     '<div class="card ' + cls + '" data-domain="' + escapeHTML(t.domain) + '">' +
       '<button class="card-menu-btn" onclick="toggleCardMenu(event, this)" title="A&ccedil;&otilde;es">&#8942;</button>' +
       '<div class="card-menu">' +
+        '<button onclick="openPermissionsModal(\'' + domainAttr + '\')">Gerenciar permiss&otilde;es CRM</button>' +
+        '<div class="divider"></div>' +
         '<button onclick="tenantAction(\'legacy-messages\',\'' + domainAttr + '\', this)">Limpar msgs legacy</button>' +
         '<button class="danger" onclick="tenantAction(\'session-files\',\'' + domainAttr + '\', this)">Limpar arquivos .db (QR)</button>' +
       '</div>' +
@@ -535,6 +578,106 @@ document.getElementById('cleanSessionFiles').addEventListener('click', async () 
     loadDebug();
   } catch (e) { alert('Erro de rede: ' + e.message); }
 });
+
+// ─── Modal de Permissoes CRM ─────────────────────────────────────────────
+let _permDomain = '';
+let _permUsers = [];
+
+async function openPermissionsModal(domainEnc) {
+  const domain = decodeURIComponent(domainEnc);
+  _permDomain = domain;
+  document.getElementById('permDomainLabel').textContent = domain;
+  document.getElementById('permList').innerHTML = '<div class="loading">Carregando usu&aacute;rios...</div>';
+  document.getElementById('permStatus').textContent = '—';
+  document.getElementById('permSearch').value = '';
+  document.getElementById('permModal').classList.add('open');
+  // fecha qualquer card-menu aberto
+  document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+  await loadPermUsers();
+}
+
+function closePermissionsModal() {
+  document.getElementById('permModal').classList.remove('open');
+  _permDomain = '';
+  _permUsers = [];
+}
+
+async function loadPermUsers() {
+  try {
+    const r = await fetch('/admin/api/tenant/users?domain=' + encodeURIComponent(_permDomain));
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) {
+      document.getElementById('permList').innerHTML = '<div class="empty">Erro: ' + escapeHTML(data.error || r.status) + '</div>';
+      return;
+    }
+    _permUsers = data.users || [];
+    renderPermList();
+    document.getElementById('permStatus').textContent =
+      (data.granted || 0) + ' liberado(s) de ' + _permUsers.length + ' usu&aacute;rios ativos';
+  } catch (e) {
+    document.getElementById('permList').innerHTML = '<div class="empty">Erro de rede: ' + escapeHTML(e.message) + '</div>';
+  }
+}
+
+function renderPermList() {
+  const q = (document.getElementById('permSearch').value || '').toLowerCase();
+  let list = _permUsers;
+  if (q) {
+    list = list.filter(u => (
+      (u.name || '').toLowerCase().includes(q) ||
+      (u.last_name || '').toLowerCase().includes(q) ||
+      (u.email || '').toLowerCase().includes(q) ||
+      String(u.id).includes(q)
+    ));
+  }
+  if (list.length === 0) {
+    document.getElementById('permList').innerHTML = '<div class="empty">Nenhum usu&aacute;rio encontrado</div>';
+    return;
+  }
+  document.getElementById('permList').innerHTML = list.map(u => {
+    const fullName = ((u.name || '') + ' ' + (u.last_name || '')).trim() || ('User #' + u.id);
+    const cls = u.has_access ? ' granted' : '';
+    const btn = u.has_access
+      ? '<button class="grant-btn rm" onclick="permAction(\'' + u.id + '\',\'' + escapeHTML(fullName).replace(/\x27/g,'') + '\',\'revoke\',this)">Remover</button>'
+      : '<button class="grant-btn add" onclick="permAction(\'' + u.id + '\',\'' + escapeHTML(fullName).replace(/\x27/g,'') + '\',\'grant\',this)">Liberar</button>';
+    return ''
+      + '<div class="perm-row' + cls + '">'
+      +   '<div class="info">'
+      +     '<div class="name">' + escapeHTML(fullName) + ' <span style="color:#94a3b8;font-weight:400;font-size:0.8em">#' + u.id + '</span></div>'
+      +     (u.email ? '<div class="email">' + escapeHTML(u.email) + '</div>' : '')
+      +     (u.position ? '<div class="pos">' + escapeHTML(u.position) + '</div>' : '')
+      +   '</div>'
+      +   btn
+      + '</div>';
+  }).join('');
+}
+
+async function permAction(userID, userName, action, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch('/admin/api/tenant/permissions?domain=' + encodeURIComponent(_permDomain), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userID, user_name: userName, action: action }),
+    });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); btn.disabled = false; return; }
+    // Atualiza estado local sem refetch completo
+    const u = _permUsers.find(x => x.id === userID);
+    if (u) u.has_access = (action === 'grant');
+    renderPermList();
+    const grantedCount = _permUsers.filter(x => x.has_access).length;
+    document.getElementById('permStatus').textContent =
+      grantedCount + ' liberado(s) de ' + _permUsers.length + ' usu&aacute;rios ativos';
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('permSearch').addEventListener('input', renderPermList);
 
 load();
 // auto-refresh da aba de portais a cada 60s

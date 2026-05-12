@@ -1054,3 +1054,85 @@ func (c *Client) AddLeadComment(ctx context.Context, creds TenantCreds, leadID i
 	})
 	return err
 }
+
+// ─── Users ────────────────────────────────────────────────────────────────
+
+// BitrixUser representa um usuario do portal Bitrix24 (resultado de user.get).
+type BitrixUser struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+	Active    bool   `json:"active"`
+	IsAdmin   bool   `json:"is_admin"`
+	Position  string `json:"position"`
+}
+
+// GetUsers lista todos os usuarios do portal Bitrix24. Pagina automaticamente.
+// Usa user.get (ou user.search se disponivel) — limit 50 por request padrao.
+// Filtra so usuarios ATIVOS por padrao para evitar lista poluida.
+func (c *Client) GetUsers(ctx context.Context, creds TenantCreds) ([]BitrixUser, error) {
+	var all []BitrixUser
+	start := 0
+	for {
+		raw, err := c.call(ctx, creds, "user.get", map[string]interface{}{
+			"start": start,
+			"FILTER": map[string]interface{}{
+				"ACTIVE": true,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		// Resposta: array de objetos com campos ID, NAME, LAST_NAME, EMAIL, etc.
+		var rows []map[string]interface{}
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			// Pode vir como objeto {"result":[...]} dependendo do shape — c.call ja desempacotou result.
+			break
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, r := range rows {
+			u := BitrixUser{
+				ID:       fmt.Sprintf("%v", r["ID"]),
+				Name:     stringField(r, "NAME"),
+				LastName: stringField(r, "LAST_NAME"),
+				Email:    stringField(r, "EMAIL"),
+				Position: stringField(r, "WORK_POSITION"),
+			}
+			// ACTIVE: pode vir como bool, "Y"/"N", ou true/false
+			if v, ok := r["ACTIVE"]; ok {
+				switch x := v.(type) {
+				case bool:
+					u.Active = x
+				case string:
+					u.Active = strings.EqualFold(x, "Y") || strings.EqualFold(x, "true")
+				}
+			} else {
+				u.Active = true
+			}
+			// IS_ADMIN raramente vem em user.get; tem que chamar user.admin separado se precisar.
+			if v, ok := r["ADMIN_NOTES"]; ok && v != nil {
+				_ = v // placeholder — Bitrix nao expoe is_admin diretamente em user.get
+			}
+			all = append(all, u)
+		}
+		// Paginacao: user.get retorna ate 50; se veio 50 tenta a proxima
+		if len(rows) < 50 {
+			break
+		}
+		start += 50
+		if start > 5000 { // safety cap (100 paginas)
+			break
+		}
+	}
+	return all, nil
+}
+
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok && v != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}

@@ -538,6 +538,97 @@ func (h *handlers) adminFlushQueue(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"removed": removed})
 }
 
+// ─── CRM Permissions ─────────────────────────────────────────────────────
+
+// GET /admin/api/tenant/users?domain=... — lista usuarios do portal Bitrix
+// com flag has_access indicando se ja foram liberados para o CRM.
+func (h *handlers) adminTenantListUsers(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado: " + domain})
+	}
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.GetUsers(ctx, creds)
+	if err != nil {
+		h.log.Error("admin: GetUsers failed", zap.String("domain", domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	// Marca quem tem permissao
+	key := normalizeDomainKey(domain)
+	perms, err := h.repo.ListCrmPermissionsByDomain(ctx, key)
+	if err != nil {
+		h.log.Error("admin: ListCrmPermissions failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	allowed := map[string]bool{}
+	for _, p := range perms {
+		allowed[p.UserID] = true
+	}
+	type userOut struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		LastName  string `json:"last_name"`
+		Email     string `json:"email"`
+		Position  string `json:"position"`
+		Active    bool   `json:"active"`
+		HasAccess bool   `json:"has_access"`
+	}
+	out := make([]userOut, 0, len(users))
+	for _, u := range users {
+		out = append(out, userOut{
+			ID: u.ID, Name: u.Name, LastName: u.LastName, Email: u.Email,
+			Position: u.Position, Active: u.Active,
+			HasAccess: allowed[u.ID],
+		})
+	}
+	return c.JSON(fiber.Map{"users": out, "total": len(out), "granted": len(perms)})
+}
+
+// POST /admin/api/tenant/permissions?domain=...
+// Body JSON: {"user_id": "123", "user_name": "Joao", "action": "grant|revoke"}
+func (h *handlers) adminTenantSetPermission(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
+	}
+	var req struct {
+		UserID   string `json:"user_id"`
+		UserName string `json:"user_name"`
+		Action   string `json:"action"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.UserID == "" || req.Action == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "user_id e action sao obrigatorios"})
+	}
+	key := normalizeDomainKey(domain)
+	switch req.Action {
+	case "grant":
+		if err := h.repo.GrantCrmPermission(c.Context(), key, req.UserID, req.UserName, "super-admin"); err != nil {
+			h.log.Error("admin: GrantCrmPermission failed", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		h.log.Info("admin: granted CRM access",
+			zap.String("domain", key), zap.String("user_id", req.UserID))
+		return c.JSON(fiber.Map{"ok": true, "action": "granted"})
+	case "revoke":
+		removed, err := h.repo.RevokeCrmPermission(c.Context(), key, req.UserID)
+		if err != nil {
+			h.log.Error("admin: RevokeCrmPermission failed", zap.Error(err))
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		h.log.Info("admin: revoked CRM access",
+			zap.String("domain", key), zap.String("user_id", req.UserID),
+			zap.Bool("removed", removed))
+		return c.JSON(fiber.Map{"ok": true, "action": "revoked", "removed": removed})
+	default:
+		return c.Status(400).JSON(fiber.Map{"error": "action deve ser 'grant' ou 'revoke'"})
+	}
+}
+
 // normalizeDomainKey deixa o domain no mesmo formato usado pelas queries
 // agregadas (que aplicam LOWER + REGEXP_REPLACE para strip protocolo/www).
 // Importante: bitrix_portals.domain e bitrix_accounts.domain podem ter
