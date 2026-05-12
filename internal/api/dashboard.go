@@ -720,7 +720,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         </button>
       </div>
       <input type="text" id="perm-search-input" class="inp" placeholder="Buscar por nome, email ou ID..." style="width:100%;margin-bottom:10px;" oninput="filtrarTodosUsuarios()">
-      <div id="perm-search-results" style="background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);border-radius:8px;max-height:280px;overflow-y:auto;">
+      <div id="perm-search-results" style="background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);border-radius:8px;max-height:420px;overflow-y:auto;">
         <div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix...</div>
       </div>
       <div id="perm-preview" style="display:none;margin-top:14px;padding:13px;background:rgba(37,211,102,.07);border:1px solid rgba(37,211,102,.25);border-radius:8px;">
@@ -2169,9 +2169,7 @@ function filtrarTodosUsuarios() {
           || (u.position||'').toLowerCase().indexOf(q) !== -1;
     });
   }
-  // Mostra primeiros 50 itens — UI pega leve mesmo em portais grandes.
   var totalMatched = list.length;
-  list = list.slice(0, 50);
   if (list.length === 0) {
     results.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Nenhum usuário encontrado</div>';
     return;
@@ -2197,7 +2195,7 @@ function filtrarTodosUsuarios() {
       +     (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + (u.position ? ' · ' + _permEsc(u.position) : '') + '</div>' : (u.position ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.position) + '</div>' : ''))
       +   '</div>'
       + '</div>';
-  }).join('') + (totalMatched > 50 ? '<div style="padding:10px;text-align:center;color:#475569;font-size:11px;background:rgba(0,0,0,.2);">Mostrando 50 de ' + totalMatched + ' usuários — refine a busca</div>' : '');
+  }).join('') + '<div style="padding:8px;text-align:center;color:#475569;font-size:11px;background:rgba(0,0,0,.2);">' + totalMatched + ' usuário(s)' + (q ? ' encontrado(s)' : ' ativo(s) no portal') + '</div>';
 }
 
 function selecionarUsuarioParaLiberar(userID) {
