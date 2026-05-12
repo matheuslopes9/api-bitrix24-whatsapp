@@ -263,9 +263,11 @@ func (r *Repository) IncrementRetry(ctx context.Context, waMessageID string) err
 
 // DeleteOldMessages remove mensagens com mais de retentionDays dias.
 // Retorna o número de registros deletados.
+// Usa make_interval (tipo-safe) — versoes novas do pgx nao convertem int -> text
+// automaticamente, entao "$1 || ' days'" falha com "cannot find encode plan".
 func (r *Repository) DeleteOldMessages(ctx context.Context, retentionDays int) (int64, error) {
 	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM messages WHERE created_at < NOW() - ($1 || ' days')::INTERVAL`,
+		`DELETE FROM messages WHERE created_at < NOW() - make_interval(days => $1)`,
 		retentionDays)
 	if err != nil {
 		return 0, err
