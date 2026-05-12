@@ -557,7 +557,9 @@ func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, da
 }
 
 // Disconnect faz logout completo: revoga o dispositivo no WhatsApp,
-// remove do banco de dados e apaga o arquivo SQLite da sessão.
+// remove TODAS as rows de whatsapp_sessions com o mesmo phone (independente
+// do device suffix) e apaga TODOS os arquivos .db/.db-shm/.db-wal daquele
+// phone — sem deixar lixo que cause sessao re-aparecer no proximo deploy.
 func (m *Manager) Disconnect(jid string) {
 	m.mu.Lock()
 	sess, ok := m.sessions[jid]
@@ -566,31 +568,77 @@ func (m *Manager) Disconnect(jid string) {
 	}
 	m.mu.Unlock()
 
-	if !ok {
-		return
-	}
-
 	ctx := context.Background()
 
-	// Logout revoga o dispositivo no app do celular
-	if err := sess.Client.Logout(ctx); err != nil {
-		m.log.Warn("logout error (ignoring)", zap.String("jid", jid), zap.Error(err))
-	}
-	sess.Client.Disconnect()
-
-	// Remove do banco de dados
-	if err := m.repo.DeleteSession(ctx, jid); err != nil {
-		m.log.Warn("delete session from db failed", zap.String("jid", jid), zap.Error(err))
+	// Se a sessao estava em memoria, faz logout no whatsapp + disconnect do client
+	if ok && sess != nil {
+		if err := sess.Client.Logout(ctx); err != nil {
+			m.log.Warn("logout error (ignoring)", zap.String("jid", jid), zap.Error(err))
+		}
+		sess.Client.Disconnect()
 	}
 
-	// Remove o arquivo SQLite da sessão
-	if sess.dbPath != "" {
+	// Extrai o phone (numero sem device suffix) do JID
+	phone := extractPhoneFromJID(jid)
+
+	// Remove TODAS as rows whatsapp_sessions com mesmo phone (ou jid exato como fallback).
+	// Sem isso, devices antigos (jid:88, jid:89) sobrevivem e re-aparecem.
+	if phone != "" {
+		if err := m.repo.DeleteSessionsByPhone(ctx, phone); err != nil {
+			m.log.Warn("delete sessions by phone failed",
+				zap.String("phone", phone), zap.Error(err))
+		}
+	} else {
+		// Fallback: pelo menos apaga a row exata do JID
+		if err := m.repo.DeleteSession(ctx, jid); err != nil {
+			m.log.Warn("delete session from db failed", zap.String("jid", jid), zap.Error(err))
+		}
+	}
+
+	// Apaga TODOS os arquivos .db/.db-shm/.db-wal do phone, nao so o
+	// sess.dbPath em memoria — devices antigos deixavam sidecars.
+	if phone != "" {
+		base := filepath.Join(m.cfg.SessionsDir, phone)
+		for _, suffix := range []string{".db", ".db-shm", ".db-wal"} {
+			p := base + suffix
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				m.log.Warn("remove session file failed", zap.String("path", p), zap.Error(err))
+			}
+		}
+	} else if ok && sess != nil && sess.dbPath != "" {
+		// Fallback: apaga so o dbPath conhecido
 		if err := os.Remove(sess.dbPath); err != nil && !os.IsNotExist(err) {
 			m.log.Warn("remove session sqlite failed", zap.String("path", sess.dbPath), zap.Error(err))
 		}
 	}
 
-	m.log.Info("session disconnected and removed", zap.String("jid", jid))
+	m.log.Info("session disconnected and removed",
+		zap.String("jid", jid), zap.String("phone", phone))
+}
+
+// extractPhoneFromJID retorna o numero sem device suffix.
+// "5519910001772:88@s.whatsapp.net" -> "5519910001772"
+// "cloud:1160@s.whatsapp.net" -> "" (Cloud, nao tem .db file)
+func extractPhoneFromJID(jid string) string {
+	if strings.HasPrefix(jid, "cloud:") {
+		return ""
+	}
+	at := strings.Index(jid, "@")
+	if at == -1 {
+		return ""
+	}
+	base := jid[:at]
+	if colon := strings.Index(base, ":"); colon != -1 {
+		base = base[:colon]
+	}
+	// Mantem so digitos (sanity)
+	out := make([]byte, 0, len(base))
+	for _, c := range base {
+		if c >= '0' && c <= '9' {
+			out = append(out, byte(c))
+		}
+	}
+	return string(out)
 }
 
 // Ping verifica se a conexão está ativa.

@@ -158,6 +158,22 @@ func (r *Repository) DeleteSession(ctx context.Context, jid string) error {
 	return err
 }
 
+// DeleteSessionsByPhone remove TODAS as rows whatsapp_sessions cujo phone bate,
+// independente do device suffix (devices reconectados criam rows novas).
+// Usado pelo Disconnect para evitar lixo persistente.
+func (r *Repository) DeleteSessionsByPhone(ctx context.Context, phone string) error {
+	if phone == "" {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `DELETE FROM whatsapp_sessions WHERE phone = $1`, phone)
+	return err
+}
+
+// DeleteSessionByJID — alias para uso explicito por callers que ja sabem o jid exato.
+func (r *Repository) DeleteSessionByJID(ctx context.Context, jid string) error {
+	return r.DeleteSession(ctx, jid)
+}
+
 // ─── Contact Mapping ───────────────────────────────────────────────────────
 
 func (r *Repository) UpsertContact(ctx context.Context, c *ContactMapping) error {

@@ -185,12 +185,18 @@ func (cm *CloudManager) AddSession(ctx context.Context, params CloudSessionParam
 	return s, nil
 }
 
-// RemoveSession desconecta a sessão Cloud API.
+// RemoveSession desconecta a sessão Cloud API e APAGA a row de whatsapp_sessions.
+// Antes era apenas UpdateSessionStatus -> 'disconnected', o que deixava a row
+// no banco e ao reativar/reinstalar o connector ela voltava sozinha. Para
+// remocao real (clicar "Desconectar" na UI), precisamos DELETE.
 func (cm *CloudManager) RemoveSession(ctx context.Context, jid string) error {
 	cm.mu.Lock()
 	delete(cm.sessions, jid)
 	cm.mu.Unlock()
-	return cm.repo.UpdateSessionStatus(ctx, jid, db.SessionDisconnected)
+	if err := cm.repo.DeleteSession(ctx, jid); err != nil {
+		return fmt.Errorf("delete cloud session: %w", err)
+	}
+	return nil
 }
 
 // Get retorna a sessão pelo JID (case sensitive).
