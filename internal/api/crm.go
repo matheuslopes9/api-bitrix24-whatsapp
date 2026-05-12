@@ -353,6 +353,9 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 }
 
 // localMsgsToCRM converte []db.Message para o formato crmMessage do frontend.
+// Preenche session_jid/session_phone/kind com base no lado "nosso" da msg:
+//   - outbound: from_jid (a sessao enviou)
+//   - inbound:  to_jid   (a sessao recebeu)
 func localMsgsToCRM(msgs []db.Message) []crmMessage {
 	out := make([]crmMessage, 0, len(msgs))
 	for _, m := range msgs {
@@ -360,19 +363,63 @@ func localMsgsToCRM(msgs []db.Message) []crmMessage {
 		if msgType == "" {
 			msgType = "text"
 		}
+		var ourJID string
+		if m.Direction == db.DirOutbound {
+			ourJID = m.FromJID
+		} else {
+			ourJID = m.ToJID
+		}
+		kind, phone := classifySessionJID(ourJID)
 		out = append(out, crmMessage{
-			ID:         m.WAMessageID,
-			Direction:  string(m.Direction),
-			Type:       msgType,
-			Content:    m.Content,
-			MediaURL:   m.MediaURL,
-			MediaMime:  m.MediaMime,
-			AuthorName: m.AuthorName,
-			Status:     string(m.Status),
-			CreatedAt:  m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:           m.WAMessageID,
+			Direction:    string(m.Direction),
+			Type:         msgType,
+			Content:      m.Content,
+			MediaURL:     m.MediaURL,
+			MediaMime:    m.MediaMime,
+			AuthorName:   m.AuthorName,
+			Status:       string(m.Status),
+			CreatedAt:    m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			SessionJID:   ourJID,
+			SessionPhone: phone,
+			Kind:         kind,
 		})
 	}
 	return out
+}
+
+// classifySessionJID extrai (kind, phone) de um session_jid do nosso lado.
+// Aceita formatos:
+//   - "cloud:1160607470462388@s.whatsapp.net" -> ("cloud", "1160607470462388")
+//   - "cloud@s.whatsapp.net"                  -> ("cloud", "")        (lixo historico)
+//   - "5519910001772:88@s.whatsapp.net"       -> ("qr", "5519910001772")
+//   - "5519910001772@s.whatsapp.net"          -> ("qr", "5519910001772")
+//   - ""                                       -> ("", "")
+func classifySessionJID(jid string) (kind, phone string) {
+	if jid == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(jid, "cloud:") {
+		// cloud:<id>@s.whatsapp.net
+		rest := strings.TrimPrefix(jid, "cloud:")
+		if at := strings.Index(rest, "@"); at != -1 {
+			rest = rest[:at]
+		}
+		return "cloud", rest
+	}
+	if strings.HasPrefix(jid, "cloud@") {
+		return "cloud", "" // lixo do bug stripDeviceSuffix antigo
+	}
+	// QR: pode ter device suffix ":NN"
+	at := strings.Index(jid, "@")
+	if at == -1 {
+		return "qr", jid
+	}
+	base := jid[:at]
+	if colon := strings.Index(base, ":"); colon != -1 {
+		base = base[:colon]
+	}
+	return "qr", base
 }
 
 // extractChatID tenta extrair o CHAT_ID de várias estruturas possíveis de resposta.
@@ -527,16 +574,21 @@ func parseSessionHistory(raw json.RawMessage, connectorID string) []crmMessage {
 }
 
 type crmMessage struct {
-	ID        string `json:"id"`
-	Direction string `json:"direction"` // inbound | outbound
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	MediaURL  string `json:"media_url,omitempty"`
-	MediaMime string `json:"media_mime,omitempty"`
-	AuthorID  string `json:"author_id,omitempty"`
+	ID         string `json:"id"`
+	Direction  string `json:"direction"` // inbound | outbound
+	Type       string `json:"type"`
+	Content    string `json:"content"`
+	MediaURL   string `json:"media_url,omitempty"`
+	MediaMime  string `json:"media_mime,omitempty"`
+	AuthorID   string `json:"author_id,omitempty"`
 	AuthorName string `json:"author_name,omitempty"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"created_at"`
+	// Vinculo da conexao usada — permite separar chats por sessao quando o
+	// mesmo contato falou com varios numeros do mesmo portal.
+	SessionJID   string `json:"session_jid,omitempty"`   // ex: "cloud:1160...@s.whatsapp.net" ou "5519910001772@s.whatsapp.net"
+	SessionPhone string `json:"session_phone,omitempty"` // numero E.164 da sessao (nosso lado)
+	Kind         string `json:"kind,omitempty"`          // "cloud" | "qr"
 }
 
 // parseBitrixMessages converte a resposta do im.dialog.messages.get para []crmMessage.
@@ -803,6 +855,18 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 .btn-icon{background:none;border:none;cursor:pointer;color:#64748b;padding:4px;border-radius:6px;transition:color .15s,background .15s;display:flex;align-items:center}
 .btn-icon:hover{color:#e2e8f0;background:#334155}
 
+/* tabs de vinculos (quando o mesmo contato falou em varios numeros) */
+.session-tabs{display:flex;gap:0;border-bottom:1px solid #334155;background:#0f172a;padding:0 12px;overflow-x:auto;flex-shrink:0}
+.session-tabs::-webkit-scrollbar{height:3px}
+.session-tabs::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+.session-tab{padding:8px 14px;background:transparent;border:0;border-bottom:2px solid transparent;color:#64748b;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;font-family:inherit;letter-spacing:.02em}
+.session-tab:hover:not(.active){color:#cbd5e1}
+.session-tab.active{color:#e2e8f0;border-bottom-color:#3b82f6}
+.session-tab .badge-kind{font-size:9px;padding:1px 5px;border-radius:6px;font-weight:700;letter-spacing:.04em}
+.session-tab .badge-kind.cloud{background:rgba(59,130,246,.2);color:#60a5fa}
+.session-tab .badge-kind.qr{background:rgba(37,211,102,.18);color:#25D366}
+.session-tab .count{font-size:10px;color:#475569;font-weight:500}
+
 /* área de mensagens */
 .chat-body{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
 .chat-body::-webkit-scrollbar{width:4px}
@@ -909,6 +973,9 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
       </button>
     </div>
+
+    <!-- tabs por vinculo (oculto quando so 1 sessao) -->
+    <div class="session-tabs" id="session-tabs" style="display:none"></div>
 
     <!-- mensagens -->
     <div class="chat-body" id="chat-body">
@@ -1125,6 +1192,10 @@ function filterConvs() { renderConvList(); }
 function openChat(name, phone) {
   _contactName  = name;
   _contactPhone = phone;
+  // Reseta cache de sessoes ao trocar de contato pra nao manter aba antiga ativa
+  _msgsBySession = {};
+  _activeSessionKey = '';
+  document.getElementById('session-tabs').style.display = 'none';
   document.getElementById('chat-hdr-name').textContent   = name;
   document.getElementById('chat-hdr-phone').textContent  = phone ? ('📱 ' + phone) : '';
   document.getElementById('chat-hdr-avatar').textContent = initials(name);
@@ -1175,15 +1246,104 @@ function pollHistory() {
     }).catch(function(){});
 }
 
+// Cache: msgs do contato atual, agrupadas por session_phone (lado nosso).
+// Permite trocar de tab sem refetch.
+var _msgsBySession = {}; // { "554220181520": [...], "5519910001772": [...] }
+var _activeSessionKey = ''; // chave de _msgsBySession atualmente exibida
+
 function renderHistory(msgs, chatID) {
   var body = document.getElementById('chat-body');
+  var tabsEl = document.getElementById('session-tabs');
   if (!msgs.length) {
+    tabsEl.style.display = 'none';
     body.innerHTML = '<div class="chat-placeholder"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><p>Nenhuma mensagem ainda</p><span class="sub">Envie a primeira mensagem abaixo</span></div>';
+    _msgsBySession = {};
+    _activeSessionKey = '';
+    return;
+  }
+
+  // ── Agrupa mensagens por (kind + phone) ──
+  // Chave usada: 'cloud:<phone>' ou 'qr:<phone>'. Se phone vazio, usa 'unknown'.
+  var groups = {}; // key -> { kind, phone, msgs[], lastTime }
+  msgs.forEach(function(m) {
+    var kind = m.kind || 'qr';
+    var phone = m.session_phone || '';
+    var key = kind + ':' + (phone || 'unknown');
+    if (!groups[key]) groups[key] = { kind: kind, phone: phone, key: key, msgs: [], lastTime: 0 };
+    groups[key].msgs.push(m);
+    var t = parseDate(m.created_at).getTime();
+    if (t > groups[key].lastTime) groups[key].lastTime = t;
+  });
+  _msgsBySession = groups;
+
+  // ── Renderiza tabs (so se houver >1 sessao) ──
+  var keys = Object.keys(groups);
+  keys.sort(function(a, b) { return groups[b].lastTime - groups[a].lastTime; }); // mais recente primeiro
+
+  // mantem aba ativa se ainda existe; senao usa a mais recente
+  if (!_activeSessionKey || !groups[_activeSessionKey]) {
+    _activeSessionKey = keys[0];
+  }
+
+  if (keys.length > 1) {
+    var tabsHtml = '';
+    keys.forEach(function(k) {
+      var g = groups[k];
+      var isActive = (k === _activeSessionKey);
+      var kindLabel = g.kind === 'cloud' ? 'OFICIAL' : 'MULTI-DEVICE';
+      var phoneLabel = g.phone ? '+' + g.phone : 'sem n&uacute;mero';
+      tabsHtml += '<button class="session-tab' + (isActive ? ' active' : '') + '" onclick="switchSessionTab(\'' + esc(k) + '\')">'
+                + '<span class="badge-kind ' + g.kind + '">' + kindLabel + '</span>'
+                + '<span>' + esc(phoneLabel) + '</span>'
+                + '<span class="count">(' + g.msgs.length + ')</span>'
+                + '</button>';
+    });
+    tabsEl.innerHTML = tabsHtml;
+    tabsEl.style.display = 'flex';
+  } else {
+    tabsEl.style.display = 'none';
+  }
+
+  // ── Renderiza msgs da aba ativa ──
+  renderSessionMessages();
+
+  // Atualiza preview na sidebar usando a msg mais recente GLOBAL
+  if (msgs.length) _lastMsgId = msgs[msgs.length-1].id;
+  var last = msgs[msgs.length-1];
+  var idx = _allConvs.findIndex(function(c){ return c.phone === _contactPhone; });
+  if (idx >= 0) {
+    _allConvs[idx].preview = last.content || mediaLabel(last.type);
+    _allConvs[idx].time    = last.created_at ? parseDate(last.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '';
+    renderConvList();
+  }
+}
+
+function switchSessionTab(key) {
+  if (!_msgsBySession[key]) return;
+  _activeSessionKey = key;
+  // marca tab ativa
+  document.querySelectorAll('.session-tab').forEach(function(el) {
+    el.classList.remove('active');
+  });
+  // re-renderiza ambos os elementos
+  var tabsEl = document.getElementById('session-tabs');
+  Array.prototype.forEach.call(tabsEl.children, function(btn) {
+    if (btn.getAttribute('onclick') && btn.getAttribute('onclick').indexOf(key) !== -1) {
+      btn.classList.add('active');
+    }
+  });
+  renderSessionMessages();
+}
+
+function renderSessionMessages() {
+  var body = document.getElementById('chat-body');
+  var group = _msgsBySession[_activeSessionKey];
+  if (!group || !group.msgs.length) {
+    body.innerHTML = '<div class="chat-placeholder"><p>Nenhuma mensagem neste v&iacute;nculo</p></div>';
     return;
   }
   var html = '', lastDay = '';
-  msgs.forEach(function(m) {
-    // O Bitrix retorna datas no formato "DD.MM.YYYY HH:MM:SS" ou ISO
+  group.msgs.forEach(function(m) {
     var dt = parseDate(m.created_at);
     var day = dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
     if (day !== lastDay) { html += '<div class="day-div"><span>' + day + '</span></div>'; lastDay = day; }
@@ -1202,7 +1362,6 @@ function renderHistory(msgs, chatID) {
     } else {
       content = esc(m.content || '');
     }
-    // Nome do autor apenas em mensagens outbound (operador)
     var authorLabel = (isOut && m.author_name) ? '<div style="font-size:10px;color:#4ade80;margin-bottom:2px;font-weight:600">' + esc(m.author_name) + '</div>' : '';
     html += '<div class="bw ' + (isOut?'out':'in') + '"><div class="bubble ' + (isOut?'out':'in') + '">'
           + authorLabel + content
@@ -1211,15 +1370,6 @@ function renderHistory(msgs, chatID) {
   });
   body.innerHTML = html;
   body.scrollTop = body.scrollHeight;
-  if (msgs.length) _lastMsgId = msgs[msgs.length-1].id;
-  // Atualiza preview na sidebar
-  var last = msgs[msgs.length-1];
-  var idx = _allConvs.findIndex(function(c){ return c.phone === _contactPhone; });
-  if (idx >= 0) {
-    _allConvs[idx].preview = last.content || mediaLabel(last.type);
-    _allConvs[idx].time    = last.created_at ? parseDate(last.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : '';
-    renderConvList();
-  }
 }
 
 function parseDate(s) {
