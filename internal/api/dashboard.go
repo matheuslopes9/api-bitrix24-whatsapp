@@ -358,6 +358,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
     Filas Bitrix
   </div>
+  <div class="nav-item" id="nav-permissoes" onclick="showPage('permissoes')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    Permissões
+  </div>
   <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
@@ -689,6 +693,52 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- ══════════════════════ PERMISSÕES CRM ══════════════════════ -->
+  <div id="page-permissoes" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Permissões CRM</div>
+        <div class="section-sub">Libere quais usuários do Bitrix24 podem acessar o CRM tab</div>
+      </div>
+    </div>
+
+    <!-- Info box -->
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+      <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
+        Quem aparece na lista abaixo pode usar a aba <strong style="color:#cbd5e1;">UC Talk</strong> dentro do CRM do Bitrix24 (Contato, Lead, Deal). <br>
+        Lista vazia = ninguém acessa. Para encontrar o ID do usuário no Bitrix24, abra o perfil dele e copie da URL: <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">/company/personal/user/<b>ID</b>/</code>
+      </div>
+    </div>
+
+    <!-- Bloco: liberar novo usuário -->
+    <div class="card" style="padding:18px;margin-bottom:16px;">
+      <div style="font-size:13px;color:#cbd5e1;font-weight:600;margin-bottom:10px;">Liberar novo usuário</div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <div style="flex:1;min-width:160px;">
+          <label style="font-size:11px;color:#64748b;display:block;margin-bottom:4px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">ID do usuário Bitrix</label>
+          <input type="number" id="perm-new-user-id" class="inp" placeholder="Ex: 12" style="width:100%;">
+        </div>
+        <button class="btn btn-ghost" id="perm-lookup-btn" onclick="permLookupUser()" style="border:1px solid rgba(59,130,246,.4);color:#60a5fa;">Buscar info</button>
+      </div>
+      <div id="perm-preview" style="display:none;margin-top:14px;padding:13px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;">
+        <div id="perm-preview-body" style="font-size:13px;color:#e2e8f0;margin-bottom:10px;"></div>
+        <button class="btn btn-primary btn-sm" id="perm-grant-btn" onclick="permGrantUser()">✓ Liberar acesso</button>
+      </div>
+    </div>
+
+    <!-- Bloco: lista de liberados -->
+    <div class="card" style="padding:0;">
+      <div style="padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Usuários liberados</div>
+        <span style="font-size:11px;color:#64748b;" id="perm-status">—</span>
+      </div>
+      <div id="perm-list" style="padding:8px;">
+        <div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════════════════════ FILAS BITRIX ══════════════════════ -->
   <div id="page-filas" class="page">
     <div class="section-hdr">
@@ -861,7 +911,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
 
     <!-- ─── Form Multi-Device ─── -->
     <div id="ns-mode-qr">
-      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">N&uacute;mero do WhatsApp</label>
+      <label style="display:block;font-size:11px;color:#64748b;margin-bottom:6px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;">Número do WhatsApp</label>
       <div style="display:flex;gap:8px;margin-bottom:18px;">
         <input class="inp" id="modal-numero" placeholder="5519910001772" maxlength="20" onkeydown="if(event.key==='Enter')iniciarSessao()" style="flex:1;min-width:0;"/>
         <button class="btn btn-primary" id="modal-btn-conectar" onclick="iniciarSessao()" style="white-space:nowrap;flex-shrink:0;">Conectar</button>
@@ -885,7 +935,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div>1. Abra o WhatsApp no celular</div>
         <div>2. Toque em <strong style="color:#cbd5e1;">&#8942; &rarr; Aparelhos conectados</strong></div>
         <div>3. Toque em <strong style="color:#cbd5e1;">Conectar um aparelho</strong></div>
-        <div>4. Aponte a c&acirc;mera para o QR acima</div>
+        <div>4. Aponte a câmera para o QR acima</div>
       </div>
     </div>
 
@@ -1105,7 +1155,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', relatorios: 'Relatórios' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', relatorios: 'Relatórios' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -1119,6 +1169,7 @@ function showPage(nome) {
   if (nome === 'relatorios') carregarRelatorios(periodoRelatorio);
   if (nome === 'sessoes') carregarSessoes();
   if (nome === 'filas') carregarFilas();
+  if (nome === 'permissoes') carregarPermissoes();
 }
 
 function openSidebar() {
@@ -2021,6 +2072,133 @@ function excluirIntegracao(enc) {
     })
     .catch(function() { toast('Erro ao remover integração', 'error'); });
   });
+}
+
+// ─── Permissões CRM ──────────────────────────────────────────────────────
+var _permCache = [];        // cache de usuários liberados
+var _permPreviewUser = null;
+
+// Helper local de escape HTML (o dashboard nao tinha um)
+function _permEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function carregarPermissoes() {
+  var box = document.getElementById('perm-list');
+  box.innerHTML = '<div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>';
+  document.getElementById('perm-preview').style.display = 'none';
+  document.getElementById('perm-new-user-id').value = '';
+  _permPreviewUser = null;
+  fetch(apiUrl('/ui/permissions/list'))
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (!d || d.error) {
+        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro: ' + ((d && d.error) || 'falha') + '</div>';
+        return;
+      }
+      _permCache = d.users || [];
+      renderPermList();
+      document.getElementById('perm-status').textContent = _permCache.length + ' usuário(s) liberado(s)';
+    })
+    .catch(function(err) {
+      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro de rede: ' + err.message + '</div>';
+    });
+}
+
+function renderPermList() {
+  var box = document.getElementById('perm-list');
+  if (_permCache.length === 0) {
+    box.innerHTML = '<div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Nenhum usuário liberado ainda. Use o formulário acima para adicionar.</div>';
+    return;
+  }
+  box.innerHTML = _permCache.map(function(u) {
+    var name = u.user_name || ('Usuário #' + u.user_id);
+    return ''
+      + '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
+      +   '<div style="width:30px;height:30px;border-radius:50%;background:rgba(37,211,102,.18);color:#25D366;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + (name[0] || '?').toUpperCase() + '</div>'
+      +   '<div style="flex:1;min-width:0;">'
+      +     '<div style="font-size:13.5px;color:#e2e8f0;font-weight:600;">' + _permEsc(name) + ' <span style="color:#475569;font-weight:400;font-size:12px;">#' + _permEsc(u.user_id) + '</span></div>'
+      +     (u.granted_at ? '<div style="font-size:11px;color:#475569;">Liberado em ' + _permEsc(u.granted_at) + '</div>' : '')
+      +   '</div>'
+      +   '<button class="btn btn-ghost btn-sm" style="color:#f87171;border:1px solid rgba(248,113,113,.3);" onclick="permRevoke(\'' + _permEsc(u.user_id) + '\', this)">Remover</button>'
+      + '</div>';
+  }).join('');
+}
+
+function permLookupUser() {
+  var userID = (document.getElementById('perm-new-user-id').value || '').trim();
+  if (!userID || !/^\d+$/.test(userID)) {
+    toast('Informe um ID numérico válido', 'error');
+    return;
+  }
+  if (_permCache.find(function(u) { return u.user_id === userID; })) {
+    toast('Usuário ' + userID + ' já está liberado', 'error');
+    return;
+  }
+  var btn = document.getElementById('perm-lookup-btn');
+  btn.disabled = true; btn.textContent = 'Buscando...';
+  fetch(apiUrl('/ui/permissions/user-info?user_id=' + encodeURIComponent(userID)))
+    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      if (!res.ok) {
+        toast('Erro: ' + (res.data.error || 'falha'), 'error');
+        document.getElementById('perm-preview').style.display = 'none';
+        return;
+      }
+      _permPreviewUser = res.data;
+      var html = ''
+        + '<div style="font-size:14px;color:#e2e8f0;font-weight:600;margin-bottom:4px;">' + _permEsc(res.data.name) + ' <span style="color:#475569;font-weight:400;font-size:12px;">#' + _permEsc(res.data.id) + '</span></div>'
+        + (res.data.email ? '<div style="font-size:12px;color:#94a3b8;">' + _permEsc(res.data.email) + '</div>' : '')
+        + (res.data.position ? '<div style="font-size:11.5px;color:#64748b;">' + _permEsc(res.data.position) + '</div>' : '')
+        + (res.data.active === false ? '<div style="font-size:11.5px;color:#f87171;margin-top:4px;">⚠ Usuário inativo no Bitrix</div>' : '');
+      document.getElementById('perm-preview-body').innerHTML = html;
+      document.getElementById('perm-preview').style.display = 'block';
+    })
+    .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); })
+    .then(function() { btn.disabled = false; btn.textContent = 'Buscar info'; });
+}
+
+function permGrantUser() {
+  if (!_permPreviewUser) return;
+  var u = _permPreviewUser;
+  var btn = document.getElementById('perm-grant-btn');
+  btn.disabled = true; btn.textContent = 'Liberando...';
+  fetch(apiUrl('/ui/permissions/grant'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: u.id, user_name: u.name }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
+      toast('Usuário liberado com sucesso!', 'success');
+      _permPreviewUser = null;
+      document.getElementById('perm-preview').style.display = 'none';
+      document.getElementById('perm-new-user-id').value = '';
+      carregarPermissoes();
+    })
+    .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); })
+    .then(function() { btn.disabled = false; btn.textContent = '✓ Liberar acesso'; });
+}
+
+function permRevoke(userID, btn) {
+  if (!confirm('Remover acesso do usuário #' + userID + '?')) return;
+  btn.disabled = true;
+  fetch(apiUrl('/ui/permissions/revoke'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userID }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); btn.disabled = false; return; }
+      toast('Acesso removido', 'success');
+      carregarPermissoes();
+    })
+    .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); btn.disabled = false; });
 }
 
 // ─── Filas Bitrix ─────────────────────────────────────────────────────────────

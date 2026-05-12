@@ -250,14 +250,14 @@ const stressTestHTML = `<!doctype html>
 </head>
 <body>
 <h1>Stress Test — Webhook Bitrix</h1>
-<p class="desc">Dispara N requisi&ccedil;&otilde;es POST concorrentes para <code>/bitrix/connector/event</code> simulando o evento <code>ONIMCONNECTORMESSAGEADD</code>. As requisi&ccedil;&otilde;es batem no pr&oacute;prio processo (loopback) — &uacute;til para medir a perf do webhook + Redis + Bitrix Client sob carga.</p>
+<p class="desc">Dispara N requisições POST concorrentes para <code>/bitrix/connector/event</code> simulando o evento <code>ONIMCONNECTORMESSAGEADD</code>. As requisições batem no próprio processo (loopback) — útil para medir a perf do webhook + Redis + Bitrix Client sob carga.</p>
 
 <form id="form">
   <fieldset>
     <legend>Carga</legend>
     <div class="row">
       <div>
-        <label for="concurrent">Conversas simult&acirc;neas</label>
+        <label for="concurrent">Conversas simultâneas</label>
         <input type="number" id="concurrent" value="50" min="1" max="500">
         <div class="hint">Cada conversa = um chat_id distinto (5519900XXXX). Max 500.</div>
       </div>
@@ -319,13 +319,13 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const sv = sel.value;
   if (!sv || !sv.includes('|')) {
-    result.innerHTML = '<p class="err"><strong>Selecione um conector v&aacute;lido.</strong></p>';
+    result.innerHTML = '<p class="err"><strong>Selecione um conector válido.</strong></p>';
     return;
   }
   const [connector, lineStr] = sv.split('|');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Rodando...';
-  result.innerHTML = '<p style="color:#666">Disparando requisi&ccedil;&otilde;es... aguarde.</p>';
+  result.innerHTML = '<p style="color:#666">Disparando requisições... aguarde.</p>';
 
   const body = {
     concurrent: parseInt(document.getElementById('concurrent').value, 10),
@@ -371,7 +371,7 @@ function renderResult(d) {
   html += '</div>';
 
   if (d.latency_ms) {
-    html += '<h3>Lat&ecirc;ncia</h3>';
+    html += '<h3>Latência</h3>';
     html += '<table class="latency-table">';
     html += '<tr><th>min</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>';
     html += '<tr>';

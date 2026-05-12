@@ -30,6 +30,130 @@ func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
 	return c.Type("html").SendString(crmTabHTML)
 }
 
+// ─── Endpoints publicos de permissoes (chamados do /dashboard interno) ─────
+// Diferenca dos endpoints /admin/api/tenant/*: nao exigem cookie admin.
+// Quem acessa o /dashboard ja tem acesso ao backoffice do app, entao a
+// barreira aqui eh validar que o domain pedido EXISTE em bitrix_portals.
+
+// resolveDashboardDomain extrai o domain a operar.
+// Em modo "portal isolado" (?portal=x.bitrix24.com), usa esse valor;
+// senao usa o unico portal cadastrado. Retorna ("",err) se nada bater.
+func (h *handlers) resolveDashboardDomain(ctx context.Context, c *fiber.Ctx) (string, error) {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		domain = strings.TrimSpace(c.Query("portal"))
+	}
+	if domain != "" {
+		return normalizePortalDomain(domain), nil
+	}
+	portals, err := h.repo.ListBitrixPortals(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(portals) == 1 {
+		return portals[0].Domain, nil
+	}
+	return "", fmt.Errorf("informe ?domain= ou ?portal=")
+}
+
+// GET /ui/permissions/list — lista usuarios liberados para o portal atual.
+func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	key := strings.ToLower(domain)
+	perms, err := h.repo.ListCrmPermissionsByDomain(ctx, key)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]fiber.Map, 0, len(perms))
+	for _, p := range perms {
+		out = append(out, fiber.Map{
+			"user_id":    p.UserID,
+			"user_name":  p.UserName,
+			"granted_at": p.GrantedAt.Format("2006-01-02 15:04"),
+		})
+	}
+	return c.JSON(fiber.Map{"users": out, "granted": len(perms), "domain": domain})
+}
+
+// GET /ui/permissions/user-info?user_id=N — busca info de 1 user no Bitrix.
+func (h *handlers) uiPermissionsUserInfo(c *fiber.Ctx) error {
+	userID := strings.TrimSpace(c.Query("user_id"))
+	if userID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "user_id obrigatorio"})
+	}
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, domain)
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado: " + domain})
+	}
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, []string{userID})
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if len(users) == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "usuario " + userID + " nao encontrado"})
+	}
+	u := users[0]
+	full := strings.TrimSpace(u.Name + " " + u.LastName)
+	if full == "" {
+		full = "User #" + u.ID
+	}
+	return c.JSON(fiber.Map{
+		"id": u.ID, "name": full, "first": u.Name, "last": u.LastName,
+		"email": u.Email, "position": u.Position, "active": u.Active,
+	})
+}
+
+// POST /ui/permissions/grant — Body: {"user_id":"N","user_name":"X"}
+func (h *handlers) uiPermissionsGrant(c *fiber.Ctx) error {
+	return h.uiPermissionsMutate(c, true)
+}
+
+// POST /ui/permissions/revoke — Body: {"user_id":"N"}
+func (h *handlers) uiPermissionsRevoke(c *fiber.Ctx) error {
+	return h.uiPermissionsMutate(c, false)
+}
+
+func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	var req struct {
+		UserID   string `json:"user_id"`
+		UserName string `json:"user_name"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.UserID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "user_id obrigatorio"})
+	}
+	key := strings.ToLower(domain)
+	if grant {
+		if err := h.repo.GrantCrmPermission(ctx, key, req.UserID, req.UserName, "dashboard"); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		h.log.Info("ui: granted CRM access",
+			zap.String("domain", key), zap.String("user_id", req.UserID))
+		return c.JSON(fiber.Map{"ok": true, "action": "granted"})
+	}
+	removed, err := h.repo.RevokeCrmPermission(ctx, key, req.UserID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("ui: revoked CRM access",
+		zap.String("domain", key), zap.String("user_id", req.UserID))
+	return c.JSON(fiber.Map{"ok": true, "action": "revoked", "removed": removed})
+}
+
 // GET /bitrix/crm/check-access?domain=...&user_id=...
 // Retorna { allowed: bool, configured: bool }
 //   - configured: tenant tem pelo menos 1 user liberado (config foi feita)
@@ -1099,7 +1223,7 @@ function init() {
       // ── Checagem de permissao de acesso ao CRM tab ──
       if (!userID || !_domain) {
         // Sem user_id ou dominio nao consegue checar — bloqueia por seguranca
-        showAccessDenied('N&atilde;o foi poss&iacute;vel identificar o usu&aacute;rio');
+        showAccessDenied('Não foi possível identificar o usuário');
         return;
       }
       var checkUrl = _baseUrl + '/bitrix/crm/check-access'
@@ -1112,11 +1236,11 @@ function init() {
           loadEntity();
         } else {
           showAccessDenied(data.configured
-            ? 'Seu usu&aacute;rio n&atilde;o tem permiss&atilde;o para acessar o CRM. Pe&ccedil;a a um administrador da UC Technology para liberar seu acesso.'
-            : 'O acesso ao CRM ainda n&atilde;o foi configurado neste portal. Entre em contato com a UC Technology para configurar permiss&otilde;es.');
+            ? 'Seu usuário não tem permissão para acessar o CRM. Peça a um administrador da UC Technology para liberar seu acesso.'
+            : 'O acesso ao CRM ainda não foi configurado neste portal. Entre em contato com a UC Technology para configurar permissões.');
         }
       }).catch(function(err) {
-        showAccessDenied('Erro ao verificar permiss&otilde;es: ' + err.message);
+        showAccessDenied('Erro ao verificar permissões: ' + err.message);
       });
     });
   });
@@ -1350,7 +1474,7 @@ function renderHistory(msgs, chatID) {
       var g = groups[k];
       var isActive = (k === _activeSessionKey);
       var kindLabel = g.kind === 'cloud' ? 'OFICIAL' : 'MULTI-DEVICE';
-      var phoneLabel = g.phone ? '+' + g.phone : 'sem n&uacute;mero';
+      var phoneLabel = g.phone ? '+' + g.phone : 'sem número';
       tabsHtml += '<button class="session-tab' + (isActive ? ' active' : '') + '" onclick="switchSessionTab(\'' + esc(k) + '\')">'
                 + '<span class="badge-kind ' + g.kind + '">' + kindLabel + '</span>'
                 + '<span>' + esc(phoneLabel) + '</span>'
@@ -1398,7 +1522,7 @@ function renderSessionMessages() {
   var body = document.getElementById('chat-body');
   var group = _msgsBySession[_activeSessionKey];
   if (!group || !group.msgs.length) {
-    body.innerHTML = '<div class="chat-placeholder"><p>Nenhuma mensagem neste v&iacute;nculo</p></div>';
+    body.innerHTML = '<div class="chat-placeholder"><p>Nenhuma mensagem neste vínculo</p></div>';
     return;
   }
   var html = '', lastDay = '';
@@ -1604,7 +1728,7 @@ BX24.init(function() {
     var u = res.data() || {};
     var userID = String(u.ID || '');
     if (!userID || !domain) {
-      showDenied('N&atilde;o foi poss&iacute;vel identificar o usu&aacute;rio.');
+      showDenied('Não foi possível identificar o usuário.');
       return;
     }
     fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID))
@@ -1616,11 +1740,11 @@ BX24.init(function() {
             '<iframe src="' + _baseUrl + '/bitrix/crm/tab?menu=1&domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
         } else {
           showDenied(data.configured
-            ? 'Seu usu&aacute;rio n&atilde;o tem permiss&atilde;o para acessar o UC Talk. Pe&ccedil;a a um administrador da UC Technology para liberar seu acesso.'
-            : 'O acesso ao UC Talk ainda n&atilde;o foi configurado neste portal. Entre em contato com a UC Technology.');
+            ? 'Seu usuário não tem permissão para acessar o UC Talk. Peça a um administrador da UC Technology para liberar seu acesso.'
+            : 'O acesso ao UC Talk ainda não foi configurado neste portal. Entre em contato com a UC Technology.');
         }
       })
-      .catch(function(err) { showDenied('Erro ao verificar permiss&otilde;es: ' + err.message); });
+      .catch(function(err) { showDenied('Erro ao verificar permissões: ' + err.message); });
   });
 });
 

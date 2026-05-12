@@ -82,6 +82,11 @@ func New(
 	ui.Post("/bitrix/queues/link", h.uiLinkQueue)       // Cria vínculo portal+sessão+fila
 	ui.Delete("/bitrix/queues/link", h.uiUnlinkQueue)   // Remove vínculo
 	ui.Post("/bitrix/queues/activate", h.uiActivateConnector) // Força register+activate
+	// ─── Permissões CRM (sem auth admin — uso interno do dashboard) ──────
+	ui.Get("/permissions/list", h.uiPermissionsList)
+	ui.Get("/permissions/user-info", h.uiPermissionsUserInfo)
+	ui.Post("/permissions/grant", h.uiPermissionsGrant)
+	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))

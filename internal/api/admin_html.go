@@ -27,7 +27,7 @@ const adminLoginHTML = `<!doctype html>
   <p class="desc">UC Talk — visualizar todos os portais Bitrix24 que instalaram o app.</p>
   <!--ERR-->
   <div class="field">
-    <label for="user">Usu&aacute;rio</label>
+    <label for="user">Usuário</label>
     <input type="text" id="user" name="user" autocomplete="username" required autofocus>
   </div>
   <div class="field">
@@ -168,9 +168,9 @@ const adminHomeHTML = `<!doctype html>
   <div id="tab-tenants" class="tab-content active">
     <div class="summary" id="summary"></div>
     <div class="toolbar">
-      <input type="text" id="search" placeholder="Buscar dom&iacute;nio...">
+      <input type="text" id="search" placeholder="Buscar domínio...">
       <button id="filterAll">Todos</button>
-      <button id="filterIssues">S&oacute; com problemas</button>
+      <button id="filterIssues">Só com problemas</button>
     </div>
     <div id="grid" class="grid">
       <div class="loading">Carregando...</div>
@@ -178,13 +178,13 @@ const adminHomeHTML = `<!doctype html>
   </div>
 
   <div id="tab-stress" class="tab-content">
-    <p style="color:#64748b;margin-top:0;">Dispara N POSTs concorrentes em <code>/bitrix/connector/event</code> simulando o evento <code>ONIMCONNECTORMESSAGEADD</code>. Bate no pr&oacute;prio processo (loopback).</p>
+    <p style="color:#64748b;margin-top:0;">Dispara N POSTs concorrentes em <code>/bitrix/connector/event</code> simulando o evento <code>ONIMCONNECTORMESSAGEADD</code>. Bate no próprio processo (loopback).</p>
     <form id="stressForm">
       <fieldset>
         <legend>Carga</legend>
         <div class="row2">
           <div>
-            <label for="s-concurrent">Conversas simult&acirc;neas</label>
+            <label for="s-concurrent">Conversas simultâneas</label>
             <input type="number" id="s-concurrent" value="50" min="1" max="500">
             <div class="hint">Cada conversa = um chat_id distinto. Max 500.</div>
           </div>
@@ -212,15 +212,15 @@ const adminHomeHTML = `<!doctype html>
   <div id="permModal" class="modal-overlay" onclick="if(event.target===this)closePermissionsModal()">
     <div class="modal-box">
       <div class="modal-hdr">
-        <h2>Permiss&otilde;es CRM &mdash; <span id="permDomainLabel"></span></h2>
+        <h2>Permissões CRM &mdash; <span id="permDomainLabel"></span></h2>
         <button class="close" onclick="closePermissionsModal()">&times;</button>
       </div>
       <div class="modal-body">
         <div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:0.8em 1em;margin-bottom:1em">
-          <div style="font-size:0.85em;color:#334155;margin-bottom:0.5em;font-weight:600">Liberar novo usu&aacute;rio</div>
+          <div style="font-size:0.85em;color:#334155;margin-bottom:0.5em;font-weight:600">Liberar novo usuário</div>
           <div style="display:flex;gap:0.5em;align-items:flex-end;flex-wrap:wrap">
             <div style="flex:1;min-width:120px">
-              <label style="font-size:0.78em;color:#64748b;display:block;margin-bottom:0.2em">ID do usu&aacute;rio Bitrix</label>
+              <label style="font-size:0.78em;color:#64748b;display:block;margin-bottom:0.2em">ID do usuário Bitrix</label>
               <input type="number" id="permNewUserID" placeholder="Ex: 12" style="width:100%;padding:0.45em 0.7em;border:1px solid #cbd5e1;border-radius:5px;font-size:0.9em;font-family:inherit">
             </div>
             <button id="permLookupBtn" onclick="lookupPermUser()" style="padding:0.5em 1em;background:#475569;color:white;border:0;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;font-family:inherit">Buscar info</button>
@@ -230,26 +230,26 @@ const adminHomeHTML = `<!doctype html>
             <button id="permGrantBtn" onclick="grantPermUser()" style="padding:0.5em 1em;background:#16a34a;color:white;border:0;border-radius:5px;cursor:pointer;font-size:0.85em;font-weight:600;font-family:inherit">&check; Liberar acesso</button>
           </div>
           <div style="font-size:0.78em;color:#94a3b8;margin-top:0.6em">
-            Para encontrar o ID, acesse o perfil do usu&aacute;rio no Bitrix24. A URL ser&aacute; <code>/company/personal/user/<b>ID</b>/</code>.
+            Para encontrar o ID, acesse o perfil do usuário no Bitrix24. A URL será <code>/company/personal/user/<b>ID</b>/</code>.
           </div>
         </div>
-        <div style="font-size:0.85em;color:#334155;font-weight:600;margin-bottom:0.5em">Usu&aacute;rios liberados</div>
+        <div style="font-size:0.85em;color:#334155;font-weight:600;margin-bottom:0.5em">Usuários liberados</div>
         <div id="permList" class="perm-list"><div class="loading">Carregando...</div></div>
       </div>
       <div class="modal-footer">
         <span id="permStatus">&mdash;</span>
-        <span style="color:#94a3b8">Lista vazia = ningu&eacute;m tem acesso.</span>
+        <span style="color:#94a3b8">Lista vazia = ninguém tem acesso.</span>
       </div>
     </div>
   </div>
 
   <div id="tab-debug" class="tab-content">
-    <p style="color:#64748b;margin-top:0;">Dump diagn&oacute;stico das tabelas-chave (contagens + amostras). Use para identificar quando o painel mostra zeros e voc&ecirc; n&atilde;o sabe onde est&aacute; quebrando.</p>
+    <p style="color:#64748b;margin-top:0;">Dump diagnóstico das tabelas-chave (contagens + amostras). Use para identificar quando o painel mostra zeros e você não sabe onde está quebrando.</p>
     <div style="display:flex;gap:0.5em;flex-wrap:wrap;margin-bottom:1em;">
       <button id="reloadDebug" style="padding:0.5em 1em;background:white;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;">Recarregar</button>
-      <button id="cleanBanned" style="padding:0.5em 1em;background:#fef3c7;border:1px solid #fde68a;border-radius:5px;cursor:pointer;color:#92400e;">Limpar sess&otilde;es banned</button>
+      <button id="cleanBanned" style="padding:0.5em 1em;background:#fef3c7;border:1px solid #fde68a;border-radius:5px;cursor:pointer;color:#92400e;">Limpar sessões banned</button>
       <button id="cleanPlaceholders" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar portais placeholder</button>
-      <button id="cleanSessionFiles" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar arquivos de sess&atilde;o (.db)</button>
+      <button id="cleanSessionFiles" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar arquivos de sessão (.db)</button>
       <button id="cleanLegacyMsgs" style="padding:0.5em 1em;background:#fee2e2;border:1px solid #fecaca;border-radius:5px;cursor:pointer;color:#991b1b;">Limpar msgs legacy</button>
     </div>
     <pre class="json" id="debugOut">Carregando...</pre>
@@ -289,7 +289,7 @@ function renderSummary() {
   document.getElementById('totalBadge').textContent = total + ' portais';
   document.getElementById('summary').innerHTML = [
     box('Portais', total),
-    box('Conex&otilde;es WA', totalConn),
+    box('Conexões WA', totalConn),
     box('Msgs (24h)', totalMsgs24h.toLocaleString('pt-BR')),
     box('Tokens c/ problema', (expired + expiring), expired > 0 ? 'err' : (expiring > 0 ? 'warn' : '')),
   ].join('');
@@ -318,17 +318,17 @@ function cardHTML(t) {
   const conns = [];
   if (t.connections_qr > 0) conns.push('<span class="pill qr">' + t.connections_qr + ' Multi-Device</span>');
   if (t.connections_cloud > 0) conns.push('<span class="pill cloud">' + t.connections_cloud + ' Oficial</span>');
-  if (conns.length === 0) conns.push('<span class="pill none">Sem conex&atilde;o</span>');
+  if (conns.length === 0) conns.push('<span class="pill none">Sem conexão</span>');
 
   const installed = new Date(t.installed_at).toLocaleDateString('pt-BR');
-  const tokenLabel = t.token_status === 'valid' ? 'Token v&aacute;lido' : (t.token_status === 'expiring' ? 'Token expirando' : 'Token expirado');
+  const tokenLabel = t.token_status === 'valid' ? 'Token válido' : (t.token_status === 'expiring' ? 'Token expirando' : 'Token expirado');
 
   const domainAttr = encodeURIComponent(t.domain);
   return '' +
     '<div class="card ' + cls + '" data-domain="' + escapeHTML(t.domain) + '">' +
-      '<button class="card-menu-btn" onclick="toggleCardMenu(event, this)" title="A&ccedil;&otilde;es">&#8942;</button>' +
+      '<button class="card-menu-btn" onclick="toggleCardMenu(event, this)" title="Ações">&#8942;</button>' +
       '<div class="card-menu">' +
-        '<button onclick="openPermissionsModal(\'' + domainAttr + '\')">Gerenciar permiss&otilde;es CRM</button>' +
+        '<button onclick="openPermissionsModal(\'' + domainAttr + '\')">Gerenciar permissões CRM</button>' +
         '<div class="divider"></div>' +
         '<button onclick="tenantAction(\'legacy-messages\',\'' + domainAttr + '\', this)">Limpar msgs legacy</button>' +
         '<button class="danger" onclick="tenantAction(\'session-files\',\'' + domainAttr + '\', this)">Limpar arquivos .db (QR)</button>' +
@@ -473,13 +473,13 @@ document.getElementById('stressForm').addEventListener('submit', async (e) => {
   const result = document.getElementById('stressResult');
   const sv = sel.value;
   if (!sv || !sv.includes('|')) {
-    result.innerHTML = '<p class="err-c"><strong>Selecione um conector v&aacute;lido.</strong></p>';
+    result.innerHTML = '<p class="err-c"><strong>Selecione um conector válido.</strong></p>';
     return;
   }
   const [connector, lineStr] = sv.split('|');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Rodando...';
-  result.innerHTML = '<p style="color:#64748b">Disparando requisi&ccedil;&otilde;es... aguarde.</p>';
+  result.innerHTML = '<p style="color:#64748b">Disparando requisições... aguarde.</p>';
 
   const body = {
     concurrent: parseInt(document.getElementById('s-concurrent').value, 10),
@@ -526,7 +526,7 @@ function renderStressResult(d) {
   html += '</div>';
 
   if (d.latency_ms) {
-    html += '<h4>Lat&ecirc;ncia</h4>';
+    html += '<h4>Latência</h4>';
     html += '<table class="latency-table">';
     html += '<tr><th>min</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>';
     html += '<tr>';
@@ -633,7 +633,7 @@ async function loadPermGranted() {
     }
     _permGranted = data.users || [];
     renderPermGrantedList();
-    document.getElementById('permStatus').textContent = _permGranted.length + ' usu&aacute;rio(s) liberado(s)';
+    document.getElementById('permStatus').textContent = _permGranted.length + ' usuário(s) liberado(s)';
   } catch (e) {
     document.getElementById('permList').innerHTML = '<div class="empty">Erro de rede: ' + escapeHTML(e.message) + '</div>';
   }
@@ -641,7 +641,7 @@ async function loadPermGranted() {
 
 function renderPermGrantedList() {
   if (_permGranted.length === 0) {
-    document.getElementById('permList').innerHTML = '<div class="empty" style="text-align:center;padding:1.5em;color:#94a3b8;font-size:0.9em">Nenhum usu&aacute;rio liberado ainda</div>';
+    document.getElementById('permList').innerHTML = '<div class="empty" style="text-align:center;padding:1.5em;color:#94a3b8;font-size:0.9em">Nenhum usuário liberado ainda</div>';
     return;
   }
   document.getElementById('permList').innerHTML = _permGranted.map(u => {
@@ -660,12 +660,12 @@ function renderPermGrantedList() {
 async function lookupPermUser() {
   const userID = (document.getElementById('permNewUserID').value || '').trim();
   if (!userID || !/^\d+$/.test(userID)) {
-    alert('Informe um ID num&eacute;rico v&aacute;lido');
+    alert('Informe um ID numérico válido');
     return;
   }
   // Verifica se ja esta liberado
   if (_permGranted.find(u => u.id === userID)) {
-    alert('Usu&aacute;rio ' + userID + ' j&aacute; est&aacute; liberado');
+    alert('Usuário ' + userID + ' já está liberado');
     return;
   }
   const btn = document.getElementById('permLookupBtn');
@@ -685,7 +685,7 @@ async function lookupPermUser() {
       + '<div style="font-weight:600;font-size:1em;margin-bottom:0.2em">' + escapeHTML(data.name) + ' <span style="color:#94a3b8;font-weight:400;font-size:0.85em">#' + data.id + '</span></div>'
       + (data.email ? '<div style="font-size:0.82em;color:#64748b">' + escapeHTML(data.email) + '</div>' : '')
       + (data.position ? '<div style="font-size:0.78em;color:#94a3b8">' + escapeHTML(data.position) + '</div>' : '')
-      + (data.active === false ? '<div style="font-size:0.78em;color:#dc2626;margin-top:0.3em">&#9888; Usu&aacute;rio inativo no Bitrix</div>' : '');
+      + (data.active === false ? '<div style="font-size:0.78em;color:#dc2626;margin-top:0.3em">&#9888; Usuário inativo no Bitrix</div>' : '');
     document.getElementById('permPreviewBody').innerHTML = html;
     document.getElementById('permPreview').style.display = 'block';
   } catch (e) {
@@ -724,7 +724,7 @@ async function grantPermUser() {
 }
 
 async function revokePermUser(userID, btn) {
-  if (!confirm('Remover acesso do usu&aacute;rio #' + userID + '?')) return;
+  if (!confirm('Remover acesso do usuário #' + userID + '?')) return;
   btn.disabled = true;
   try {
     const r = await fetch('/admin/api/tenant/permissions?domain=' + encodeURIComponent(_permDomain), {
