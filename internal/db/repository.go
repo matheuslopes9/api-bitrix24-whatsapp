@@ -1156,13 +1156,15 @@ func (r *Repository) UpsertBitrixPortal(ctx context.Context, p *BitrixPortal) er
 func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID string) (*BitrixPortal, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
-		       connector_id, open_line_id, installed_at, updated_at
+		       connector_id, open_line_id, installed_at, updated_at,
+		       COALESCE(legacy_admin_user_id, '')
 		FROM bitrix_portals WHERE member_id = $1
 		ORDER BY installed_at DESC LIMIT 1`, memberID)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
-		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt)
+		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
+		&p.LegacyAdminUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -1182,23 +1184,73 @@ func (r *Repository) UpdateBitrixPortalDomain(ctx context.Context, memberID, new
 func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string) (*BitrixPortal, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
-		       connector_id, open_line_id, installed_at, updated_at
+		       connector_id, open_line_id, installed_at, updated_at,
+		       COALESCE(legacy_admin_user_id, '')
 		FROM bitrix_portals WHERE domain = $1`, domain)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
-		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt)
+		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
+		&p.LegacyAdminUserID)
 	if err != nil {
 		return nil, err
 	}
 	return &p, nil
 }
 
+// SetMasterUser define quem e' o "master user" do tenant. Politica:
+//   - Se ja existe master (legacy_admin_user_id <> ''), so pode trocar se
+//     callerUserID == master atual. Caso contrario retorna ErrNotMaster.
+//   - Se nao existe, qualquer caller pode set (onboarding inicial).
+//   - Ao salvar o master, grant wildcard automatico em crm_user_permissions
+//     pra ele (session_jid='') — eh quem pode liberar outros.
+func (r *Repository) SetMasterUser(ctx context.Context, domain, callerUserID, newMasterUserID, newMasterName string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var current string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(legacy_admin_user_id, '') FROM bitrix_portals WHERE domain = $1`,
+		domain).Scan(&current); err != nil {
+		return fmt.Errorf("portal lookup: %w", err)
+	}
+	if current != "" && current != callerUserID {
+		return ErrNotMaster
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE bitrix_portals SET legacy_admin_user_id = $1, updated_at = NOW() WHERE domain = $2`,
+		newMasterUserID, domain); err != nil {
+		return err
+	}
+	// Garantir wildcard pro novo master (libera tudo). Idempotente.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, session_jid, granted_by)
+		VALUES (gen_random_uuid(), $1, $2, $3, '', 'master-onboarding')
+		ON CONFLICT (domain, user_id, session_jid) DO UPDATE SET user_name = EXCLUDED.user_name`,
+		domain, newMasterUserID, newMasterName); err != nil {
+		return err
+	}
+	// Se houve troca de master, revogar wildcard do antigo (mantem grants
+	// especificos se ele tinha). Politica simples: ex-master vira user normal.
+	if current != "" && current != newMasterUserID {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM crm_user_permissions WHERE domain = $1 AND user_id = $2 AND session_jid = ''`,
+			domain, current); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // ListBitrixPortals retorna todos os portais instalados.
 func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
-		       connector_id, open_line_id, installed_at, updated_at
+		       connector_id, open_line_id, installed_at, updated_at,
+		       COALESCE(legacy_admin_user_id, '')
 		FROM bitrix_portals ORDER BY installed_at DESC`)
 	if err != nil {
 		return nil, err
@@ -1209,7 +1261,8 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 	for rows.Next() {
 		var p BitrixPortal
 		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
-			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt); err != nil {
+			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
+			&p.LegacyAdminUserID); err != nil {
 			return nil, err
 		}
 		portals = append(portals, &p)
@@ -1409,6 +1462,10 @@ func (r *Repository) DeleteLegacyMessagesByDomain(ctx context.Context, domain st
 
 // CrmUserPermission representa um usuário Bitrix24 liberado para acessar o CRM tab
 // de um dominio especifico.
+// ErrNotMaster: caller tentou setar master mas nao e o master atual.
+// Tratado pelos handlers como 403.
+var ErrNotMaster = fmt.Errorf("not_master")
+
 // CrmUserPermission representa "user X pode usar session Y no portal Z"
 // (model novo). session_jid vazio = wildcard legacy (compatibilidade com
 // linhas pre-migration 018, equivale a "qualquer sessao do dominio").

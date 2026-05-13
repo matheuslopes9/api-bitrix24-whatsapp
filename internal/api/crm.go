@@ -243,9 +243,10 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	var req struct {
-		UserID     string `json:"user_id"`
-		UserName   string `json:"user_name"`
-		SessionJID string `json:"session_jid"`
+		UserID       string `json:"user_id"`
+		UserName     string `json:"user_name"`
+		SessionJID   string `json:"session_jid"`
+		CallerUserID string `json:"caller_user_id"` // quem esta executando a acao (precisa ser master)
 	}
 	if err := c.BodyParser(&req); err != nil || req.UserID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "user_id obrigatorio"})
@@ -253,7 +254,23 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 	if req.SessionJID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "session_jid obrigatorio"})
 	}
+	if req.CallerUserID == "" {
+		return c.Status(403).JSON(fiber.Map{"error": "caller_user_id obrigatorio — apenas o master pode alterar permissoes"})
+	}
 	key := strings.ToLower(domain)
+
+	// Guard: so o master atual do tenant pode mexer em permissoes.
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	if portal.LegacyAdminUserID == "" {
+		return c.Status(409).JSON(fiber.Map{"error": "master nao configurado — execute o onboarding primeiro"})
+	}
+	if portal.LegacyAdminUserID != req.CallerUserID {
+		return c.Status(403).JSON(fiber.Map{"error": "apenas o usuario master pode alterar permissoes"})
+	}
+
 	if grant {
 		if err := h.repo.GrantSessionPermission(ctx, key, req.UserID, req.UserName, req.SessionJID, "dashboard"); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -520,6 +537,111 @@ func (h *handlers) bitrixCRMCheckAccess(c *fiber.Ctx) error {
 		"allowed":    allowed,
 		"configured": true,
 	})
+}
+
+// GET /bitrix/crm/master/status?domain=... — retorna info do master atual
+// para a UI decidir entre "tela de onboarding", "voce e o master" ou
+// "outro user e o master". Cliente decide o que renderizar.
+func (h *handlers) bitrixCRMMasterStatus(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	out := fiber.Map{
+		"configured":    portal.LegacyAdminUserID != "",
+		"master_user_id": portal.LegacyAdminUserID,
+	}
+	// Se ja tem master, anexa o nome (snapshot) pra UI mostrar
+	if portal.LegacyAdminUserID != "" {
+		perms, _ := h.repo.ListCrmPermissionsByDomain(c.Context(),
+			normalizePortalDomain(domain))
+		for _, p := range perms {
+			if p.UserID == portal.LegacyAdminUserID {
+				out["master_user_name"] = p.UserName
+				break
+			}
+		}
+	}
+	return c.JSON(out)
+}
+
+// POST /bitrix/crm/master/set — body {domain, caller_user_id, new_master_user_id, new_master_name}
+//   - Se nao tem master ainda: qualquer interno ativo pode setar (onboarding).
+//   - Se tem master: so o master atual pode trocar (caller_user_id == master).
+// Em ambos os casos: validamos que caller e new_master sao internos ativos.
+func (h *handlers) bitrixCRMMasterSet(c *fiber.Ctx) error {
+	var body struct {
+		Domain          string `json:"domain"`
+		CallerUserID    string `json:"caller_user_id"`
+		NewMasterUserID string `json:"new_master_user_id"`
+		NewMasterName   string `json:"new_master_name"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	if body.Domain == "" || body.CallerUserID == "" || body.NewMasterUserID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain, caller_user_id e new_master_user_id obrigatorios"})
+	}
+	ctx := c.Context()
+	domainKey := normalizePortalDomain(body.Domain)
+
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, domainKey)
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+
+	// Valida caller + new_master sao internos ativos no Bitrix
+	ids := []string{body.CallerUserID}
+	if body.NewMasterUserID != body.CallerUserID {
+		ids = append(ids, body.NewMasterUserID)
+	}
+	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, ids)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "lookup user Bitrix falhou: " + err.Error()})
+	}
+	isInternalActive := func(id string) (bool, string) {
+		for _, u := range users {
+			if u.ID == id {
+				if u.Active && !u.Extranet && !u.Bot {
+					full := strings.TrimSpace(u.Name + " " + u.LastName)
+					if full == "" {
+						full = "User #" + u.ID
+					}
+					return true, full
+				}
+				return false, ""
+			}
+		}
+		return false, ""
+	}
+	if ok, _ := isInternalActive(body.CallerUserID); !ok {
+		return c.Status(403).JSON(fiber.Map{"error": "caller nao e um colaborador interno ativo"})
+	}
+	newOK, newName := isInternalActive(body.NewMasterUserID)
+	if !newOK {
+		return c.Status(400).JSON(fiber.Map{"error": "novo master precisa ser um colaborador interno ativo"})
+	}
+	if body.NewMasterName == "" {
+		body.NewMasterName = newName
+	}
+
+	if err := h.repo.SetMasterUser(ctx, domainKey, body.CallerUserID, body.NewMasterUserID, body.NewMasterName); err != nil {
+		if err == db.ErrNotMaster {
+			return c.Status(403).JSON(fiber.Map{"error": "apenas o usuario master atual pode transferir o controle"})
+		}
+		h.log.Error("crm master set failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("crm master set",
+		zap.String("domain", domainKey),
+		zap.String("caller", body.CallerUserID),
+		zap.String("new_master", body.NewMasterUserID))
+	return c.JSON(fiber.Map{"ok": true, "master_user_id": body.NewMasterUserID, "master_user_name": body.NewMasterName})
 }
 
 // GET /bitrix/crm/allowed-sessions?domain=...&user_id=...
@@ -1697,15 +1819,25 @@ function init() {
       var allowedUrl = _baseUrl + '/bitrix/crm/allowed-sessions'
         + '?domain=' + encodeURIComponent(_domain)
         + '&user_id=' + encodeURIComponent(userID);
+      var masterUrl = _baseUrl + '/bitrix/crm/master/status'
+        + '?domain=' + encodeURIComponent(_domain);
 
       Promise.all([
         fetch(checkUrl).then(function(r){ return r.json(); }),
         fetch(allowedUrl).then(function(r){ return r.json(); }),
+        fetch(masterUrl).then(function(r){ return r.json(); }),
       ]).then(function(arr) {
         var access = arr[0] || {};
         var allowed = arr[1] || {};
+        var master = arr[2] || {};
         if (!access.allowed) {
           showAccessDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
+          return;
+        }
+        // Master nao configurado: bloqueia UI e mostra onboarding pra
+        // QUALQUER interno ativo. Cliente decide quem vai ser o master.
+        if (!master.configured) {
+          showMasterOnboarding(userID, name);
           return;
         }
         var list = allowed.sessions || [];
@@ -1719,6 +1851,144 @@ function init() {
       });
     });
   });
+}
+
+// Tela de onboarding: cliente escolhe o "usuario master" do tenant.
+// Esse usuario sera o unico que pode liberar permissoes pros outros
+// e transferir o controle. Decisao importante — texto deixa claro.
+function showMasterOnboarding(callerUserID, callerName) {
+  var html = ''
+    + '<div style="min-height:100vh;background:#0f172a;color:#e2e8f0;font-family:-apple-system,system-ui,sans-serif;padding:32px 16px;display:flex;align-items:center;justify-content:center;">'
+    +   '<div style="max-width:560px;width:100%;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:28px;">'
+    +     '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">'
+    +       '<div style="width:42px;height:42px;border-radius:50%;background:rgba(37,211,102,.15);color:#25D366;display:flex;align-items:center;justify-content:center;">'
+    +         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+    +       '</div>'
+    +       '<div>'
+    +         '<h2 style="margin:0;font-size:18px;font-weight:700;">Configuração inicial</h2>'
+    +         '<div style="font-size:12px;color:#94a3b8;margin-top:2px;">Escolha o usuário master deste portal</div>'
+    +       '</div>'
+    +     '</div>'
+    +     '<div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:12.5px;color:#fcd34d;line-height:1.6;">'
+    +       '<strong>⚠ Atenção:</strong> apenas o usuário master poderá liberar acesso aos números para os outros operadores. '
+    +       'Ele também é o único que pode <strong>transferir o controle</strong> (em caso de troca de responsável). '
+    +       'Escolha com cuidado.'
+    +     '</div>'
+    +     '<div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Quem será o master?</div>'
+    +     '<input type="text" id="mo-search" placeholder="Filtrar por nome ou e-mail..." style="width:100%;padding:10px 12px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:8px;color:#e2e8f0;font-size:13px;margin-bottom:10px;outline:none;" oninput="filtrarOnboarding()">'
+    +     '<div id="mo-list" style="max-height:340px;overflow-y:auto;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(0,0,0,.18);">'
+    +       '<div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix...</div>'
+    +     '</div>'
+    +     '<div id="mo-status" style="margin-top:14px;font-size:11.5px;color:#475569;text-align:center;"></div>'
+    +   '</div>'
+    + '</div>';
+  document.body.innerHTML = html;
+  // _userID/_domain ja' setados no init. Caller default = quem abriu.
+  _userID = callerUserID;
+  carregarOnboardingUsers();
+}
+
+var _moUsers = [];
+
+function carregarOnboardingUsers() {
+  fetch(_baseUrl + '/ui/permissions/all-users?domain=' + encodeURIComponent(_domain))
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (d.error) {
+        document.getElementById('mo-list').innerHTML =
+          '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + esc(d.error) + '</div>';
+        return;
+      }
+      _moUsers = (d.users || []).filter(function(u){ return u.active !== false; });
+      renderOnboardingList();
+    })
+    .catch(function(err){
+      document.getElementById('mo-list').innerHTML =
+        '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + esc(err.message) + '</div>';
+    });
+}
+
+function filtrarOnboarding() { renderOnboardingList(); }
+
+function renderOnboardingList() {
+  var box = document.getElementById('mo-list');
+  var q = (document.getElementById('mo-search').value || '').trim().toLowerCase();
+  var list = _moUsers;
+  if (q) {
+    list = list.filter(function(u){
+      return (u.name||'').toLowerCase().indexOf(q) !== -1
+          || (u.email||'').toLowerCase().indexOf(q) !== -1
+          || String(u.id).indexOf(q) !== -1;
+    });
+  }
+  if (!list.length) {
+    box.innerHTML = '<div style="padding:18px;color:#475569;font-size:12px;text-align:center;">Nenhum usuário interno ativo encontrado.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i];
+    var ini = (u.name||'?')[0].toUpperCase();
+    // data-idx + delegation evita problemas de escape em onclick inline
+    // quando o nome do usuario tem apostrofo ou caractere especial.
+    html += '<div class="mo-row" data-idx="' + i + '" '
+         +  'style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s;" '
+         +  'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" '
+         +  'onmouseout="this.style.background=\'transparent\'">'
+         +    '<div style="width:30px;height:30px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + esc(ini) + '</div>'
+         +    '<div style="flex:1;min-width:0;">'
+         +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">' + esc(u.name||('User #'+u.id)) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + esc(u.id) + '</span></div>'
+         +      (u.email ? '<div style="font-size:11px;color:#64748b;">' + esc(u.email) + '</div>' : '')
+         +    '</div>'
+         +  '</div>';
+  }
+  box.innerHTML = html;
+  // Bind via delegation
+  var rows = box.querySelectorAll('.mo-row');
+  for (var k = 0; k < rows.length; k++) {
+    (function(row){
+      row.addEventListener('click', function(){
+        var idx = parseInt(row.dataset.idx, 10);
+        if (isNaN(idx) || !_moUsers[idx]) return;
+        // _moUsers pode ter sido filtrado — uso lista atual aqui
+        var u = list[idx];
+        if (!u) return;
+        confirmarMaster(u.id, u.name||('User #'+u.id));
+      });
+    })(rows[k]);
+  }
+}
+
+function confirmarMaster(userID, userName) {
+  if (!confirm('Confirma definir "' + userName + '" como usuário master?\n\nApenas ele poderá liberar permissões e transferir o controle no futuro.')) return;
+  var status = document.getElementById('mo-status');
+  status.textContent = 'Salvando...';
+  status.style.color = '#94a3b8';
+  fetch(_baseUrl + '/bitrix/crm/master/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      domain: _domain,
+      caller_user_id: _userID,
+      new_master_user_id: userID,
+      new_master_name: userName,
+    }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      if (!res.ok) {
+        status.textContent = 'Erro: ' + (res.data.error || 'falha');
+        status.style.color = '#f87171';
+        return;
+      }
+      status.textContent = '✓ Master configurado. Recarregando...';
+      status.style.color = '#25D366';
+      setTimeout(function(){ window.location.reload(); }, 800);
+    })
+    .catch(function(err){
+      status.textContent = 'Erro de rede: ' + err.message;
+      status.style.color = '#f87171';
+    });
 }
 
 // Substitui a UI inteira por pagina amigavel de acesso negado.

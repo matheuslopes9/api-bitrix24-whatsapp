@@ -156,6 +156,8 @@ func New(
 	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
 	bx.Get("/crm/check-access", h.bitrixCRMCheckAccess)
 	bx.Get("/crm/allowed-sessions", h.bitrixCRMAllowedSessions)
+	bx.Get("/crm/master/status", h.bitrixCRMMasterStatus)
+	bx.Post("/crm/master/set", h.bitrixCRMMasterSet)
 
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))

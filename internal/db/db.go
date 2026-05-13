@@ -206,6 +206,17 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
+		{"019_master_user", `
+			-- "Master user" por tenant: o usuario Bitrix que controla quem pode
+			-- usar quais numeros. Escolhido pelo proprio cliente na primeira
+			-- abertura do app (tela de onboarding). So o master atual pode
+			-- transferir o controle para outro usuario.
+			--
+			-- Vazio = onboarding pendente. Backend bloqueia grant/revoke ate
+			-- alguem ser escolhido. UI mostra tela de "Escolha o usuario master".
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS legacy_admin_user_id TEXT NOT NULL DEFAULT '';
+		`},
 		{"018_session_permissions", `
 			-- Mudanca de modelo: ate aqui crm_user_permissions controlava QUEM
 			-- acessava o CRM tab. Novo comportamento: CRM tab e aberto pra todo

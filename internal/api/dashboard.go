@@ -724,17 +724,59 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
 
     <!-- Info box -->
-    <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
       <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
-        Todo colaborador interno ativo já enxerga o <strong style="color:#cbd5e1;">UC Talk</strong> no CRM. Esta tela controla apenas <strong style="color:#cbd5e1;">quais números</strong> cada um pode usar para enviar mensagens. Sem nenhum número liberado, o operador vê histórico mas não envia. Clique nos chips abaixo para liberar/revogar por número.
+        Todo colaborador interno ativo já enxerga o <strong style="color:#cbd5e1;">UC Talk</strong> no CRM. Esta tela controla apenas <strong style="color:#cbd5e1;">quais números</strong> cada um pode usar para enviar mensagens. Sem nenhum número liberado, o operador vê histórico mas não envia.
       </div>
+    </div>
+
+    <!-- Bloco do master -->
+    <div id="perm-master-card" class="card" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:240px;">
+        <div style="width:34px;height:34px;border-radius:50%;background:rgba(251,191,36,.15);color:#fbbf24;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 15 8l6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1z"/></svg>
+        </div>
+        <div style="min-width:0;">
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Usuário Master</div>
+          <div id="perm-master-name" style="font-size:13.5px;color:#e2e8f0;font-weight:600;">—</div>
+          <div id="perm-master-hint" style="font-size:11px;color:#64748b;margin-top:2px;">Apenas o master pode alterar permissões e transferir o controle.</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="perm-transfer-btn" onclick="abrirModalTransferirMaster()" style="font-size:12px;display:none;">↪ Transferir controle</button>
+    </div>
+
+    <!-- "Atuar como" — modo super-admin: digite o user_id do master pra desbloquear chips -->
+    <div class="card" style="padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="font-size:11.5px;color:#94a3b8;">Atuar como master (user_id):</span>
+      <input type="text" id="perm-caller-input" class="inp" placeholder="Cole o user_id do master pra editar" style="flex:1;min-width:180px;max-width:240px;font-size:12px;" oninput="onPermCallerChange()">
+      <span id="perm-caller-status" style="font-size:11px;color:#64748b;">read-only</span>
     </div>
 
     <!-- Filtro -->
     <div class="card" style="padding:14px 18px;margin-bottom:14px;">
       <input type="text" id="perm-search-input" class="inp" placeholder="Filtrar usuários por nome ou email..." style="width:100%;" oninput="renderPermUsers()">
       <div id="perm-status" style="margin-top:8px;font-size:11.5px;color:#64748b;">—</div>
+    </div>
+
+    <!-- Modal: transferir controle -->
+    <div id="perm-transfer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Transferir controle</div>
+          <button onclick="fecharModalTransferirMaster()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+        </div>
+        <div style="padding:20px;">
+          <div style="background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:12.5px;color:#fca5a5;line-height:1.6;">
+            <strong>⚠</strong> Após transferir, o master atual perde a permissão wildcard e <strong>não poderá mais alterar permissões</strong>. Só desfaz se o novo master autorizar.
+          </div>
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Novo master</div>
+          <input type="text" id="perm-transfer-search" class="inp" placeholder="Filtrar..." style="width:100%;margin-bottom:8px;font-size:12.5px;" oninput="renderTransferirList()">
+          <div id="perm-transfer-list" style="max-height:260px;overflow-y:auto;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(0,0,0,.18);">
+            <div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Selecione um usuário...</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Lista de usuários x sessões -->
@@ -2200,6 +2242,8 @@ function excluirIntegracao(enc) {
 var _permUsers = [];         // [{id, name, email, position, active, allowed_sessions:[jid,...]}]
 var _permSessions = [];      // sessões do portal disponíveis [{jid, phone, type, status, label}]
 var _permLoading = {};       // {userJidKey: true} — evita double-click
+var _permMaster = {configured:false, master_user_id:'', master_user_name:''};
+var _permCaller = '';        // user_id que estou "atuando como" (precisa == master pra editar)
 
 function _permEsc(s) {
   if (s == null) return '';
@@ -2218,16 +2262,27 @@ function carregarPermissoes(forceRefresh) {
   var usersUrl = apiUrl('/ui/permissions/all-users');
   if (forceRefresh) usersUrl += (usersUrl.indexOf('?') !== -1 ? '&' : '?') + 'refresh=1';
 
+  // Pra master/status precisamos do dominio explicito.
+  var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
+
+  var masterPromise = domain
+    ? fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); })
+    : Promise.resolve({configured:false, _no_domain:true});
+
   Promise.all([
     fetch(usersUrl).then(function(r){ return r.json(); }),
     fetch(apiUrl('/ui/history/sessions')).then(function(r){ return r.json(); }),
+    masterPromise,
   ]).then(function(arr) {
     var u = arr[0] || {};
     var s = arr[1] || {};
+    var m = arr[2] || {};
     if (u.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(u.error) + '</div>'; return; }
     if (s.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(s.error) + '</div>'; return; }
     _permUsers = u.users || [];
     _permSessions = s.sessions || [];
+    _permMaster = m || {configured:false};
+    renderMasterCard();
     renderPermUsers();
     if (forceRefresh) toast('Lista atualizada', 'success');
   }).catch(function(err){
@@ -2235,6 +2290,46 @@ function carregarPermissoes(forceRefresh) {
   }).then(function(){
     if (btn) { btn.disabled = false; btn.innerHTML = '↻ Atualizar'; }
   });
+}
+
+function renderMasterCard() {
+  var nameEl = document.getElementById('perm-master-name');
+  var hintEl = document.getElementById('perm-master-hint');
+  var btnEl = document.getElementById('perm-transfer-btn');
+  if (_permMaster._no_domain) {
+    nameEl.textContent = 'Selecione um portal';
+    hintEl.textContent = 'Use ?portal=dominio.bitrix24.com na URL para escolher o tenant.';
+    btnEl.style.display = 'none';
+    return;
+  }
+  if (!_permMaster.configured) {
+    nameEl.textContent = 'Não configurado';
+    nameEl.style.color = '#fbbf24';
+    hintEl.textContent = 'Onboarding pendente. O cliente precisa abrir o UC Talk no Bitrix24 e escolher o master.';
+    btnEl.style.display = 'none';
+    return;
+  }
+  var label = _permMaster.master_user_name || ('User #' + _permMaster.master_user_id);
+  nameEl.innerHTML = _permEsc(label) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(_permMaster.master_user_id) + '</span>';
+  nameEl.style.color = '#e2e8f0';
+  hintEl.textContent = 'Apenas o master pode alterar permissões e transferir o controle.';
+  btnEl.style.display = '';
+}
+
+function onPermCallerChange() {
+  _permCaller = (document.getElementById('perm-caller-input').value || '').trim();
+  var s = document.getElementById('perm-caller-status');
+  if (!_permCaller) {
+    s.textContent = 'read-only';
+    s.style.color = '#64748b';
+  } else if (_permMaster.configured && _permCaller === _permMaster.master_user_id) {
+    s.textContent = '✓ atuando como master';
+    s.style.color = '#25D366';
+  } else {
+    s.textContent = 'esse user_id não é o master — chips bloqueados';
+    s.style.color = '#fbbf24';
+  }
+  renderPermUsers();
 }
 
 function renderPermUsers() {
@@ -2267,6 +2362,7 @@ function renderPermUsers() {
     return;
   }
 
+  var canEdit = permCanEdit();
   var html = '';
   for (var i = 0; i < filtered.length; i++) {
     var u = filtered[i];
@@ -2274,6 +2370,7 @@ function renderPermUsers() {
     var allowedSet = {};
     (u.allowed_sessions||[]).forEach(function(jid){ allowedSet[jid] = true; });
     var hasWildcard = !!allowedSet['']; // grant legacy = libera tudo
+    var isMasterRow = _permMaster.configured && u.id === _permMaster.master_user_id;
 
     // Chips de sessões — verde se liberado, cinza se não
     var chips = '';
@@ -2287,16 +2384,24 @@ function renderPermUsers() {
       var tipo = s.type === 'cloud_api' ? ' Cloud' : ' QR';
       var statusMark = s.status === 'active' ? '' : ' ·';
       var lbl = '+' + (s.phone || s.jid) + tipo + statusMark;
+      var clickAttr = (canEdit && !isMasterRow)
+        ? 'onclick="permToggle(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\', \'' + _permEsc(s.jid) + '\', ' + (on?'true':'false') + ')"'
+        : '';
+      var cursor = (canEdit && !isMasterRow) ? 'pointer' : 'not-allowed';
+      var opacity = (canEdit && !isMasterRow) ? '1' : '.55';
       chips += '<button class="perm-chip" data-user="' + _permEsc(u.id) + '" data-jid="' + _permEsc(s.jid) + '" data-on="' + (on?'1':'0') + '" '
-            +  'onclick="permToggle(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\', \'' + _permEsc(s.jid) + '\', ' + (on?'true':'false') + ')" '
-            +  'style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:' + bg + ';color:' + fg + ';border:' + border + ';font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;margin:3px;">'
+            +  clickAttr + ' '
+            +  'style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:' + bg + ';color:' + fg + ';border:' + border + ';font-size:11.5px;font-weight:600;cursor:' + cursor + ';transition:all .15s;margin:3px;opacity:' + opacity + ';">'
             +    '<span style="font-weight:700;">' + ico + '</span> ' + _permEsc(lbl)
             +  '</button>';
     }
 
-    var wildcardBadge = hasWildcard
-      ? '<div style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.12);padding:2px 8px;border-radius:8px;font-weight:700;margin-top:4px;display:inline-block;">LEGACY: TODOS NÚMEROS</div>'
-      : '';
+    var wildcardBadge = '';
+    if (isMasterRow) {
+      wildcardBadge = '<div style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.14);padding:2px 8px;border-radius:8px;font-weight:700;margin-top:4px;display:inline-block;">★ MASTER · TODOS NÚMEROS</div>';
+    } else if (hasWildcard) {
+      wildcardBadge = '<div style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.12);padding:2px 8px;border-radius:8px;font-weight:700;margin-top:4px;display:inline-block;">LEGACY: TODOS NÚMEROS</div>';
+    }
 
     html += '<div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.04);">'
          +    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
@@ -2313,7 +2418,15 @@ function renderPermUsers() {
   box.innerHTML = html;
 }
 
+function permCanEdit() {
+  return _permMaster.configured && _permCaller && _permCaller === _permMaster.master_user_id;
+}
+
 function permToggle(userID, userName, sessionJID, isOn) {
+  if (!permCanEdit()) {
+    toast('Preencha "Atuar como master" com o user_id do master atual pra editar.', 'error');
+    return;
+  }
   var key = userID + '|' + sessionJID;
   if (_permLoading[key]) return;
   _permLoading[key] = true;
@@ -2321,7 +2434,12 @@ function permToggle(userID, userName, sessionJID, isOn) {
   fetch(apiUrl(endpoint), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ user_id: userID, user_name: userName, session_jid: sessionJID }),
+    body: JSON.stringify({
+      user_id: userID,
+      user_name: userName,
+      session_jid: sessionJID,
+      caller_user_id: _permCaller,
+    }),
   })
     .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
     .then(function(res){
@@ -2337,6 +2455,80 @@ function permToggle(userID, userName, sessionJID, isOn) {
     })
     .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); })
     .then(function(){ delete _permLoading[key]; });
+}
+
+// Modal de transferir controle
+function abrirModalTransferirMaster() {
+  if (!_permMaster.configured) return;
+  document.getElementById('perm-transfer-modal').style.display = 'flex';
+  document.getElementById('perm-transfer-search').value = '';
+  renderTransferirList();
+}
+function fecharModalTransferirMaster() {
+  document.getElementById('perm-transfer-modal').style.display = 'none';
+}
+function renderTransferirList() {
+  var box = document.getElementById('perm-transfer-list');
+  var q = (document.getElementById('perm-transfer-search').value || '').trim().toLowerCase();
+  var current = _permMaster.master_user_id;
+  var list = _permUsers.filter(function(u){ return u.id !== current; });
+  if (q) {
+    list = list.filter(function(u){
+      return (u.name||'').toLowerCase().indexOf(q) !== -1
+          || (u.email||'').toLowerCase().indexOf(q) !== -1
+          || String(u.id).indexOf(q) !== -1;
+    });
+  }
+  if (!list.length) {
+    box.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Nenhum usuário encontrado.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i];
+    var ini = (u.name||'?')[0].toUpperCase();
+    html += '<div onclick="confirmarTransferir(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\')" '
+         +  'style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s;" '
+         +  'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" '
+         +  'onmouseout="this.style.background=\'transparent\'">'
+         +    '<div style="width:28px;height:28px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + _permEsc(ini) + '</div>'
+         +    '<div style="flex:1;min-width:0;">'
+         +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">' + _permEsc(u.name||('User #'+u.id)) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(u.id) + '</span></div>'
+         +      (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + '</div>' : '')
+         +    '</div>'
+         +  '</div>';
+  }
+  box.innerHTML = html;
+}
+function confirmarTransferir(userID, userName) {
+  if (!permCanEdit()) {
+    toast('Preencha "Atuar como master" com o user_id do master atual pra transferir.', 'error');
+    return;
+  }
+  if (!confirm('Transferir controle para "' + userName + '"?\n\nO master atual perde a permissão wildcard e não poderá mais alterar permissões.')) return;
+  var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
+  fetch(_baseUrl + '/bitrix/crm/master/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      domain: domain,
+      caller_user_id: _permCaller,
+      new_master_user_id: userID,
+      new_master_name: userName,
+    }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
+      toast('Controle transferido pra ' + userName, 'success');
+      fecharModalTransferirMaster();
+      // Limpa caller (o antigo master ja nao pode mais)
+      document.getElementById('perm-caller-input').value = '';
+      _permCaller = '';
+      onPermCallerChange();
+      carregarPermissoes(false);
+    })
+    .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
 }
 
 // ─── Templates de Mensagem ──────────────────────────────────────────────────

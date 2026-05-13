@@ -146,4 +146,8 @@ type BitrixPortal struct {
 	OpenLineID   int       `db:"open_line_id"` // 0 = não configurado
 	InstalledAt  time.Time `db:"installed_at"`
 	UpdatedAt    time.Time `db:"updated_at"`
+	// LegacyAdminUserID: user_id Bitrix de quem instalou o app. Esse usuario
+	// recebe permission wildcard automatica no install e e o unico que pode
+	// gerenciar permissoes dos outros. Troca via /admin/api/legacy-requests.
+	LegacyAdminUserID string `db:"legacy_admin_user_id"`
 }
