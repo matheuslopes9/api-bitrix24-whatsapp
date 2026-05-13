@@ -1061,13 +1061,19 @@ func (c *Client) AddLeadComment(ctx context.Context, creds TenantCreds, leadID i
 
 // BitrixUser representa um usuario do portal Bitrix24 (resultado de user.get).
 type BitrixUser struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
-	Active    bool   `json:"active"`
-	IsAdmin   bool   `json:"is_admin"`
-	Position  string `json:"position"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	LastName string `json:"last_name"`
+	Email    string `json:"email"`
+	Active   bool   `json:"active"`
+	IsAdmin  bool   `json:"is_admin"`
+	Position string `json:"position"`
+	// Extranet: usuario externo (parceiro/cliente convidado). Nao deve aparecer
+	// nas permissoes de atendimento — so colaboradores internos.
+	Extranet bool `json:"extranet"`
+	// Bot: usuarios sinteticos (bots de chat, integracoes). Tambem nao
+	// devem aparecer no painel de permissoes.
+	Bot bool `json:"bot"`
 }
 
 // ListAllUsers tenta listar TODOS os usuarios ativos do portal iterando IDs
@@ -1131,15 +1137,20 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 			if u.ID == "" || seen[u.ID] {
 				continue
 			}
+			// So colaboradores INTERNOS ATIVOS aparecem no painel de permissoes:
+			// - !Active: usuario demitido/desativado, nao deve operar atendimento.
+			// - Extranet: convidados externos (parceiros, clientes), nao sao
+			//   atendentes — Bitrix mistura na mesma lista mas separa pelo flag.
+			// - Bot: usuarios sinteticos (chatbots, integracoes do proprio Bitrix).
+			if !u.Active || u.Extranet || u.Bot {
+				continue
+			}
 			seen[u.ID] = true
 			all = append(all, u)
 		}
 	}
-	// Ordena por nome (Active primeiro)
+	// Ordena por nome
 	sort.SliceStable(all, func(i, j int) bool {
-		if all[i].Active != all[j].Active {
-			return all[i].Active && !all[j].Active
-		}
 		ni := strings.ToLower(all[i].Name + " " + all[i].LastName)
 		nj := strings.ToLower(all[j].Name + " " + all[j].LastName)
 		return ni < nj
@@ -1213,6 +1224,9 @@ func (c *Client) GetUserByIDs(ctx context.Context, creds TenantCreds, userIDs []
 		} else {
 			u.Active = true
 		}
+		// extranet / bot — vem como bool no im.user.list.get
+		u.Extranet = boolField(r, "extranet")
+		u.Bot = boolField(r, "bot")
 		// O 'name' completo (se o backend ja juntou) pode estar em 'name'
 		if u.Name == "" && u.LastName == "" {
 			full := stringField(r, "name")
@@ -1221,6 +1235,24 @@ func (c *Client) GetUserByIDs(ctx context.Context, creds TenantCreds, userIDs []
 		out = append(out, u)
 	}
 	return out, nil
+}
+
+// boolField extrai bool de um campo que pode vir como bool, "Y"/"N" ou
+// "true"/"false". Vazio/ausente => false.
+func boolField(m map[string]interface{}, key string) bool {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return strings.EqualFold(x, "Y") || strings.EqualFold(x, "true") || x == "1"
+	case float64:
+		return x != 0
+	}
+	return false
 }
 
 func stringField(m map[string]interface{}, key string) string {
