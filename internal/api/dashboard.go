@@ -2287,27 +2287,34 @@ function carregarPermissoes(forceRefresh) {
   var usersUrl = apiUrl('/ui/permissions/all-users');
   if (forceRefresh) usersUrl += (usersUrl.indexOf('?') !== -1 ? '&' : '?') + 'refresh=1';
 
-  // Pra master/status precisamos do dominio explicito.
+  // master/status — fetch independente e RAPIDO. Renderiza assim que chega
+  // pra que o card do master + botao "Configurar" apareca sem esperar a
+  // lista do Bitrix (que pode demorar 5-10s na 1a vez).
   var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
+  if (domain) {
+    fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain))
+      .then(function(r){ return r.json(); })
+      .then(function(m){ _permMaster = m || {configured:false}; renderMasterCard(); })
+      .catch(function(){
+        _permMaster = {configured:false, _error:true};
+        renderMasterCard();
+      });
+  } else {
+    _permMaster = {configured:false, _no_domain:true};
+    renderMasterCard();
+  }
 
-  var masterPromise = domain
-    ? fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); })
-    : Promise.resolve({configured:false, _no_domain:true});
-
+  // Sessoes + users em paralelo (so afetam a lista de baixo).
   Promise.all([
     fetch(usersUrl).then(function(r){ return r.json(); }),
     fetch(apiUrl('/ui/history/sessions')).then(function(r){ return r.json(); }),
-    masterPromise,
   ]).then(function(arr) {
     var u = arr[0] || {};
     var s = arr[1] || {};
-    var m = arr[2] || {};
-    if (u.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(u.error) + '</div>'; return; }
-    if (s.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(s.error) + '</div>'; return; }
+    if (u.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro ao carregar usuários: ' + _permEsc(u.error) + '</div>'; return; }
+    if (s.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro ao carregar sessões: ' + _permEsc(s.error) + '</div>'; return; }
     _permUsers = u.users || [];
     _permSessions = s.sessions || [];
-    _permMaster = m || {configured:false};
-    renderMasterCard();
     renderPermUsers();
     if (forceRefresh) toast('Lista atualizada', 'success');
   }).catch(function(err){
@@ -2326,6 +2333,15 @@ function renderMasterCard() {
   if (_permMaster._no_domain) {
     nameEl.textContent = 'Selecione um portal';
     hintEl.textContent = 'Use ?portal=dominio.bitrix24.com na URL para escolher o tenant.';
+    setupBtn.style.display = 'none';
+    transferBtn.style.display = 'none';
+    callerCard.style.display = 'none';
+    return;
+  }
+  if (_permMaster._error) {
+    nameEl.textContent = 'Erro ao carregar status';
+    nameEl.style.color = '#f87171';
+    hintEl.textContent = 'Não conseguimos consultar o backend. Verifique sua conexão e clique em "↻ Atualizar".';
     setupBtn.style.display = 'none';
     transferBtn.style.display = 'none';
     callerCard.style.display = 'none';
@@ -2362,6 +2378,27 @@ function renderMasterCard() {
 function abrirModalEscolherMaster() {
   document.getElementById('perm-setup-modal').style.display = 'flex';
   document.getElementById('perm-setup-search').value = '';
+  // Se a lista de users nao chegou, carrega agora sob demanda.
+  if (!_permUsers.length) {
+    document.getElementById('perm-setup-list').innerHTML =
+      '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix... (pode levar alguns segundos na 1ª vez)</div>';
+    fetch(apiUrl('/ui/permissions/all-users'))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.error) {
+          document.getElementById('perm-setup-list').innerHTML =
+            '<div style="padding:18px;text-align:center;color:#f87171;font-size:12px;">Erro: ' + _permEsc(d.error) + '</div>';
+          return;
+        }
+        _permUsers = d.users || [];
+        renderSetupList();
+      })
+      .catch(function(err){
+        document.getElementById('perm-setup-list').innerHTML =
+          '<div style="padding:18px;text-align:center;color:#f87171;font-size:12px;">Erro de rede: ' + _permEsc(err.message) + '</div>';
+      });
+    return;
+  }
   renderSetupList();
 }
 function fecharModalEscolherMaster() {
