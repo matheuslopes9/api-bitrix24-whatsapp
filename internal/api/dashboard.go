@@ -739,7 +739,7 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
 
     <!-- Lista de usuários x sessões -->
     <div class="card" style="padding:0;overflow:hidden;">
-      <div id="perm-user-list">
+      <div id="perm-user-list" style="max-height:460px;overflow-y:auto;">
         <div style="padding:30px;text-align:center;color:#475569;font-size:13px;">Carregando usuários do Bitrix...</div>
       </div>
     </div>
