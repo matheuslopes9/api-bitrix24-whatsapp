@@ -88,6 +88,11 @@ func New(
 	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
 	ui.Post("/permissions/grant", h.uiPermissionsGrant)
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
+	// ─── Templates de mensagem ──────────────────────────────────────────
+	ui.Get("/templates/list", h.uiTemplatesList)
+	ui.Post("/templates/create", h.uiTemplatesCreate)
+	ui.Post("/templates/update", h.uiTemplatesUpdate)
+	ui.Post("/templates/delete", h.uiTemplatesDelete)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))

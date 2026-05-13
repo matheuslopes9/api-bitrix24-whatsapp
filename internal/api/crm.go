@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
@@ -237,6 +238,105 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 	h.log.Info("ui: revoked CRM access",
 		zap.String("domain", key), zap.String("user_id", req.UserID))
 	return c.JSON(fiber.Map{"ok": true, "action": "revoked", "removed": removed})
+}
+
+// ─── Templates de mensagem (quick replies) ─────────────────────────────────
+
+// GET /ui/templates/list — lista templates do dominio atual.
+func (h *handlers) uiTemplatesList(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	tpls, err := h.repo.ListMessageTemplates(ctx, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"templates": tpls, "total": len(tpls), "domain": domain})
+}
+
+// POST /ui/templates/create — body {title, body, created_by}
+func (h *handlers) uiTemplatesCreate(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	var req struct {
+		Title     string `json:"title"`
+		Body      string `json:"body"`
+		CreatedBy string `json:"created_by"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Title == "" || req.Body == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "title e body obrigatorios"})
+	}
+	id, err := h.repo.CreateMessageTemplate(ctx, domain, req.Title, req.Body, req.CreatedBy)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"id": id.String()})
+}
+
+// POST /ui/templates/update?id=... — body {title, body}
+func (h *handlers) uiTemplatesUpdate(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	idStr := c.Query("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "id invalido"})
+	}
+	var req struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	req.Body = strings.TrimSpace(req.Body)
+	if req.Title == "" || req.Body == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "title e body obrigatorios"})
+	}
+	ok, err := h.repo.UpdateMessageTemplate(ctx, id, domain, req.Title, req.Body)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(404).JSON(fiber.Map{"error": "template nao encontrado"})
+	}
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+// POST /ui/templates/delete?id=...
+func (h *handlers) uiTemplatesDelete(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	idStr := c.Query("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "id invalido"})
+	}
+	ok, err := h.repo.DeleteMessageTemplate(ctx, id, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(404).JSON(fiber.Map{"error": "template nao encontrado"})
+	}
+	return c.JSON(fiber.Map{"ok": true})
 }
 
 // GET /bitrix/crm/check-access?domain=...&user_id=...
@@ -516,8 +616,10 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e entity_id são obrigatórios"})
 	}
 
-	limit := 80
-	if l := c.QueryInt("limit", 80); l > 0 && l <= 200 {
+	// Default 200, max 1000. Conversas longas precisam de cap maior — antes
+	// limitava a 200 e usuario via historico cortado.
+	limit := 200
+	if l := c.QueryInt("limit", 200); l > 0 && l <= 1000 {
 		limit = l
 	}
 
@@ -1231,8 +1333,21 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-      <div class="composer-row">
+      <!-- Popup de templates (aparece acima do compositor) -->
+      <div id="tpl-popup" style="display:none;position:absolute;bottom:64px;left:14px;right:14px;background:#0f172a;border:1px solid #334155;border-radius:10px;box-shadow:0 -8px 24px rgba(0,0,0,.5);max-height:260px;overflow-y:auto;z-index:20;">
+        <div style="padding:8px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,.06);">
+          <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;">Templates</div>
+          <button onclick="fecharTplPopup()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:14px;">✕</button>
+        </div>
+        <div id="tpl-popup-list">
+          <div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>
+        </div>
+      </div>
+      <div class="composer-row" style="position:relative;">
         <input type="file" id="file-input" style="display:none" onchange="onFileSelected(this)">
+        <button class="btn-attach" id="btn-tpl" onclick="abrirTplPopup()" title="Templates de mensagem" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+        </button>
         <button class="btn-attach" id="btn-attach" onclick="document.getElementById('file-input').click()" title="Anexar arquivo" disabled>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
         </button>
@@ -1470,6 +1585,7 @@ function openChat(name, phone) {
   document.getElementById('msg-input').disabled  = false;
   document.getElementById('btn-send').disabled   = false;
   document.getElementById('btn-attach').disabled = false;
+  document.getElementById('btn-tpl').disabled    = false;
   hideAlert();
   loadHistory();
   // marca conversa ativa na sidebar
@@ -1487,7 +1603,7 @@ function loadHistory() {
   var url = _baseUrl + '/bitrix/crm/history?domain=' + enc(_domain)
           + '&entity_type=' + _entityType + '&entity_id=' + _entityId
           + '&phone=' + enc(_contactPhone)
-          + '&limit=80';
+          + '&limit=500';
   fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(d) { renderHistory(d.messages || [], d.chat_id || ''); })
@@ -1736,6 +1852,7 @@ function uploadFile() {
 function setBtnLoading(on) {
   document.getElementById('btn-send').disabled   = on;
   document.getElementById('btn-attach').disabled = on;
+  document.getElementById('btn-tpl').disabled    = on;
 }
 
 function appendOptimistic(text, filename) {
@@ -1770,6 +1887,90 @@ function mediaLabel(t){
   var l={image:'Imagem',video:'Vídeo',audio:'Áudio',document:'Documento',sticker:'Sticker'};
   return l[t]||'Arquivo';
 }
+
+// ── Templates (quick replies) ────────────────────────────────────────────
+var _templates = null;
+var _tplCacheTime = 0;
+
+function abrirTplPopup() {
+  var pop = document.getElementById('tpl-popup');
+  if (!pop) return;
+  pop.style.display = 'block';
+  // cache 60s — evita refetch a cada abertura
+  if (_templates && (Date.now() - _tplCacheTime) < 60000) {
+    renderTemplates(_templates);
+  } else {
+    carregarTemplates();
+  }
+}
+
+function fecharTplPopup() {
+  var pop = document.getElementById('tpl-popup');
+  if (pop) pop.style.display = 'none';
+}
+
+function carregarTemplates() {
+  var list = document.getElementById('tpl-popup-list');
+  list.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>';
+  var url = _baseUrl + '/ui/templates/list?domain=' + enc(_domain);
+  fetch(url, {credentials:'include'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var items = (d && (d.templates || d.items)) || [];
+      _templates = items;
+      _tplCacheTime = Date.now();
+      renderTemplates(items);
+    })
+    .catch(function(e){
+      list.innerHTML = '<div style="padding:18px;text-align:center;color:#ef4444;font-size:12px;">Erro: ' + esc(String(e)) + '</div>';
+    });
+}
+
+function renderTemplates(items) {
+  var list = document.getElementById('tpl-popup-list');
+  if (!items || !items.length) {
+    list.innerHTML = '<div style="padding:18px;text-align:center;color:#64748b;font-size:12px;line-height:1.5;">Nenhum template cadastrado.<br><span style="color:#475569;font-size:11px;">Crie no painel admin (/dashboard).</span></div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < items.length; i++) {
+    var t = items[i];
+    var preview = (t.body || '').replace(/\n/g, ' ').slice(0, 70);
+    if ((t.body || '').length > 70) preview += '...';
+    // dataset para passar body sem escape issues
+    html += '<div class="tpl-item" data-idx="' + i + '" style="padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s;" '
+         +  'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" '
+         +  'onmouseout="this.style.background=\'transparent\'" '
+         +  'onclick="inserirTemplateByIdx(' + i + ')">'
+         +    '<div style="font-size:12px;font-weight:600;color:#e2e8f0;margin-bottom:2px;">' + esc(t.title || '(sem título)') + '</div>'
+         +    '<div style="font-size:11px;color:#64748b;line-height:1.4;">' + esc(preview) + '</div>'
+         +  '</div>';
+  }
+  list.innerHTML = html;
+}
+
+function inserirTemplateByIdx(idx) {
+  if (!_templates || !_templates[idx]) return;
+  var t = _templates[idx];
+  var input = document.getElementById('msg-input');
+  var cur = input.value || '';
+  // se ja tem texto, adiciona com \n antes; senao substitui
+  input.value = cur ? (cur + (cur.endsWith('\n') ? '' : '\n') + t.body) : t.body;
+  autoResize(input);
+  input.focus();
+  // posiciona cursor no fim
+  try { input.setSelectionRange(input.value.length, input.value.length); } catch(e){}
+  fecharTplPopup();
+}
+
+// Fecha popup ao clicar fora
+document.addEventListener('click', function(e){
+  var pop = document.getElementById('tpl-popup');
+  var btn = document.getElementById('btn-tpl');
+  if (!pop || pop.style.display === 'none') return;
+  if (pop.contains(e.target) || (btn && btn.contains(e.target))) return;
+  fecharTplPopup();
+});
 
 init();
 </script>

@@ -362,6 +362,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
     Permissões
   </div>
+  <div class="nav-item" id="nav-templates" onclick="showPage('templates')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+    Templates
+  </div>
   <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
@@ -740,6 +744,62 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
       <div id="perm-list" style="padding:8px;">
         <div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ TEMPLATES DE MENSAGEM ══════════════════════ -->
+  <div id="page-templates" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Templates de Mensagem</div>
+        <div class="section-sub">Quick replies que aparecem para os atendentes no compositor do CRM</div>
+      </div>
+      <button class="btn btn-primary" onclick="abrirModalTemplate()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Novo Template
+      </button>
+    </div>
+
+    <!-- Info box -->
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+      <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
+        Templates aparecem na aba <strong style="color:#cbd5e1;">UC Talk</strong> dentro do CRM, no botão de templates ao lado do anexo. Atendente clica e o texto cai direto no compositor. <br>
+        <span style="color:#475569;">Use para saudações, respostas frequentes, condições comerciais — qualquer texto repetido vira clique.</span>
+      </div>
+    </div>
+
+    <!-- Lista -->
+    <div class="card" style="padding:0;">
+      <div style="padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Templates cadastrados</div>
+        <span style="font-size:11px;color:#64748b;" id="tpl-status">—</span>
+      </div>
+      <div id="tpl-list" style="padding:8px;">
+        <div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Template -->
+  <div id="modal-tpl" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+      <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:14px;font-weight:600;color:#e2e8f0;" id="modal-tpl-titulo">Novo Template</div>
+        <button onclick="fecharModalTemplate()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+      </div>
+      <div style="padding:20px;">
+        <input type="hidden" id="tpl-edit-id" value="">
+        <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Título</div>
+        <input type="text" id="tpl-title-input" class="inp" placeholder="Ex: Saudação inicial" style="width:100%;margin-bottom:14px;" maxlength="120">
+        <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem</div>
+        <textarea id="tpl-body-input" class="inp" placeholder="Digite o texto da mensagem... Pode ter várias linhas." rows="6" style="width:100%;resize:vertical;min-height:120px;font-family:inherit;"></textarea>
+        <div style="font-size:11px;color:#475569;margin-top:6px;">Tip: use \n com Shift+Enter para quebrar linha. Emojis 😀 funcionam.</div>
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:flex-end;gap:8px;">
+        <button class="btn btn-ghost" onclick="fecharModalTemplate()" style="color:#94a3b8;">Cancelar</button>
+        <button class="btn btn-primary" id="tpl-save-btn" onclick="salvarTemplate()">Salvar</button>
       </div>
     </div>
   </div>
@@ -1160,7 +1220,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', relatorios: 'Relatórios' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', relatorios: 'Relatórios' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -1175,6 +1235,7 @@ function showPage(nome) {
   if (nome === 'sessoes') carregarSessoes();
   if (nome === 'filas') carregarFilas();
   if (nome === 'permissoes') carregarPermissoes();
+  if (nome === 'templates') carregarTemplatesDashboard();
 }
 
 function openSidebar() {
@@ -2291,6 +2352,142 @@ function permRevoke(userID, btn) {
       carregarPermissoes();
     })
     .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); btn.disabled = false; });
+}
+
+// ─── Templates de Mensagem ──────────────────────────────────────────────────
+var _tplCache = [];
+
+function _tplEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function carregarTemplatesDashboard() {
+  var box = document.getElementById('tpl-list');
+  box.innerHTML = '<div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>';
+  fetch(apiUrl('/ui/templates/list'))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) {
+        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro: ' + ((d && d.error) || 'falha') + '</div>';
+        return;
+      }
+      _tplCache = d.templates || d.items || [];
+      renderTplList();
+      document.getElementById('tpl-status').textContent = _tplCache.length + ' template(s)';
+    })
+    .catch(function(err){
+      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro de rede: ' + err.message + '</div>';
+    });
+}
+
+function renderTplList() {
+  var box = document.getElementById('tpl-list');
+  if (!_tplCache.length) {
+    box.innerHTML = '<div style="padding:30px 18px;text-align:center;color:#475569;font-size:13px;line-height:1.6;">Nenhum template cadastrado ainda.<br><span style="color:#334155;font-size:12px;">Clique em <strong>Novo Template</strong> acima para criar o primeiro.</span></div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < _tplCache.length; i++) {
+    var t = _tplCache[i];
+    var preview = (t.body || '').replace(/\n/g, ' ').slice(0, 140);
+    if ((t.body || '').length > 140) preview += '...';
+    html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:13px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
+         +   '<div style="flex:1;min-width:0;">'
+         +     '<div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:3px;">' + _tplEsc(t.title || '(sem título)') + '</div>'
+         +     '<div style="font-size:12px;color:#64748b;line-height:1.5;">' + _tplEsc(preview) + '</div>'
+         +   '</div>'
+         +   '<div style="display:flex;gap:6px;flex-shrink:0;">'
+         +     '<button class="btn btn-ghost btn-sm" onclick="abrirModalTemplate(\'' + t.id + '\')" style="font-size:11px;color:#94a3b8;">Editar</button>'
+         +     '<button class="btn btn-ghost btn-sm" onclick="deletarTemplate(\'' + t.id + '\')" style="font-size:11px;color:#f87171;">Excluir</button>'
+         +   '</div>'
+         + '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function abrirModalTemplate(id) {
+  var modal = document.getElementById('modal-tpl');
+  modal.style.display = 'flex';
+  if (id) {
+    var t = _tplCache.find(function(x){ return x.id === id; });
+    if (!t) { fecharModalTemplate(); return; }
+    document.getElementById('modal-tpl-titulo').textContent = 'Editar Template';
+    document.getElementById('tpl-edit-id').value = id;
+    document.getElementById('tpl-title-input').value = t.title || '';
+    document.getElementById('tpl-body-input').value = t.body || '';
+  } else {
+    document.getElementById('modal-tpl-titulo').textContent = 'Novo Template';
+    document.getElementById('tpl-edit-id').value = '';
+    document.getElementById('tpl-title-input').value = '';
+    document.getElementById('tpl-body-input').value = '';
+  }
+  setTimeout(function(){ document.getElementById('tpl-title-input').focus(); }, 50);
+}
+
+function fecharModalTemplate() {
+  document.getElementById('modal-tpl').style.display = 'none';
+}
+
+function salvarTemplate() {
+  var id = document.getElementById('tpl-edit-id').value;
+  var title = (document.getElementById('tpl-title-input').value || '').trim();
+  var body = (document.getElementById('tpl-body-input').value || '').trim();
+  if (!title) { toast('Título é obrigatório', 'error'); return; }
+  if (!body)  { toast('Mensagem é obrigatória', 'error'); return; }
+
+  var btn = document.getElementById('tpl-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  var url, payload;
+  if (id) {
+    var u = apiUrl('/ui/templates/update');
+    url = u + (u.indexOf('?') !== -1 ? '&' : '?') + 'id=' + encodeURIComponent(id);
+    payload = { title: title, body: body };
+  } else {
+    url = apiUrl('/ui/templates/create');
+    payload = { title: title, body: body, created_by: '' };
+  }
+
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      btn.disabled = false;
+      btn.textContent = 'Salvar';
+      if (!d || d.error) { toast(((d && d.error) || 'Falha'), 'error'); return; }
+      toast(id ? 'Template atualizado' : 'Template criado', 'success');
+      fecharModalTemplate();
+      carregarTemplatesDashboard();
+    })
+    .catch(function(err){
+      btn.disabled = false;
+      btn.textContent = 'Salvar';
+      toast('Erro de rede: ' + err.message, 'error');
+    });
+}
+
+function deletarTemplate(id) {
+  if (!confirm('Excluir este template?')) return;
+  var u = apiUrl('/ui/templates/delete');
+  var url = u + (u.indexOf('?') !== -1 ? '&' : '?') + 'id=' + encodeURIComponent(id);
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) { toast(((d && d.error) || 'Falha'), 'error'); return; }
+      toast('Template excluído', 'success');
+      carregarTemplatesDashboard();
+    })
+    .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
 }
 
 // ─── Filas Bitrix ─────────────────────────────────────────────────────────────

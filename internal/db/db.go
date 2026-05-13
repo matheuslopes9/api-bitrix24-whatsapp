@@ -174,6 +174,24 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_crm_user_permissions_domain ON crm_user_permissions (domain);
 		`},
+		{"016_message_templates", `
+			-- Templates / quick replies — mensagens pre-formatadas que o
+			-- atendente pode inserir no compositor com 1 clique.
+			--
+			-- Scope: por dominio (portal Bitrix). Nao distingue por usuario
+			-- (qualquer atendente liberado ve e usa). Se precisar de templates
+			-- privados por usuario, basta filtrar por user_id no futuro.
+			CREATE TABLE IF NOT EXISTS message_templates (
+				id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				domain      TEXT NOT NULL,
+				title       TEXT NOT NULL,         -- nome curto pra atendente identificar
+				body        TEXT NOT NULL,         -- texto da mensagem (pode ter \n)
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				created_by  TEXT NOT NULL DEFAULT '',  -- user_id Bitrix de quem criou
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
+		`},
 	}
 
 	for _, m := range migrations {
