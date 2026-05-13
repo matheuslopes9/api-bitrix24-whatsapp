@@ -1026,10 +1026,49 @@ func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
 	return c.JSON(stats)
 }
 
-// GET /bitrix/crm/sessions — lista sessões WA disponíveis (para o select do iframe)
+// GET /bitrix/crm/sessions?domain=... — lista sessões WA do tenant para o
+// seletor do CRM tab. Le do banco (status='active' + bitrix_accounts.domain)
+// para incluir Cloud API junto de QR — antes lia so de h.waManager que e
+// whatsmeow puro e ignorava Cloud, deixando tenants Cloud como "Desconectado".
+//
+// Sem ?domain= cai no comportamento antigo (so QR conectadas em memoria).
 func (h *handlers) bitrixCRMSessions(c *fiber.Ctx) error {
-	sessions := h.waManager.ListSessions()
-	return c.JSON(fiber.Map{"sessions": sessions, "count": len(sessions)})
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		sessions := h.waManager.ListSessions()
+		return c.JSON(fiber.Map{"sessions": sessions, "count": len(sessions)})
+	}
+
+	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalizePortalDomain(domain))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	out := make([]fiber.Map, 0, len(rows))
+	for _, s := range rows {
+		phone := s.Phone
+		if phone == "" {
+			phone = s.CloudDisplayPhone
+		}
+		if phone == "" {
+			// fallback final: extrai do JID (parte antes de @, strip "cloud:" e ":NN")
+			j := strings.TrimPrefix(s.JID, "cloud:")
+			if at := strings.IndexByte(j, '@'); at >= 0 {
+				j = j[:at]
+			}
+			if col := strings.IndexByte(j, ':'); col >= 0 {
+				j = j[:col]
+			}
+			phone = j
+		}
+		out = append(out, fiber.Map{
+			"jid":   s.JID,
+			"phone": phone,
+			"type":  s.Type,
+			"label": s.DisplayName,
+		})
+	}
+	return c.JSON(fiber.Map{"sessions": out, "count": len(out)})
 }
 
 // GET /bitrix/crm/lines?domain=... — lista Open Lines do portal
@@ -1469,10 +1508,16 @@ function initials(name) {
 
 // ── Sessões WhatsApp ──────────────────────────────────────────────────────
 function loadSessions() {
-  fetch(_baseUrl + '/bitrix/crm/sessions').then(r => r.json()).then(function(d) {
-    _sessions = (d.sessions || []).map(function(jid) {
-      var num = jid.split('@')[0];
-      return {jid: jid, phone: num};
+  var url = _baseUrl + '/bitrix/crm/sessions' + (_domain ? ('?domain=' + enc(_domain)) : '');
+  fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+    _sessions = (d.sessions || []).map(function(s) {
+      // Aceita tanto string (formato antigo) quanto objeto (novo com type/phone/label).
+      if (typeof s === 'string') {
+        var num = s.split('@')[0];
+        if (num.indexOf(':') !== -1) num = num.split(':')[0];
+        return {jid: s, phone: num, type: 'qr', label: ''};
+      }
+      return {jid: s.jid, phone: s.phone || '', type: s.type || 'qr', label: s.label || ''};
     });
     renderWADropdown();
   });
@@ -1491,7 +1536,11 @@ function renderWADropdown() {
   _sessions.forEach(function(s) {
     var el = document.createElement('div');
     el.className = 'wa-drop-item' + (s.jid === _activeSession ? ' active' : '');
-    el.innerHTML = '<div class="wa-dot"></div><div><div class="wa-drop-num">+' + s.phone + '</div><div class="wa-drop-jid">' + s.jid + '</div></div>';
+    var badge = s.type === 'cloud_api'
+      ? '<span style="font-size:9px;background:rgba(96,165,250,.18);color:#60a5fa;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:1px;">CLOUD</span>'
+      : '';
+    var sub = s.label || s.jid;
+    el.innerHTML = '<div class="wa-dot"></div><div><div class="wa-drop-num">+' + s.phone + badge + '</div><div class="wa-drop-jid">' + sub + '</div></div>';
     el.onclick = function(e) { e.stopPropagation(); selectSession(s.jid); };
     dd.appendChild(el);
   });
@@ -1501,7 +1550,9 @@ function renderWADropdown() {
 function selectSession(jid) {
   _activeSession = jid;
   var s = _sessions.find(function(x){ return x.jid === jid; });
-  document.getElementById('wa-sel-label').textContent = s ? ('+' + s.phone) : jid;
+  var lbl = s ? ('+' + s.phone + (s.type === 'cloud_api' ? ' (Cloud)' : '')) : jid;
+  document.getElementById('wa-sel-label').textContent = lbl;
+  document.getElementById('wa-selector').style.borderColor = '';
   document.getElementById('wa-dropdown').classList.remove('open');
   // re-render checkmarks
   var items = document.querySelectorAll('.wa-drop-item');

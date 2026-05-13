@@ -125,6 +125,33 @@ func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession
 	return sessions, nil
 }
 
+// ListActiveSessionsByDomain retorna sessões ativas (qr + cloud) vinculadas
+// ao domain via bitrix_accounts. Usada pelo CRM tab para o seletor de sessoes
+// — antes ListSessions() do manager so devolvia whatsmeow, deixando tenants
+// Cloud sempre como "Desconectado".
+func (r *Repository) ListActiveSessionsByDomain(ctx context.Context, domain string) ([]*WhatsAppSession, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+sessionColumns+`
+		  FROM whatsapp_sessions ws
+		 WHERE ws.status = 'active'
+		   AND ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)
+		 ORDER BY ws.last_seen DESC`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*WhatsAppSession
+	for rows.Next() {
+		var s WhatsAppSession
+		if err := scanSession(rows, &s); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, &s)
+	}
+	return sessions, nil
+}
+
 // ListAllSessions retorna todas as sessões (ativas e desconectadas), exceto banidas.
 // Usada pelo watchdog para tentar reconectar sessões que caíram.
 func (r *Repository) ListAllSessions(ctx context.Context) ([]WhatsAppSession, error) {
