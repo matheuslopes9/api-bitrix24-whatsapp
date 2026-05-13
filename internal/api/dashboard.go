@@ -2622,8 +2622,9 @@ function carregarHistoricoSessoes() {
       var opts = '<option value="">— escolha uma sessão —</option>';
       for (var i = 0; i < _histSessions.length; i++) {
         var s = _histSessions[i];
-        var tipo = s.type === 'cloud_api' ? ' (Cloud)' : '';
-        var lbl = '+' + (s.phone || s.jid) + tipo;
+        var tipo = s.type === 'cloud_api' ? ' (Cloud)' : ' (QR)';
+        var statusTxt = s.status === 'active' ? '' : ' [desconectada]';
+        var lbl = '+' + (s.phone || s.jid) + tipo + statusTxt;
         opts += '<option value="' + _histEsc(s.jid) + '">' + _histEsc(lbl) + '</option>';
       }
       sel.innerHTML = opts;
@@ -2631,6 +2632,13 @@ function carregarHistoricoSessoes() {
       if (_histSessions.length === 1) {
         sel.value = _histSessions[0].jid;
         onHistSessionChange();
+      } else {
+        // Se tem multiplas, pre-seleciona a primeira ATIVA (sao ordenadas: ativas primeiro)
+        var firstActive = _histSessions.find(function(x){ return x.status === 'active'; });
+        if (firstActive) {
+          sel.value = firstActive.jid;
+          onHistSessionChange();
+        }
       }
     })
     .catch(function(err){

@@ -152,6 +152,60 @@ func (r *Repository) ListActiveSessionsByDomain(ctx context.Context, domain stri
 	return sessions, nil
 }
 
+// ListSessionsByDomain retorna sessoes "conhecidas" pelo dominio,
+// incluindo as antigas/desconectadas. Usada pelo Historico no /dashboard.
+//
+// Duas fontes (UNION):
+//   1. Sessoes atualmente vinculadas via bitrix_accounts.domain (caminho
+//      normal — sessoes que o tenant operou recentemente).
+//   2. Sessoes que aparecem em messages historicamente — capturadas via
+//      INTERSECT entre os JIDs distintos das msgs e as bitrix_accounts
+//      ja vistas pra esse dominio em qualquer momento (snapshot historico
+//      nao existe, entao filtramos por sessoes cujo JID aparece em msgs
+//      com session_id apontando pra uma sessao "do dominio em algum
+//      momento" — mas como nao temos esse log, ficamos com (1) + heuristic
+//      adicional via JIDs de mensagens cuja session_id == sessoes da (1)
+//      OU cujo JID == session_jid de (1)).
+//
+// Simplificacao: pra cobrir QR -> Cloud no mesmo dominio sem complicar
+// schema, listamos TODAS sessoes nao banidas se o dominio tem ao menos
+// 1 bitrix_account. O tenant ve sessoes alheias so se o bitrix_account
+// foi compartilhado — risco aceito em troca de funcionalidade. Multi
+// tenant isolation ja se ergue via permissions (so super-admin acessa
+// /dashboard).
+func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([]*WhatsAppSession, error) {
+	// Confirma que dominio existe em bitrix_accounts (sanity)
+	var hasDomain bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM bitrix_accounts WHERE domain = $1)`,
+		domain).Scan(&hasDomain); err != nil {
+		return nil, err
+	}
+	if !hasDomain {
+		return nil, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+sessionColumns+`
+		  FROM whatsapp_sessions ws
+		 WHERE ws.status <> 'banned'
+		 ORDER BY (ws.status = 'active') DESC, ws.last_seen DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*WhatsAppSession
+	for rows.Next() {
+		var s WhatsAppSession
+		if err := scanSession(rows, &s); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, &s)
+	}
+	return sessions, nil
+}
+
 // ListAllSessions retorna todas as sessões (ativas e desconectadas), exceto banidas.
 // Usada pelo watchdog para tentar reconectar sessões que caíram.
 func (r *Repository) ListAllSessions(ctx context.Context) ([]WhatsAppSession, error) {

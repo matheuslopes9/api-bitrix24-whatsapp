@@ -343,15 +343,17 @@ func (h *handlers) uiTemplatesDelete(c *fiber.Ctx) error {
 // Backend stateless: tudo derivado de whatsapp_sessions + messages no banco.
 
 // GET /ui/history/sessions?domain=... — popula o dropdown da aba Historico
-// com as sessoes WA do tenant (mesmo dado de /bitrix/crm/sessions, mas
-// duplicado aqui pra deixar o dashboard auto-suficiente sem cross-call).
+// com TODAS as sessoes do tenant (ativas + desconectadas). Diferente de
+// /bitrix/crm/sessions que so retorna ativas — historico tem que mostrar
+// sessoes antigas tambem (caso QR -> Cloud, as conversas da QR antiga
+// continuam no banco e precisam ser acessiveis).
 func (h *handlers) uiHistorySessions(c *fiber.Ctx) error {
 	ctx := c.Context()
 	domain, err := h.resolveDashboardDomain(ctx, c)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
-	rows, err := h.repo.ListActiveSessionsByDomain(ctx, domain)
+	rows, err := h.repo.ListSessionsByDomain(ctx, domain)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -362,10 +364,11 @@ func (h *handlers) uiHistorySessions(c *fiber.Ctx) error {
 			phone = s.CloudDisplayPhone
 		}
 		out = append(out, fiber.Map{
-			"jid":   s.JID,
-			"phone": phone,
-			"type":  s.Type,
-			"label": s.DisplayName,
+			"jid":    s.JID,
+			"phone":  phone,
+			"type":   s.Type,
+			"label":  s.DisplayName,
+			"status": s.Status,
 		})
 	}
 	return c.JSON(fiber.Map{"sessions": out, "domain": domain})
@@ -428,83 +431,6 @@ func (h *handlers) uiHistoryMessages(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{"messages": out, "count": len(out)})
-}
-
-// GET /ui/history/debug?session_jid=... — dump pra entender pq lista vem
-// vazia. Mostra: a sessao do banco, contagem total de msgs, sample dos
-// JIDs distintos (from/to) e o que a query real do handler retornou.
-// Temporario — remover depois do diagnostico.
-func (h *handlers) uiHistoryDebug(c *fiber.Ctx) error {
-	ctx := c.Context()
-	sessionJID := strings.TrimSpace(c.Query("session_jid"))
-	if sessionJID == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "session_jid obrigatorio"})
-	}
-	out := fiber.Map{"session_jid": sessionJID}
-
-	// 1. Sessao existe no banco?
-	var sid string
-	var stype string
-	row := h.repo.Pool().QueryRow(ctx,
-		`SELECT id::text, COALESCE(type,'qr') FROM whatsapp_sessions WHERE jid = $1 LIMIT 1`,
-		sessionJID)
-	if err := row.Scan(&sid, &stype); err != nil {
-		out["session_lookup"] = "not_found: " + err.Error()
-	} else {
-		out["session_id"] = sid
-		out["session_type"] = stype
-	}
-
-	// 2. Total de msgs com session_id == essa
-	if sid != "" {
-		var total int
-		h.repo.Pool().QueryRow(ctx,
-			`SELECT COUNT(*) FROM messages WHERE session_id::text = $1`, sid).Scan(&total)
-		out["msgs_by_session_id"] = total
-	}
-
-	// 3. Total via JID match (regex + literal)
-	var totalJID int
-	h.repo.Pool().QueryRow(ctx, `
-		SELECT COUNT(*) FROM messages
-		 WHERE (direction='outbound' AND (from_jid=$1 OR REGEXP_REPLACE(from_jid,':[0-9]+@','@')=REGEXP_REPLACE($1,':[0-9]+@','@')))
-		    OR (direction='inbound'  AND (to_jid=$1   OR REGEXP_REPLACE(to_jid,  ':[0-9]+@','@')=REGEXP_REPLACE($1,':[0-9]+@','@')))
-	`, sessionJID).Scan(&totalJID)
-	out["msgs_by_jid_match"] = totalJID
-
-	// 4. Sample de from_jid/to_jid distintos pra entender o formato real
-	rows, _ := h.repo.Pool().Query(ctx, `
-		SELECT direction, from_jid, to_jid, COUNT(*) AS n
-		  FROM messages
-		 GROUP BY direction, from_jid, to_jid
-		 ORDER BY n DESC
-		 LIMIT 30
-	`)
-	if rows != nil {
-		defer rows.Close()
-		samples := []fiber.Map{}
-		for rows.Next() {
-			var dir, fj, tj string
-			var n int
-			if err := rows.Scan(&dir, &fj, &tj, &n); err == nil {
-				samples = append(samples, fiber.Map{
-					"direction": dir, "from_jid": fj, "to_jid": tj, "count": n,
-				})
-			}
-		}
-		out["jid_samples"] = samples
-	}
-
-	// 5. Resultado real da query usada
-	convs, err := h.repo.ListHistoryConversations(ctx, sessionJID, 50)
-	if err != nil {
-		out["query_error"] = err.Error()
-	} else {
-		out["query_result_count"] = len(convs)
-		out["query_result"] = convs
-	}
-
-	return c.JSON(out)
 }
 
 func historyMediaPlaceholder(t string) string {

@@ -97,7 +97,6 @@ func New(
 	ui.Get("/history/sessions", h.uiHistorySessions)
 	ui.Get("/history/conversations", h.uiHistoryConversations)
 	ui.Get("/history/messages", h.uiHistoryMessages)
-	ui.Get("/history/debug", h.uiHistoryDebug) // diagnostico temporario
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
