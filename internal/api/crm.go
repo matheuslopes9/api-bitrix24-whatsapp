@@ -1026,6 +1026,83 @@ func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
 	return c.JSON(stats)
 }
 
+// GET /bitrix/crm/sessions-debug?domain=... — diagnostico temporario.
+// Retorna estado completo do que o handler de sessoes ve: sessoes do banco,
+// bitrix_accounts vinculados, sessoes whatsmeow em memoria. Sem auth — uso
+// pontual para investigar "Desconectado" no CRM tab.
+func (h *handlers) bitrixCRMSessionsDebug(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	normalized := normalizePortalDomain(domain)
+
+	out := fiber.Map{
+		"domain_raw":           domain,
+		"domain_normalized":    normalized,
+		"manager_sessions":     h.waManager.ListSessions(),
+		"all_active_sessions":  []fiber.Map{},
+		"bitrix_accounts":      []fiber.Map{},
+		"matched_for_domain":   []fiber.Map{},
+	}
+
+	// Todas sessoes ativas (independente de domain)
+	all, err := h.repo.ListActiveSessions(c.Context())
+	if err != nil {
+		out["all_sessions_error"] = err.Error()
+	} else {
+		arr := make([]fiber.Map, 0, len(all))
+		for _, s := range all {
+			arr = append(arr, fiber.Map{
+				"jid":                  s.JID,
+				"status":               s.Status,
+				"type":                 s.Type,
+				"phone":                s.Phone,
+				"cloud_display_phone":  s.CloudDisplayPhone,
+				"cloud_phone_id":       s.CloudPhoneNumberID,
+				"display_name":         s.DisplayName,
+			})
+		}
+		out["all_active_sessions"] = arr
+	}
+
+	// Todos bitrix_accounts (mostra o domain armazenado pra comparar)
+	accs, err := h.repo.ListBitrixAccounts(c.Context())
+	if err != nil {
+		out["bitrix_accounts_error"] = err.Error()
+	} else {
+		arr := make([]fiber.Map, 0, len(accs))
+		for _, a := range accs {
+			arr = append(arr, fiber.Map{
+				"domain":       a.Domain,
+				"session_jid":  a.SessionJID,
+				"connector_id": a.ConnectorID,
+				"open_line_id": a.OpenLineID,
+				"status":       a.Status,
+			})
+		}
+		out["bitrix_accounts"] = arr
+	}
+
+	// Resultado da query usada pelo handler real
+	if normalized != "" {
+		matched, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalized)
+		if err != nil {
+			out["matched_error"] = err.Error()
+		} else {
+			arr := make([]fiber.Map, 0, len(matched))
+			for _, s := range matched {
+				arr = append(arr, fiber.Map{
+					"jid":                 s.JID,
+					"type":                s.Type,
+					"phone":               s.Phone,
+					"cloud_display_phone": s.CloudDisplayPhone,
+				})
+			}
+			out["matched_for_domain"] = arr
+		}
+	}
+
+	return c.JSON(out)
+}
+
 // GET /bitrix/crm/sessions?domain=... — lista sessões WA do tenant para o
 // seletor do CRM tab. Le do banco (status='active' + bitrix_accounts.domain)
 // para incluir Cloud API junto de QR — antes lia so de h.waManager que e
@@ -1036,13 +1113,24 @@ func (h *handlers) bitrixCRMSessions(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	if domain == "" {
 		sessions := h.waManager.ListSessions()
+		h.log.Info("crm sessions: no domain in query — falling back to manager.ListSessions",
+			zap.Int("count", len(sessions)))
 		return c.JSON(fiber.Map{"sessions": sessions, "count": len(sessions)})
 	}
 
-	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalizePortalDomain(domain))
+	normalized := normalizePortalDomain(domain)
+	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalized)
 	if err != nil {
+		h.log.Error("crm sessions: db query failed",
+			zap.String("domain_raw", domain),
+			zap.String("domain_norm", normalized),
+			zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	h.log.Info("crm sessions: db query ok",
+		zap.String("domain_raw", domain),
+		zap.String("domain_norm", normalized),
+		zap.Int("count", len(rows)))
 
 	out := make([]fiber.Map, 0, len(rows))
 	for _, s := range rows {

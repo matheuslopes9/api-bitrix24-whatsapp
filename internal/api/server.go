@@ -150,6 +150,7 @@ func New(
 	bx.Get("/crm/history", h.bitrixCRMHistory)
 	bx.Post("/crm/upload", h.bitrixCRMUpload)
 	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
+	bx.Get("/crm/sessions-debug", h.bitrixCRMSessionsDebug) // diagnóstico temporário
 	bx.Get("/crm/check-access", h.bitrixCRMCheckAccess)
 
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
