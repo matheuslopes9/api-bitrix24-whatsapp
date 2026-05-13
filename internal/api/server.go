@@ -94,6 +94,10 @@ func New(
 	ui.Post("/templates/update", h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.uiTemplatesDelete)
 
+	ui.Get("/history/sessions", h.uiHistorySessions)
+	ui.Get("/history/conversations", h.uiHistoryConversations)
+	ui.Get("/history/messages", h.uiHistoryMessages)
+
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
 	wa.Post("/sessions", h.addSession)
@@ -150,7 +154,6 @@ func New(
 	bx.Get("/crm/history", h.bitrixCRMHistory)
 	bx.Post("/crm/upload", h.bitrixCRMUpload)
 	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
-	bx.Get("/crm/sessions-debug", h.bitrixCRMSessionsDebug) // diagnóstico temporário
 	bx.Get("/crm/check-access", h.bitrixCRMCheckAccess)
 
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────

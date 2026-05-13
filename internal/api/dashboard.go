@@ -366,6 +366,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
     Templates
   </div>
+  <div class="nav-item" id="nav-historico" onclick="showPage('historico')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    Histórico
+  </div>
   <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
@@ -804,6 +808,56 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- ══════════════════════ HISTÓRICO DE CONVERSAS ══════════════════════ -->
+  <div id="page-historico" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Histórico de Conversas</div>
+        <div class="section-sub">Veja todas as mensagens trocadas por sessão WhatsApp (apenas texto)</div>
+      </div>
+    </div>
+
+    <!-- Seletor de sessão -->
+    <div class="card" style="padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Sessão:</div>
+      <select id="hist-session-select" class="inp" style="flex:1;min-width:240px;max-width:520px;" onchange="onHistSessionChange()">
+        <option value="">Carregando sessões...</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="carregarHistoricoSessoes()" title="Atualizar sessões" style="font-size:11px;color:#94a3b8;">↻</button>
+    </div>
+
+    <!-- Layout 2 colunas: conversas | mensagens -->
+    <div style="display:grid;grid-template-columns:340px 1fr;gap:14px;height:calc(100vh - 280px);min-height:480px;">
+      <!-- Coluna esquerda: lista de conversas -->
+      <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column;">
+        <div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:12px;color:#cbd5e1;font-weight:600;">Conversas</div>
+          <span id="hist-conv-count" style="font-size:11px;color:#64748b;">—</span>
+        </div>
+        <input type="text" id="hist-search" placeholder="Filtrar por número..." class="inp" style="margin:8px 10px;font-size:12px;" oninput="filtrarHistConversas()">
+        <div id="hist-conv-list" style="flex:1;overflow-y:auto;padding:4px;">
+          <div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Escolha uma sessão acima.</div>
+        </div>
+      </div>
+
+      <!-- Coluna direita: mensagens -->
+      <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column;">
+        <div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div style="min-width:0;flex:1;">
+            <div id="hist-msg-title" style="font-size:13px;color:#e2e8f0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Selecione uma conversa</div>
+            <div id="hist-msg-sub" style="font-size:11px;color:#64748b;margin-top:2px;"></div>
+          </div>
+        </div>
+        <div id="hist-msg-body" style="flex:1;overflow-y:auto;padding:14px 18px;background:rgba(0,0,0,.18);">
+          <div style="padding:60px 18px;text-align:center;color:#334155;font-size:13px;line-height:1.7;">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4;margin-bottom:10px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <div>Selecione uma conversa à esquerda<br>para ver as mensagens.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════════════════════ FILAS BITRIX ══════════════════════ -->
   <div id="page-filas" class="page">
     <div class="section-hdr">
@@ -1220,7 +1274,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', relatorios: 'Relatórios' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', relatorios: 'Relatórios' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -1236,6 +1290,7 @@ function showPage(nome) {
   if (nome === 'filas') carregarFilas();
   if (nome === 'permissoes') carregarPermissoes();
   if (nome === 'templates') carregarTemplatesDashboard();
+  if (nome === 'historico') carregarHistoricoSessoes();
 }
 
 function openSidebar() {
@@ -2488,6 +2543,225 @@ function deletarTemplate(id) {
       carregarTemplatesDashboard();
     })
     .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
+}
+
+// ─── Histórico de Conversas ─────────────────────────────────────────────────
+var _histSessions = [];
+var _histActiveJid = '';
+var _histConvs = [];
+var _histActivePhone = '';
+
+function _histEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function _histFmtTime(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    var hoje = new Date();
+    if (d.toDateString() === hoje.toDateString()) {
+      return d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    }
+    var diff = (hoje - d) / 86400000;
+    if (diff < 7) {
+      return ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d.getDay()];
+    }
+    return d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+  } catch(e) { return ''; }
+}
+
+function _histFmtFull(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('pt-BR', {
+      day:'2-digit', month:'2-digit', year:'numeric',
+      hour:'2-digit', minute:'2-digit'
+    });
+  } catch(e) { return ''; }
+}
+
+function carregarHistoricoSessoes() {
+  var sel = document.getElementById('hist-session-select');
+  sel.innerHTML = '<option value="">Carregando sessões...</option>';
+  fetch(apiUrl('/ui/history/sessions'))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) {
+        sel.innerHTML = '<option value="">Erro: ' + ((d && d.error) || 'falha') + '</option>';
+        return;
+      }
+      _histSessions = d.sessions || [];
+      if (!_histSessions.length) {
+        sel.innerHTML = '<option value="">Nenhuma sessão ativa neste portal</option>';
+        document.getElementById('hist-conv-list').innerHTML =
+          '<div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Sem sessões ativas.</div>';
+        return;
+      }
+      var opts = '<option value="">— escolha uma sessão —</option>';
+      for (var i = 0; i < _histSessions.length; i++) {
+        var s = _histSessions[i];
+        var tipo = s.type === 'cloud_api' ? ' (Cloud)' : '';
+        var lbl = '+' + (s.phone || s.jid) + tipo;
+        opts += '<option value="' + _histEsc(s.jid) + '">' + _histEsc(lbl) + '</option>';
+      }
+      sel.innerHTML = opts;
+      // se só uma sessão, seleciona ela
+      if (_histSessions.length === 1) {
+        sel.value = _histSessions[0].jid;
+        onHistSessionChange();
+      }
+    })
+    .catch(function(err){
+      sel.innerHTML = '<option value="">Erro de rede</option>';
+      toast('Erro de rede: ' + err.message, 'error');
+    });
+}
+
+function onHistSessionChange() {
+  var sel = document.getElementById('hist-session-select');
+  _histActiveJid = sel.value;
+  _histActivePhone = '';
+  document.getElementById('hist-msg-title').textContent = 'Selecione uma conversa';
+  document.getElementById('hist-msg-sub').textContent = '';
+  document.getElementById('hist-msg-body').innerHTML =
+    '<div style="padding:60px 18px;text-align:center;color:#334155;font-size:13px;line-height:1.7;">'
+    + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.4;margin-bottom:10px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'
+    + '<div>Selecione uma conversa à esquerda<br>para ver as mensagens.</div>'
+    + '</div>';
+  if (!_histActiveJid) {
+    document.getElementById('hist-conv-list').innerHTML =
+      '<div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Escolha uma sessão acima.</div>';
+    document.getElementById('hist-conv-count').textContent = '—';
+    return;
+  }
+  carregarHistConversas();
+}
+
+function _histAppendQuery(base, qs) {
+  var sep = base.indexOf('?') !== -1 ? '&' : '?';
+  return base + sep + qs;
+}
+
+function carregarHistConversas() {
+  var box = document.getElementById('hist-conv-list');
+  box.innerHTML = '<div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>';
+  var url = _histAppendQuery(apiUrl('/ui/history/conversations'), 'session_jid=' + encodeURIComponent(_histActiveJid));
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) {
+        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + ((d && d.error) || 'falha') + '</div>';
+        return;
+      }
+      _histConvs = d.conversations || [];
+      renderHistConvList();
+      document.getElementById('hist-conv-count').textContent = _histConvs.length + ' conversa(s)';
+    })
+    .catch(function(err){
+      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + err.message + '</div>';
+    });
+}
+
+function renderHistConvList() {
+  var box = document.getElementById('hist-conv-list');
+  var q = (document.getElementById('hist-search').value || '').trim().toLowerCase();
+  var filtered = q ? _histConvs.filter(function(c){ return (c.phone||'').toLowerCase().indexOf(q) !== -1; }) : _histConvs;
+  if (!filtered.length) {
+    box.innerHTML = '<div style="padding:30px 18px;text-align:center;color:#475569;font-size:12px;">'
+      + (q ? 'Nenhum número casou com o filtro.' : 'Nenhuma conversa nesta sessão.') + '</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var c = filtered[i];
+    var active = (c.phone === _histActivePhone) ? 'background:rgba(37,211,102,.10);border-left:3px solid #25D366;' : 'border-left:3px solid transparent;';
+    var dirIcon = c.last_direction === 'outbound' ? '↗ ' : '↘ ';
+    var preview = (c.last_message || '').replace(/\n/g,' ').slice(0, 60);
+    if ((c.last_message || '').length > 60) preview += '...';
+    html += '<div class="hist-conv-item" data-phone="' + _histEsc(c.phone) + '" onclick="abrirHistConversa(\'' + _histEsc(c.phone) + '\')" '
+         +  'style="padding:10px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.03);transition:background .12s;' + active + '" '
+         +  'onmouseover="if(this.dataset.phone!==\'' + _histEsc(_histActivePhone) + '\')this.style.background=\'rgba(255,255,255,.03)\'" '
+         +  'onmouseout="if(this.dataset.phone!==\'' + _histEsc(_histActivePhone) + '\')this.style.background=\'transparent\'">'
+         +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px;">'
+         +      '<div style="font-size:13px;font-weight:600;color:#e2e8f0;">+' + _histEsc(c.phone) + '</div>'
+         +      '<div style="font-size:10.5px;color:#64748b;flex-shrink:0;">' + _histEsc(_histFmtTime(c.last_at)) + '</div>'
+         +    '</div>'
+         +    '<div style="font-size:11.5px;color:#64748b;line-height:1.4;">'
+         +      '<span style="color:#475569;">' + dirIcon + '</span>' + _histEsc(preview)
+         +    '</div>'
+         +    '<div style="font-size:10px;color:#334155;margin-top:3px;">' + c.total + ' mensagens</div>'
+         +  '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function filtrarHistConversas() {
+  renderHistConvList();
+}
+
+function abrirHistConversa(phone) {
+  _histActivePhone = phone;
+  renderHistConvList(); // re-render para destacar ativo
+  var body = document.getElementById('hist-msg-body');
+  body.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando mensagens...</div>';
+  document.getElementById('hist-msg-title').textContent = '+' + phone;
+  document.getElementById('hist-msg-sub').textContent = 'Carregando...';
+
+  var url = _histAppendQuery(apiUrl('/ui/history/messages'),
+    'session_jid=' + encodeURIComponent(_histActiveJid)
+    + '&phone=' + encodeURIComponent(phone));
+  fetch(url)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || d.error) {
+        body.innerHTML = '<div style="padding:30px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + ((d && d.error) || 'falha') + '</div>';
+        return;
+      }
+      renderHistMessages(d.messages || []);
+      document.getElementById('hist-msg-sub').textContent = (d.count || 0) + ' mensagens';
+    })
+    .catch(function(err){
+      body.innerHTML = '<div style="padding:30px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + err.message + '</div>';
+    });
+}
+
+function renderHistMessages(msgs) {
+  var body = document.getElementById('hist-msg-body');
+  if (!msgs.length) {
+    body.innerHTML = '<div style="padding:60px;text-align:center;color:#334155;font-size:13px;">Sem mensagens nesta conversa.</div>';
+    return;
+  }
+  var html = '';
+  var lastDate = '';
+  for (var i = 0; i < msgs.length; i++) {
+    var m = msgs[i];
+    var d = new Date(m.created_at);
+    var dateLabel = d.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit', year:'numeric'});
+    if (dateLabel !== lastDate) {
+      html += '<div style="text-align:center;margin:14px 0 10px;"><span style="font-size:10.5px;color:#475569;background:rgba(255,255,255,.04);padding:3px 10px;border-radius:10px;">' + _histEsc(dateLabel) + '</span></div>';
+      lastDate = dateLabel;
+    }
+    var hora = d.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    var out = m.direction === 'outbound';
+    var author = m.author_name ? ('<div style="font-size:10.5px;color:' + (out ? 'rgba(255,255,255,.7)' : '#94a3b8') + ';font-weight:600;margin-bottom:2px;">' + _histEsc(m.author_name) + '</div>') : '';
+    var align = out ? 'flex-end' : 'flex-start';
+    var bg = out ? '#075e54' : '#262d31';
+    var color = '#e9edef';
+    html += '<div style="display:flex;justify-content:' + align + ';margin-bottom:6px;">'
+         +    '<div style="max-width:72%;background:' + bg + ';color:' + color + ';padding:7px 11px;border-radius:8px;font-size:13px;line-height:1.45;word-wrap:break-word;">'
+         +      author
+         +      '<div>' + _histEsc(m.text || '').replace(/\n/g, '<br>') + '</div>'
+         +      '<div style="font-size:10px;color:rgba(255,255,255,.55);text-align:right;margin-top:3px;">' + _histEsc(hora) + '</div>'
+         +    '</div>'
+         +  '</div>';
+  }
+  body.innerHTML = html;
+  // scroll pra ultima msg
+  body.scrollTop = body.scrollHeight;
 }
 
 // ─── Filas Bitrix ─────────────────────────────────────────────────────────────

@@ -339,6 +339,114 @@ func (h *handlers) uiTemplatesDelete(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
+// ─── Historico de conversas (aba /dashboard) ──────────────────────────────
+// Backend stateless: tudo derivado de whatsapp_sessions + messages no banco.
+
+// GET /ui/history/sessions?domain=... — popula o dropdown da aba Historico
+// com as sessoes WA do tenant (mesmo dado de /bitrix/crm/sessions, mas
+// duplicado aqui pra deixar o dashboard auto-suficiente sem cross-call).
+func (h *handlers) uiHistorySessions(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	rows, err := h.repo.ListActiveSessionsByDomain(ctx, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]fiber.Map, 0, len(rows))
+	for _, s := range rows {
+		phone := s.Phone
+		if phone == "" {
+			phone = s.CloudDisplayPhone
+		}
+		out = append(out, fiber.Map{
+			"jid":   s.JID,
+			"phone": phone,
+			"type":  s.Type,
+			"label": s.DisplayName,
+		})
+	}
+	return c.JSON(fiber.Map{"sessions": out, "domain": domain})
+}
+
+// GET /ui/history/conversations?session_jid=... — lista de conversas
+// (peers) da sessao escolhida, com ultima msg, timestamp e total.
+func (h *handlers) uiHistoryConversations(c *fiber.Ctx) error {
+	sessionJID := strings.TrimSpace(c.Query("session_jid"))
+	if sessionJID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "session_jid obrigatorio"})
+	}
+	limit := c.QueryInt("limit", 200)
+	convs, err := h.repo.ListHistoryConversations(c.Context(), sessionJID, limit)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"conversations": convs, "session_jid": sessionJID})
+}
+
+// GET /ui/history/messages?session_jid=...&phone=... — mensagens de uma
+// conversa especifica. Sem download de arquivo: midia vira placeholder
+// textual (ex.: "[Imagem]", "[Audio]") com legenda se houver.
+func (h *handlers) uiHistoryMessages(c *fiber.Ctx) error {
+	sessionJID := strings.TrimSpace(c.Query("session_jid"))
+	phone := strings.TrimSpace(c.Query("phone"))
+	if sessionJID == "" || phone == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "session_jid e phone obrigatorios"})
+	}
+	limit := c.QueryInt("limit", 500)
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	msgs, err := h.repo.GetMessagesByPhone(c.Context(), normalizeWAPhone(phone), limit)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]fiber.Map, 0, len(msgs))
+	// Inverte: GetMessagesByPhone vem DESC, queremos ASC pra render cronologico
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		text := m.Content
+		mt := string(m.MessageType)
+		if mt != "" && mt != "text" {
+			placeholder := historyMediaPlaceholder(mt)
+			if text != "" {
+				text = placeholder + " " + text
+			} else {
+				text = placeholder
+			}
+		}
+		out = append(out, fiber.Map{
+			"id":           m.ID.String(),
+			"direction":    string(m.Direction),
+			"type":         mt,
+			"text":         text,
+			"author_name":  m.AuthorName,
+			"status":       string(m.Status),
+			"created_at":   m.CreatedAt,
+		})
+	}
+	return c.JSON(fiber.Map{"messages": out, "count": len(out)})
+}
+
+func historyMediaPlaceholder(t string) string {
+	switch t {
+	case "image":
+		return "[Imagem]"
+	case "video":
+		return "[Video]"
+	case "audio":
+		return "[Audio]"
+	case "document":
+		return "[Documento]"
+	case "sticker":
+		return "[Sticker]"
+	default:
+		return "[" + t + "]"
+	}
+}
+
 // GET /bitrix/crm/check-access?domain=...&user_id=...
 // Retorna { allowed: bool, configured: bool }
 //   - configured: tenant tem pelo menos 1 user liberado (config foi feita)
@@ -1026,82 +1134,6 @@ func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
 	return c.JSON(stats)
 }
 
-// GET /bitrix/crm/sessions-debug?domain=... — diagnostico temporario.
-// Retorna estado completo do que o handler de sessoes ve: sessoes do banco,
-// bitrix_accounts vinculados, sessoes whatsmeow em memoria. Sem auth — uso
-// pontual para investigar "Desconectado" no CRM tab.
-func (h *handlers) bitrixCRMSessionsDebug(c *fiber.Ctx) error {
-	domain := strings.TrimSpace(c.Query("domain"))
-	normalized := normalizePortalDomain(domain)
-
-	out := fiber.Map{
-		"domain_raw":           domain,
-		"domain_normalized":    normalized,
-		"manager_sessions":     h.waManager.ListSessions(),
-		"all_active_sessions":  []fiber.Map{},
-		"bitrix_accounts":      []fiber.Map{},
-		"matched_for_domain":   []fiber.Map{},
-	}
-
-	// Todas sessoes ativas (independente de domain)
-	all, err := h.repo.ListActiveSessions(c.Context())
-	if err != nil {
-		out["all_sessions_error"] = err.Error()
-	} else {
-		arr := make([]fiber.Map, 0, len(all))
-		for _, s := range all {
-			arr = append(arr, fiber.Map{
-				"jid":                  s.JID,
-				"status":               s.Status,
-				"type":                 s.Type,
-				"phone":                s.Phone,
-				"cloud_display_phone":  s.CloudDisplayPhone,
-				"cloud_phone_id":       s.CloudPhoneNumberID,
-				"display_name":         s.DisplayName,
-			})
-		}
-		out["all_active_sessions"] = arr
-	}
-
-	// Todos bitrix_accounts (mostra o domain armazenado pra comparar)
-	accs, err := h.repo.ListBitrixAccounts(c.Context())
-	if err != nil {
-		out["bitrix_accounts_error"] = err.Error()
-	} else {
-		arr := make([]fiber.Map, 0, len(accs))
-		for _, a := range accs {
-			arr = append(arr, fiber.Map{
-				"domain":       a.Domain,
-				"session_jid":  a.SessionJID,
-				"connector_id": a.ConnectorID,
-				"open_line_id": a.OpenLineID,
-				"status":       a.Status,
-			})
-		}
-		out["bitrix_accounts"] = arr
-	}
-
-	// Resultado da query usada pelo handler real
-	if normalized != "" {
-		matched, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalized)
-		if err != nil {
-			out["matched_error"] = err.Error()
-		} else {
-			arr := make([]fiber.Map, 0, len(matched))
-			for _, s := range matched {
-				arr = append(arr, fiber.Map{
-					"jid":                 s.JID,
-					"type":                s.Type,
-					"phone":               s.Phone,
-					"cloud_display_phone": s.CloudDisplayPhone,
-				})
-			}
-			out["matched_for_domain"] = arr
-		}
-	}
-
-	return c.JSON(out)
-}
 
 // GET /bitrix/crm/sessions?domain=... — lista sessões WA do tenant para o
 // seletor do CRM tab. Le do banco (status='active' + bitrix_accounts.domain)
@@ -1113,24 +1145,13 @@ func (h *handlers) bitrixCRMSessions(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	if domain == "" {
 		sessions := h.waManager.ListSessions()
-		h.log.Info("crm sessions: no domain in query — falling back to manager.ListSessions",
-			zap.Int("count", len(sessions)))
 		return c.JSON(fiber.Map{"sessions": sessions, "count": len(sessions)})
 	}
 
-	normalized := normalizePortalDomain(domain)
-	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalized)
+	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalizePortalDomain(domain))
 	if err != nil {
-		h.log.Error("crm sessions: db query failed",
-			zap.String("domain_raw", domain),
-			zap.String("domain_norm", normalized),
-			zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	h.log.Info("crm sessions: db query ok",
-		zap.String("domain_raw", domain),
-		zap.String("domain_norm", normalized),
-		zap.Int("count", len(rows)))
 
 	out := make([]fiber.Map, 0, len(rows))
 	for _, s := range rows {
