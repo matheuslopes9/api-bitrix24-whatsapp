@@ -743,14 +743,39 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
           <div id="perm-master-hint" style="font-size:11px;color:#64748b;margin-top:2px;">Apenas o master pode alterar permissões e transferir o controle.</div>
         </div>
       </div>
+      <button class="btn btn-primary" id="perm-setup-btn" onclick="abrirModalEscolherMaster()" style="font-size:12.5px;display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:5px;vertical-align:-2px;"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>
+        Configurar usuário master
+      </button>
       <button class="btn btn-ghost btn-sm" id="perm-transfer-btn" onclick="abrirModalTransferirMaster()" style="font-size:12px;display:none;">↪ Transferir controle</button>
     </div>
 
-    <!-- "Atuar como" — modo super-admin: digite o user_id do master pra desbloquear chips -->
-    <div class="card" style="padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <!-- "Atuar como" — quando master ja configurado, lembra qual user_id estou usando.
+         Esconde quando ainda nao tem master (onboarding e' o caminho). -->
+    <div id="perm-caller-card" class="card" style="padding:12px 18px;margin-bottom:14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;">
       <span style="font-size:11.5px;color:#94a3b8;">Atuar como master (user_id):</span>
       <input type="text" id="perm-caller-input" class="inp" placeholder="Cole o user_id do master pra editar" style="flex:1;min-width:180px;max-width:240px;font-size:12px;" oninput="onPermCallerChange()">
       <span id="perm-caller-status" style="font-size:11px;color:#64748b;">read-only</span>
+    </div>
+
+    <!-- Modal: escolher master inicial (onboarding pelo dashboard) -->
+    <div id="perm-setup-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:560px;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Configurar usuário master</div>
+          <button onclick="fecharModalEscolherMaster()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+        </div>
+        <div style="padding:20px;">
+          <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:11px 14px;margin-bottom:14px;font-size:12.5px;color:#fcd34d;line-height:1.6;">
+            <strong>⚠ Atenção:</strong> apenas o master poderá liberar permissões aos demais operadores e transferir o controle. Escolha com cuidado.
+          </div>
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Quem será o master?</div>
+          <input type="text" id="perm-setup-search" class="inp" placeholder="Filtrar por nome ou e-mail..." style="width:100%;margin-bottom:8px;font-size:12.5px;" oninput="renderSetupList()">
+          <div id="perm-setup-list" style="max-height:340px;overflow-y:auto;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(0,0,0,.18);">
+            <div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Selecione um usuário...</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Filtro -->
@@ -2295,25 +2320,119 @@ function carregarPermissoes(forceRefresh) {
 function renderMasterCard() {
   var nameEl = document.getElementById('perm-master-name');
   var hintEl = document.getElementById('perm-master-hint');
-  var btnEl = document.getElementById('perm-transfer-btn');
+  var setupBtn = document.getElementById('perm-setup-btn');
+  var transferBtn = document.getElementById('perm-transfer-btn');
+  var callerCard = document.getElementById('perm-caller-card');
   if (_permMaster._no_domain) {
     nameEl.textContent = 'Selecione um portal';
     hintEl.textContent = 'Use ?portal=dominio.bitrix24.com na URL para escolher o tenant.';
-    btnEl.style.display = 'none';
+    setupBtn.style.display = 'none';
+    transferBtn.style.display = 'none';
+    callerCard.style.display = 'none';
     return;
   }
   if (!_permMaster.configured) {
     nameEl.textContent = 'Não configurado';
     nameEl.style.color = '#fbbf24';
-    hintEl.textContent = 'Onboarding pendente. O cliente precisa abrir o UC Talk no Bitrix24 e escolher o master.';
-    btnEl.style.display = 'none';
+    hintEl.textContent = 'Clique em "Configurar usuário master" para escolher quem terá o controle deste portal.';
+    setupBtn.style.display = '';
+    transferBtn.style.display = 'none';
+    callerCard.style.display = 'none';
     return;
   }
   var label = _permMaster.master_user_name || ('User #' + _permMaster.master_user_id);
   nameEl.innerHTML = _permEsc(label) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(_permMaster.master_user_id) + '</span>';
   nameEl.style.color = '#e2e8f0';
   hintEl.textContent = 'Apenas o master pode alterar permissões e transferir o controle.';
-  btnEl.style.display = '';
+  setupBtn.style.display = 'none';
+  transferBtn.style.display = '';
+  callerCard.style.display = 'flex';
+
+  // Auto-preenche caller a partir da sessionStorage (se admin ja' editou antes)
+  var saved = '';
+  try { saved = sessionStorage.getItem('perm_caller_' + (PORTAL||'_')) || ''; } catch(e){}
+  if (saved && !_permCaller) {
+    document.getElementById('perm-caller-input').value = saved;
+    _permCaller = saved;
+    onPermCallerChange();
+  }
+}
+
+// ─── Modal: escolher master inicial ─────────────────────────────────────
+function abrirModalEscolherMaster() {
+  document.getElementById('perm-setup-modal').style.display = 'flex';
+  document.getElementById('perm-setup-search').value = '';
+  renderSetupList();
+}
+function fecharModalEscolherMaster() {
+  document.getElementById('perm-setup-modal').style.display = 'none';
+}
+function renderSetupList() {
+  var box = document.getElementById('perm-setup-list');
+  var q = (document.getElementById('perm-setup-search').value || '').trim().toLowerCase();
+  var list = _permUsers;
+  if (q) {
+    list = list.filter(function(u){
+      return (u.name||'').toLowerCase().indexOf(q) !== -1
+          || (u.email||'').toLowerCase().indexOf(q) !== -1
+          || String(u.id).indexOf(q) !== -1;
+    });
+  }
+  if (!list.length) {
+    box.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Nenhum colaborador interno ativo encontrado.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var u = list[i];
+    var ini = (u.name||'?')[0].toUpperCase();
+    html += '<div class="perm-setup-row" data-uid="' + _permEsc(u.id) + '" data-uname="' + _permEsc(u.name||'') + '" '
+         +  'style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s;" '
+         +  'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" '
+         +  'onmouseout="this.style.background=\'transparent\'">'
+         +    '<div style="width:28px;height:28px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + _permEsc(ini) + '</div>'
+         +    '<div style="flex:1;min-width:0;">'
+         +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">' + _permEsc(u.name||('User #'+u.id)) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(u.id) + '</span></div>'
+         +      (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + '</div>' : '')
+         +    '</div>'
+         +  '</div>';
+  }
+  box.innerHTML = html;
+  // Bind via dataset evita problemas de escape em onclick inline (apostrofo no nome etc).
+  var rows = box.querySelectorAll('.perm-setup-row');
+  for (var k = 0; k < rows.length; k++) {
+    rows[k].addEventListener('click', function(){
+      var uid = this.dataset.uid, uname = this.dataset.uname;
+      confirmarSetupMaster(uid, uname);
+    });
+  }
+}
+function confirmarSetupMaster(userID, userName) {
+  if (!confirm('Definir "' + userName + '" como usuário master?\n\nApenas ele poderá liberar permissões e transferir o controle no futuro.')) return;
+  var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
+  if (!domain) { toast('Use ?portal=... na URL pra selecionar o tenant', 'error'); return; }
+  // No onboarding inicial, caller_user_id pode ser o proprio novo master
+  // (backend autoriza pq portal ainda nao tem master).
+  fetch(_baseUrl + '/bitrix/crm/master/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      domain: domain,
+      caller_user_id: userID,
+      new_master_user_id: userID,
+      new_master_name: userName,
+    }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
+      toast('Master configurado: ' + userName, 'success');
+      // Memoriza pra mutations subsequentes sem precisar redigitar
+      try { sessionStorage.setItem('perm_caller_' + (PORTAL||'_'), userID); } catch(e){}
+      fecharModalEscolherMaster();
+      carregarPermissoes(false);
+    })
+    .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
 }
 
 function onPermCallerChange() {
@@ -2329,6 +2448,16 @@ function onPermCallerChange() {
     s.textContent = 'esse user_id não é o master — chips bloqueados';
     s.style.color = '#fbbf24';
   }
+  // Persiste por aba (sessionStorage), por portal — evita redigitar a cada
+  // navegacao. Limpa quando o admin coloca outro valor que nao bate.
+  try {
+    var k = 'perm_caller_' + (PORTAL||'_');
+    if (_permCaller && _permMaster.configured && _permCaller === _permMaster.master_user_id) {
+      sessionStorage.setItem(k, _permCaller);
+    } else if (!_permCaller) {
+      sessionStorage.removeItem(k);
+    }
+  } catch(e){}
   renderPermUsers();
 }
 

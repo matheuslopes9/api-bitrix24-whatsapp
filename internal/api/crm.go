@@ -595,12 +595,14 @@ func (h *handlers) bitrixCRMMasterSet(c *fiber.Ctx) error {
 	}
 	creds := h.portalToCreds(portal)
 
-	// Valida caller + new_master sao internos ativos no Bitrix
-	ids := []string{body.CallerUserID}
-	if body.NewMasterUserID != body.CallerUserID {
-		ids = append(ids, body.NewMasterUserID)
-	}
-	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, ids)
+	// Politica de validacao:
+	//   - new_master SEMPRE precisa ser interno ativo no Bitrix.
+	//   - caller so precisa ser interno ativo se ja existe master configurado
+	//     (caso de transferencia — pra garantir que o caller e' realmente o
+	//     master, nao um user_id qualquer). No onboarding inicial (portal sem
+	//     master), o caller pode ser o admin via /dashboard (sem identidade
+	//     Bitrix) — autorizacao vem do proprio acesso ao /dashboard.
+	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, []string{body.CallerUserID, body.NewMasterUserID})
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "lookup user Bitrix falhou: " + err.Error()})
 	}
@@ -619,8 +621,10 @@ func (h *handlers) bitrixCRMMasterSet(c *fiber.Ctx) error {
 		}
 		return false, ""
 	}
-	if ok, _ := isInternalActive(body.CallerUserID); !ok {
-		return c.Status(403).JSON(fiber.Map{"error": "caller nao e um colaborador interno ativo"})
+	if portal.LegacyAdminUserID != "" {
+		if ok, _ := isInternalActive(body.CallerUserID); !ok {
+			return c.Status(403).JSON(fiber.Map{"error": "caller nao e um colaborador interno ativo"})
+		}
 	}
 	newOK, newName := isInternalActive(body.NewMasterUserID)
 	if !newOK {
