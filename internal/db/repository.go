@@ -495,35 +495,45 @@ type HistoryConversation struct {
 // oposto ao session_jid em cada mensagem) e retorna a ultima msg, data e
 // total. Usada pela aba Historico do /dashboard.
 //
-// session_jid e' o nosso lado (ex.: "cloud:1160...@s.whatsapp.net" ou
-// "5519...:48@s.whatsapp.net"). O peer e' o outro lado.
+// Lookup hibrido — via session_id (FK pra whatsapp_sessions.id) E via
+// match flexivel de from_jid/to_jid. Necessario porque:
+//   - Algumas msgs antigas tem session_id NULL.
+//   - JIDs Cloud no banco aparecem em 3 formas: "cloud:<id>@s.whatsapp.net"
+//     (formato novo), "cloud@s.whatsapp.net" (bug stripDeviceSuffix antigo)
+//     e "<id>@s.whatsapp.net" (legado da v1).
+//   - JIDs QR podem ter ":NN" device suffix ou nao.
+//
+// peer_phone = o numero do cliente (sempre do lado "@s.whatsapp.net" oposto).
 func (r *Repository) ListHistoryConversations(ctx context.Context, sessionJID string, limit int) ([]HistoryConversation, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	// Normaliza session_jid pra casar JIDs do banco que podem ou nao ter
-	// ":NN" device suffix. Match flexivel via REGEXP nao da pra usar em
-	// JOIN — usamos comparacao por "stripDeviceSuffix" (regex no SELECT).
 	rows, err := r.pool.Query(ctx, `
-		WITH peers AS (
+		WITH sess AS (
+			SELECT id, jid FROM whatsapp_sessions WHERE jid = $1 LIMIT 1
+		),
+		peers AS (
 			SELECT
-				CASE
-					WHEN direction = 'outbound' THEN to_jid
-					ELSE from_jid
-				END AS peer_jid,
+				CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END AS peer_jid,
 				content,
 				message_type,
 				direction,
 				created_at
-			FROM messages
-			WHERE (
-				(direction = 'outbound' AND REGEXP_REPLACE(from_jid, ':[0-9]+@', '@') = REGEXP_REPLACE($1, ':[0-9]+@', '@'))
+			FROM messages m
+			WHERE
+				-- 1) match por FK session_id (caminho mais confiavel)
+				(m.session_id IS NOT NULL AND m.session_id = (SELECT id FROM sess))
 				OR
-				(direction = 'inbound'  AND REGEXP_REPLACE(to_jid,   ':[0-9]+@', '@') = REGEXP_REPLACE($1, ':[0-9]+@', '@'))
-			)
-			AND COALESCE(NULLIF(
-				CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END, ''
-			), '') <> ''
+				-- 2) match por JID literal (cobre legado sem session_id)
+				(direction = 'outbound' AND (
+					m.from_jid = $1
+					OR REGEXP_REPLACE(m.from_jid, ':[0-9]+@', '@') = REGEXP_REPLACE($1, ':[0-9]+@', '@')
+				))
+				OR
+				(direction = 'inbound'  AND (
+					m.to_jid   = $1
+					OR REGEXP_REPLACE(m.to_jid,   ':[0-9]+@', '@') = REGEXP_REPLACE($1, ':[0-9]+@', '@')
+				))
 		),
 		peers_norm AS (
 			SELECT
@@ -541,11 +551,13 @@ func (r *Repository) ListHistoryConversations(ctx context.Context, sessionJID st
 				) AS total
 			FROM peers
 			WHERE peer_jid LIKE '%@%'
+			  AND peer_jid NOT LIKE 'cloud%@%'  -- nao listar a propria sessao como "conversa"
 		)
 		SELECT phone, COALESCE(content,''), message_type, direction, created_at, total
 		  FROM peers_norm
 		 WHERE rn = 1
 		   AND phone <> ''
+		   AND phone ~ '^[0-9]+$'
 		 ORDER BY created_at DESC
 		 LIMIT $2
 	`, sessionJID, limit)
