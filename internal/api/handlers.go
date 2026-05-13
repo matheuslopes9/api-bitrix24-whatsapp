@@ -756,7 +756,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	acct := &db.BitrixAccount{
 		ID:           generateUUID(),
 		SessionJID:   body.SessionJID,
-		Domain:       "https://" + domain,
+		Domain:       normalizePortalDomain(domain),
 		ClientID:     h.cfg.Bitrix.ClientID,
 		ClientSecret: h.cfg.Bitrix.ClientSecret,
 		OpenLineID:   body.OpenLineID,

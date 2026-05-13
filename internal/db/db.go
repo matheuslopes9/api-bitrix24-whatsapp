@@ -174,6 +174,20 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_crm_user_permissions_domain ON crm_user_permissions (domain);
 		`},
+		{"017_normalize_bitrix_accounts_domain", `
+			-- Normaliza bitrix_accounts.domain pra bater com bitrix_portals.domain
+			-- (que e gravado via normalizePortalDomain — sem https:// e lowercase).
+			-- Caminhos antigos (partner.go, handlers.go) gravavam "https://<dom>",
+			-- entao queries como ListActiveSessionsByDomain nunca matchavam e o
+			-- CRM tab mostrava "Desconectado" mesmo com sessao ativa.
+			UPDATE bitrix_accounts
+			   SET domain = LOWER(REGEXP_REPLACE(domain, '^https?://', ''))
+			 WHERE domain ~* '^https?://' OR domain <> LOWER(domain);
+			-- Trailing slash tambem (defensivo)
+			UPDATE bitrix_accounts
+			   SET domain = RTRIM(domain, '/')
+			 WHERE domain LIKE '%/';
+		`},
 		{"016_message_templates", `
 			-- Templates / quick replies — mensagens pre-formatadas que o
 			-- atendente pode inserir no compositor com 1 clique.

@@ -263,7 +263,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		acct := &db.BitrixAccount{
 			ID:           generateUUID(),
 			SessionJID:   jid,
-			Domain:       "https://" + domain,
+			Domain:       normalizePortalDomain(domain),
 			ClientID:     h.cfg.Bitrix.ClientID,
 			ClientSecret: h.cfg.Bitrix.ClientSecret,
 			OpenLineID:   lineID,
@@ -346,7 +346,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 	acct := &db.BitrixAccount{
 		ID:           generateUUID(),
 		SessionJID:   sessionJID,
-		Domain:       "https://" + domain,
+		Domain:       normalizePortalDomain(domain),
 		ClientID:     h.cfg.Bitrix.ClientID,
 		ClientSecret: h.cfg.Bitrix.ClientSecret,
 		OpenLineID:   lineID,
