@@ -9,9 +9,13 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 }
 
 // GET /ui/overview — dados agregados para a dashboard (sem auth, apenas interna)
+//
+// "Sessoes ativas" no painel/sidebar le whatsapp_sessions.status='active'
+// (qr + cloud), nao h.waManager.ListSessions() — esse ultimo so conta
+// whatsmeow em memoria, ignora Cloud API. Tenants que so usam Cloud
+// apareciam como "0 sessões ativas / Sem sessão" mesmo com a sessao
+// funcionando.
 func (h *handlers) uiOverview(c *fiber.Ctx) error {
-	sessions := h.waManager.ListSessions()
-
 	in, out, dead := h.q.Lengths(c.Context())
 
 	stats, _ := h.repo.GetDailyStats(c.Context(), 1)
@@ -21,9 +25,15 @@ func (h *handlers) uiOverview(c *fiber.Ctx) error {
 		msgsOut += s.OutboundCount
 	}
 
+	dbSessions, _ := h.repo.ListActiveSessions(c.Context())
+	jids := make([]string, 0, len(dbSessions))
+	for _, s := range dbSessions {
+		jids = append(jids, s.JID)
+	}
+
 	return c.JSON(fiber.Map{
-		"active_sessions":   len(sessions),
-		"sessions":          sessions,
+		"active_sessions":   len(jids),
+		"sessions":          jids,
 		"queue_inbound":     in,
 		"queue_outbound":    out,
 		"queue_dead":        dead,
@@ -1365,7 +1375,15 @@ function renderizarDispositivos(sessoes) {
   }
   var html = '<div style="display:flex;flex-direction:column;gap:8px;">';
   sessoes.forEach(function(jid) {
-    var telefone = '+' + jid.split(':')[0].split('@')[0];
+    // JID Cloud vem como "cloud:<phone_id>@s.whatsapp.net" — sem telefone embutido.
+    // QR vem como "<phone>:NN@s.whatsapp.net" — strip device suffix e dominio.
+    var isCloud = jid.indexOf('cloud:') === 0;
+    var telefone = isCloud
+      ? 'Cloud API'
+      : '+' + jid.split('@')[0].split(':')[0];
+    var badge = isCloud
+      ? '<span class="badge" style="background:rgba(96,165,250,.18);color:#60a5fa;">Cloud</span>'
+      : '<span class="badge badge-green">Online</span>';
     html += '<div class="card-flat" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;gap:12px;">'
       + '<div style="display:flex;align-items:center;gap:10px;min-width:0;">'
       + '<div class="dot dot-green"></div>'
@@ -1373,7 +1391,7 @@ function renderizarDispositivos(sessoes) {
       + '<div style="font-size:13.5px;font-weight:600;color:#e2e8f0;">' + telefone + '</div>'
       + '<div style="font-size:11px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + jid + '</div>'
       + '</div></div>'
-      + '<span class="badge badge-green">Online</span>'
+      + badge
       + '</div>';
   });
   html += '</div>';
