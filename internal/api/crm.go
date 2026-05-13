@@ -30,6 +30,11 @@ import (
 
 // GET|POST /bitrix/crm/tab — página iframe exibida na aba WhatsApp do CRM
 func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
+	// HTML inline com JS embutido — sem no-store o iframe do Bitrix cacheia
+	// por horas e mudancas de UI nao chegam ao operador.
+	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.Set("Pragma", "no-cache")
+	c.Set("Expires", "0")
 	return c.Type("html").SendString(crmTabHTML)
 }
 
@@ -2407,6 +2412,9 @@ init();
 // Mostra UI completa (lista de conversas + chat) para usuarios liberados.
 // Checa permissao via mesma rota /bitrix/crm/check-access do CRM tab.
 func (h *handlers) bitrixAppMenu(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.Set("Pragma", "no-cache")
+	c.Set("Expires", "0")
 	return c.Type("html").SendString(bitrixAppMenuHTML)
 }
 

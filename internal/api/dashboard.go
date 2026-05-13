@@ -5,6 +5,13 @@ import "github.com/gofiber/fiber/v2"
 // GET /dashboard
 func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
+	// HTML inline tem JS embutido — qualquer mudanca de UI/handler exige
+	// que o browser pegue a versao nova. Sem no-store o iframe do Bitrix
+	// e proxies intermediarios cachearam por horas e a UI virou "Carregando..."
+	// indefinido enquanto o JS antigo chamava endpoints que ja' mudaram.
+	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.Set("Pragma", "no-cache")
+	c.Set("Expires", "0")
 	return c.SendString(dashboardHTML)
 }
 
