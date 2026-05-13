@@ -210,6 +210,8 @@ func New(
 	admin.Get("/api/tenant/users", h.adminTenantListUsers)
 	admin.Get("/api/tenant/user-info", h.adminTenantUserInfo)
 	admin.Post("/api/tenant/permissions", h.adminTenantSetPermission)
+	admin.Get("/api/tenant/master", h.adminTenantMasterStatus)
+	admin.Post("/api/tenant/master", h.adminTenantSetMaster)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

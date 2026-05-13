@@ -1823,25 +1823,19 @@ function init() {
       var allowedUrl = _baseUrl + '/bitrix/crm/allowed-sessions'
         + '?domain=' + encodeURIComponent(_domain)
         + '&user_id=' + encodeURIComponent(userID);
-      var masterUrl = _baseUrl + '/bitrix/crm/master/status'
-        + '?domain=' + encodeURIComponent(_domain);
 
+      // CRM tab e' aberto pra todo interno ativo. Onboarding do master e
+      // configuracao de permissoes ficam no /dashboard e no /admin — nao
+      // travam o operador aqui. Se o user nao tem nenhum numero liberado,
+      // a UI mostra "Sem permissao" no seletor de numero (loadSessions).
       Promise.all([
         fetch(checkUrl).then(function(r){ return r.json(); }),
         fetch(allowedUrl).then(function(r){ return r.json(); }),
-        fetch(masterUrl).then(function(r){ return r.json(); }),
       ]).then(function(arr) {
         var access = arr[0] || {};
         var allowed = arr[1] || {};
-        var master = arr[2] || {};
         if (!access.allowed) {
           showAccessDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
-          return;
-        }
-        // Master nao configurado: bloqueia UI e mostra onboarding pra
-        // QUALQUER interno ativo. Cliente decide quem vai ser o master.
-        if (!master.configured) {
-          showMasterOnboarding(userID, name);
           return;
         }
         var list = allowed.sessions || [];
@@ -1855,144 +1849,6 @@ function init() {
       });
     });
   });
-}
-
-// Tela de onboarding: cliente escolhe o "usuario master" do tenant.
-// Esse usuario sera o unico que pode liberar permissoes pros outros
-// e transferir o controle. Decisao importante — texto deixa claro.
-function showMasterOnboarding(callerUserID, callerName) {
-  var html = ''
-    + '<div style="min-height:100vh;background:#0f172a;color:#e2e8f0;font-family:-apple-system,system-ui,sans-serif;padding:32px 16px;display:flex;align-items:center;justify-content:center;">'
-    +   '<div style="max-width:560px;width:100%;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:28px;">'
-    +     '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">'
-    +       '<div style="width:42px;height:42px;border-radius:50%;background:rgba(37,211,102,.15);color:#25D366;display:flex;align-items:center;justify-content:center;">'
-    +         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
-    +       '</div>'
-    +       '<div>'
-    +         '<h2 style="margin:0;font-size:18px;font-weight:700;">Configuração inicial</h2>'
-    +         '<div style="font-size:12px;color:#94a3b8;margin-top:2px;">Escolha o usuário master deste portal</div>'
-    +       '</div>'
-    +     '</div>'
-    +     '<div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:12.5px;color:#fcd34d;line-height:1.6;">'
-    +       '<strong>⚠ Atenção:</strong> apenas o usuário master poderá liberar acesso aos números para os outros operadores. '
-    +       'Ele também é o único que pode <strong>transferir o controle</strong> (em caso de troca de responsável). '
-    +       'Escolha com cuidado.'
-    +     '</div>'
-    +     '<div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Quem será o master?</div>'
-    +     '<input type="text" id="mo-search" placeholder="Filtrar por nome ou e-mail..." style="width:100%;padding:10px 12px;background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.08);border-radius:8px;color:#e2e8f0;font-size:13px;margin-bottom:10px;outline:none;" oninput="filtrarOnboarding()">'
-    +     '<div id="mo-list" style="max-height:340px;overflow-y:auto;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(0,0,0,.18);">'
-    +       '<div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix...</div>'
-    +     '</div>'
-    +     '<div id="mo-status" style="margin-top:14px;font-size:11.5px;color:#475569;text-align:center;"></div>'
-    +   '</div>'
-    + '</div>';
-  document.body.innerHTML = html;
-  // _userID/_domain ja' setados no init. Caller default = quem abriu.
-  _userID = callerUserID;
-  carregarOnboardingUsers();
-}
-
-var _moUsers = [];
-
-function carregarOnboardingUsers() {
-  fetch(_baseUrl + '/ui/permissions/all-users?domain=' + encodeURIComponent(_domain))
-    .then(function(r){ return r.json(); })
-    .then(function(d) {
-      if (d.error) {
-        document.getElementById('mo-list').innerHTML =
-          '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + esc(d.error) + '</div>';
-        return;
-      }
-      _moUsers = (d.users || []).filter(function(u){ return u.active !== false; });
-      renderOnboardingList();
-    })
-    .catch(function(err){
-      document.getElementById('mo-list').innerHTML =
-        '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + esc(err.message) + '</div>';
-    });
-}
-
-function filtrarOnboarding() { renderOnboardingList(); }
-
-function renderOnboardingList() {
-  var box = document.getElementById('mo-list');
-  var q = (document.getElementById('mo-search').value || '').trim().toLowerCase();
-  var list = _moUsers;
-  if (q) {
-    list = list.filter(function(u){
-      return (u.name||'').toLowerCase().indexOf(q) !== -1
-          || (u.email||'').toLowerCase().indexOf(q) !== -1
-          || String(u.id).indexOf(q) !== -1;
-    });
-  }
-  if (!list.length) {
-    box.innerHTML = '<div style="padding:18px;color:#475569;font-size:12px;text-align:center;">Nenhum usuário interno ativo encontrado.</div>';
-    return;
-  }
-  var html = '';
-  for (var i = 0; i < list.length; i++) {
-    var u = list[i];
-    var ini = (u.name||'?')[0].toUpperCase();
-    // data-idx + delegation evita problemas de escape em onclick inline
-    // quando o nome do usuario tem apostrofo ou caractere especial.
-    html += '<div class="mo-row" data-idx="' + i + '" '
-         +  'style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s;" '
-         +  'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" '
-         +  'onmouseout="this.style.background=\'transparent\'">'
-         +    '<div style="width:30px;height:30px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + esc(ini) + '</div>'
-         +    '<div style="flex:1;min-width:0;">'
-         +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">' + esc(u.name||('User #'+u.id)) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + esc(u.id) + '</span></div>'
-         +      (u.email ? '<div style="font-size:11px;color:#64748b;">' + esc(u.email) + '</div>' : '')
-         +    '</div>'
-         +  '</div>';
-  }
-  box.innerHTML = html;
-  // Bind via delegation
-  var rows = box.querySelectorAll('.mo-row');
-  for (var k = 0; k < rows.length; k++) {
-    (function(row){
-      row.addEventListener('click', function(){
-        var idx = parseInt(row.dataset.idx, 10);
-        if (isNaN(idx) || !_moUsers[idx]) return;
-        // _moUsers pode ter sido filtrado — uso lista atual aqui
-        var u = list[idx];
-        if (!u) return;
-        confirmarMaster(u.id, u.name||('User #'+u.id));
-      });
-    })(rows[k]);
-  }
-}
-
-function confirmarMaster(userID, userName) {
-  if (!confirm('Confirma definir "' + userName + '" como usuário master?\n\nApenas ele poderá liberar permissões e transferir o controle no futuro.')) return;
-  var status = document.getElementById('mo-status');
-  status.textContent = 'Salvando...';
-  status.style.color = '#94a3b8';
-  fetch(_baseUrl + '/bitrix/crm/master/set', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      domain: _domain,
-      caller_user_id: _userID,
-      new_master_user_id: userID,
-      new_master_name: userName,
-    }),
-  })
-    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
-    .then(function(res){
-      if (!res.ok) {
-        status.textContent = 'Erro: ' + (res.data.error || 'falha');
-        status.style.color = '#f87171';
-        return;
-      }
-      status.textContent = '✓ Master configurado. Recarregando...';
-      status.style.color = '#25D366';
-      setTimeout(function(){ window.location.reload(); }, 800);
-    })
-    .catch(function(err){
-      status.textContent = 'Erro de rede: ' + err.message;
-      status.style.color = '#f87171';
-    });
 }
 
 // Substitui a UI inteira por pagina amigavel de acesso negado.

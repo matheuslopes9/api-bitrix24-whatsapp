@@ -1245,6 +1245,46 @@ func (r *Repository) SetMasterUser(ctx context.Context, domain, callerUserID, ne
 	return tx.Commit(ctx)
 }
 
+// SetMasterUserForce: variante de SetMasterUser SEM checagem de "caller
+// precisa ser master atual". Usado pelo /admin master (super-admin) que
+// tem bypass total — atende casos onde o cliente perdeu acesso ao master
+// antigo. Mesmo efeito colateral: revoga wildcard do master antigo se
+// houve troca, grant wildcard pro novo.
+func (r *Repository) SetMasterUserForce(ctx context.Context, domain, newMasterUserID, newMasterName string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var current string
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(legacy_admin_user_id, '') FROM bitrix_portals WHERE domain = $1`,
+		domain).Scan(&current); err != nil {
+		return fmt.Errorf("portal lookup: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE bitrix_portals SET legacy_admin_user_id = $1, updated_at = NOW() WHERE domain = $2`,
+		newMasterUserID, domain); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, session_jid, granted_by)
+		VALUES (gen_random_uuid(), $1, $2, $3, '', 'super-admin')
+		ON CONFLICT (domain, user_id, session_jid) DO UPDATE SET user_name = EXCLUDED.user_name`,
+		domain, newMasterUserID, newMasterName); err != nil {
+		return err
+	}
+	if current != "" && current != newMasterUserID {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM crm_user_permissions WHERE domain = $1 AND user_id = $2 AND session_jid = ''`,
+			domain, current); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // ListBitrixPortals retorna todos os portais instalados.
 func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, error) {
 	rows, err := r.pool.Query(ctx, `

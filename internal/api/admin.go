@@ -667,6 +667,114 @@ func (h *handlers) adminTenantSetPermission(c *fiber.Ctx) error {
 	}
 }
 
+// GET /admin/api/tenant/master?domain=... — status do master + lista de
+// internos ativos + sessoes do tenant. Tudo num so' shot pra UI nao
+// precisar de varias chamadas.
+func (h *handlers) adminTenantMasterStatus(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	key := normalizeDomainKey(domain)
+
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, key)
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+
+	// Internos ativos do Bitrix (mesmo helper do CRM tab)
+	users, err := h.bitrixClient.ListAllUsers(ctx, creds, 1000)
+	if err != nil {
+		h.log.Warn("admin master status: ListAllUsers failed", zap.Error(err))
+		users = nil
+	}
+	usersOut := make([]fiber.Map, 0, len(users))
+	var masterName string
+	for _, u := range users {
+		full := strings.TrimSpace(u.Name + " " + u.LastName)
+		if full == "" {
+			full = "User #" + u.ID
+		}
+		if u.ID == portal.LegacyAdminUserID {
+			masterName = full
+		}
+		usersOut = append(usersOut, fiber.Map{
+			"id":    u.ID,
+			"name":  full,
+			"email": u.Email,
+		})
+	}
+
+	// Sessoes do tenant (ativas + desconectadas, mesmo do /dashboard)
+	sessions, _ := h.repo.ListSessionsByDomain(ctx, key)
+	sessOut := make([]fiber.Map, 0, len(sessions))
+	for _, s := range sessions {
+		phone := s.Phone
+		if phone == "" {
+			phone = s.CloudDisplayPhone
+		}
+		sessOut = append(sessOut, fiber.Map{
+			"jid":    s.JID,
+			"phone":  phone,
+			"type":   s.Type,
+			"status": s.Status,
+		})
+	}
+
+	// Permissoes ja' liberadas (user x session_jid)
+	perms, _ := h.repo.ListCrmPermissionsByDomain(ctx, key)
+	byUser := map[string][]string{}
+	for _, p := range perms {
+		byUser[p.UserID] = append(byUser[p.UserID], p.SessionJID)
+	}
+	// Anexa allowed_sessions a cada user
+	for i, u := range usersOut {
+		sess := byUser[u["id"].(string)]
+		if sess == nil {
+			sess = []string{}
+		}
+		usersOut[i]["allowed_sessions"] = sess
+	}
+
+	return c.JSON(fiber.Map{
+		"domain":           portal.Domain,
+		"master_user_id":   portal.LegacyAdminUserID,
+		"master_user_name": masterName,
+		"configured":       portal.LegacyAdminUserID != "",
+		"users":            usersOut,
+		"sessions":         sessOut,
+	})
+}
+
+// POST /admin/api/tenant/master?domain=... — body {user_id, user_name}.
+// Super-admin: bypass total do guard de master. Pode setar/trocar
+// qualquer um (atende caso de cliente perdeu acesso ao master antigo).
+func (h *handlers) adminTenantSetMaster(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	var req struct {
+		UserID   string `json:"user_id"`
+		UserName string `json:"user_name"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.UserID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "user_id obrigatorio"})
+	}
+	ctx := c.Context()
+	key := normalizeDomainKey(domain)
+
+	if err := h.repo.SetMasterUserForce(ctx, key, req.UserID, req.UserName); err != nil {
+		h.log.Error("admin: SetMasterUserForce failed", zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: master set",
+		zap.String("domain", key), zap.String("user_id", req.UserID))
+	return c.JSON(fiber.Map{"ok": true, "master_user_id": req.UserID, "master_user_name": req.UserName})
+}
+
 // normalizeDomainKey deixa o domain no mesmo formato usado pelas queries
 // agregadas (que aplicam LOWER + REGEXP_REPLACE para strip protocolo/www).
 // Importante: bitrix_portals.domain e bitrix_accounts.domain podem ter
