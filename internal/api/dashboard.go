@@ -715,49 +715,32 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
   <div id="page-permissoes" class="page">
     <div class="section-hdr">
       <div>
-        <div class="section-title">Permissões CRM</div>
-        <div class="section-sub">Libere quais usuários do Bitrix24 podem acessar o CRM tab</div>
+        <div class="section-title">Permissões por Número</div>
+        <div class="section-sub">Controle quais números cada operador pode usar para enviar mensagens</div>
       </div>
+      <button class="btn btn-ghost btn-sm" id="perm-refresh-btn" onclick="carregarPermissoes(true)" title="Forçar atualização da lista do Bitrix" style="font-size:12px;color:#94a3b8;">
+        ↻ Atualizar
+      </button>
     </div>
 
     <!-- Info box -->
     <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
       <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
-        Quem aparece na lista abaixo pode usar a aba <strong style="color:#cbd5e1;">UC Talk</strong> dentro do CRM do Bitrix24 (Contato, Lead, Deal). <br>
-        Lista vazia = ninguém acessa. Para encontrar o ID do usuário no Bitrix24, abra o perfil dele e copie da URL: <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">/company/personal/user/<b>ID</b>/</code>
+        Todo colaborador interno ativo já enxerga o <strong style="color:#cbd5e1;">UC Talk</strong> no CRM. Esta tela controla apenas <strong style="color:#cbd5e1;">quais números</strong> cada um pode usar para enviar mensagens. Sem nenhum número liberado, o operador vê histórico mas não envia. Clique nos chips abaixo para liberar/revogar por número.
       </div>
     </div>
 
-    <!-- Bloco: liberar novo usuário (busca por nome ou ID) -->
-    <div class="card" style="padding:18px;margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Liberar novo usuário</div>
-        <button class="btn btn-ghost btn-sm" id="perm-refresh-btn" onclick="carregarTodosUsuarios(true)" title="Forçar atualização da lista do Bitrix" style="font-size:11px;color:#94a3b8;">
-          ↻ Atualizar lista
-        </button>
-      </div>
-      <input type="text" id="perm-search-input" class="inp" placeholder="Buscar por nome, email ou ID..." style="width:100%;margin-bottom:10px;" oninput="filtrarTodosUsuarios()">
-      <div id="perm-search-results" style="background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.06);border-radius:8px;max-height:420px;overflow-y:auto;">
-        <div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix...</div>
-      </div>
-      <div id="perm-preview" style="display:none;margin-top:14px;padding:13px;background:rgba(37,211,102,.07);border:1px solid rgba(37,211,102,.25);border-radius:8px;">
-        <div id="perm-preview-body" style="font-size:13px;color:#e2e8f0;margin-bottom:10px;"></div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn btn-primary btn-sm" id="perm-grant-btn" onclick="permGrantUser()">✓ Liberar acesso</button>
-          <button class="btn btn-ghost btn-sm" onclick="permCancelarSelecao()" style="color:#94a3b8;">Cancelar</button>
-        </div>
-      </div>
+    <!-- Filtro -->
+    <div class="card" style="padding:14px 18px;margin-bottom:14px;">
+      <input type="text" id="perm-search-input" class="inp" placeholder="Filtrar usuários por nome ou email..." style="width:100%;" oninput="renderPermUsers()">
+      <div id="perm-status" style="margin-top:8px;font-size:11.5px;color:#64748b;">—</div>
     </div>
 
-    <!-- Bloco: lista de liberados -->
-    <div class="card" style="padding:0;">
-      <div style="padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Usuários liberados</div>
-        <span style="font-size:11px;color:#64748b;" id="perm-status">—</span>
-      </div>
-      <div id="perm-list" style="padding:8px;">
-        <div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>
+    <!-- Lista de usuários x sessões -->
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div id="perm-user-list">
+        <div style="padding:30px;text-align:center;color:#475569;font-size:13px;">Carregando usuários do Bitrix...</div>
       </div>
     </div>
   </div>
@@ -2213,13 +2196,11 @@ function excluirIntegracao(enc) {
   });
 }
 
-// ─── Permissões CRM ──────────────────────────────────────────────────────
-var _permCache = [];           // cache de usuários liberados
-var _permPreviewUser = null;
-var _permAllUsers = [];        // cache de TODOS os usuários do portal Bitrix
-var _permAllUsersLoaded = false;
+// ─── Permissões por Número ─────────────────────────────────────────────
+var _permUsers = [];         // [{id, name, email, position, active, allowed_sessions:[jid,...]}]
+var _permSessions = [];      // sessões do portal disponíveis [{jid, phone, type, status, label}]
+var _permLoading = {};       // {userJidKey: true} — evita double-click
 
-// Helper local de escape HTML (o dashboard nao tinha um)
 function _permEsc(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, function(c){
@@ -2227,204 +2208,135 @@ function _permEsc(s) {
   });
 }
 
-function carregarPermissoes() {
-  var box = document.getElementById('perm-list');
-  box.innerHTML = '<div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Carregando...</div>';
-  document.getElementById('perm-preview').style.display = 'none';
-  if (document.getElementById('perm-search-input')) {
-    document.getElementById('perm-search-input').value = '';
-  }
-  _permPreviewUser = null;
-  fetch(apiUrl('/ui/permissions/list'))
-    .then(function(r){ return r.json(); })
-    .then(function(d) {
-      if (!d || d.error) {
-        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro: ' + ((d && d.error) || 'falha') + '</div>';
-        return;
-      }
-      _permCache = d.users || [];
-      renderPermList();
-      document.getElementById('perm-status').textContent = _permCache.length + ' usuário(s) liberado(s)';
-    })
-    .catch(function(err) {
-      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro de rede: ' + err.message + '</div>';
-    });
-  // Carrega lista de TODOS os usuários do Bitrix em paralelo
-  if (!_permAllUsersLoaded) carregarTodosUsuarios(false);
-}
-
-function carregarTodosUsuarios(forceRefresh) {
-  var results = document.getElementById('perm-search-results');
-  if (!results) return;
-  results.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix... (pode levar alguns segundos)</div>';
+function carregarPermissoes(forceRefresh) {
+  var box = document.getElementById('perm-user-list');
+  box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:13px;">Carregando...</div>';
+  document.getElementById('perm-status').textContent = '—';
   var btn = document.getElementById('perm-refresh-btn');
   if (forceRefresh && btn) { btn.disabled = true; btn.innerHTML = '↻ Atualizando...'; }
-  var url = apiUrl('/ui/permissions/all-users');
-  if (forceRefresh) {
-    url += (url.indexOf('?') !== -1 ? '&' : '?') + 'refresh=1';
-  }
-  fetch(url)
-    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
-      if (!res.ok) {
-        results.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(res.data.error || 'falha') + '</div>';
-        return;
-      }
-      _permAllUsers = res.data.users || [];
-      _permAllUsersLoaded = true;
-      var grantedSet = {};
-      _permCache.forEach(function(u) { grantedSet[u.user_id] = true; });
-      _permAllUsers.forEach(function(u) { u.has_access = !!grantedSet[u.id]; });
-      filtrarTodosUsuarios();
-      if (forceRefresh) toast('Lista atualizada: ' + _permAllUsers.length + ' usuários', 'success');
-    })
-    .catch(function(err) {
-      results.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + _permEsc(err.message) + '</div>';
-    })
-    .then(function() {
-      if (btn) { btn.disabled = false; btn.innerHTML = '↻ Atualizar lista'; }
-    });
+
+  var usersUrl = apiUrl('/ui/permissions/all-users');
+  if (forceRefresh) usersUrl += (usersUrl.indexOf('?') !== -1 ? '&' : '?') + 'refresh=1';
+
+  Promise.all([
+    fetch(usersUrl).then(function(r){ return r.json(); }),
+    fetch(apiUrl('/ui/history/sessions')).then(function(r){ return r.json(); }),
+  ]).then(function(arr) {
+    var u = arr[0] || {};
+    var s = arr[1] || {};
+    if (u.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(u.error) + '</div>'; return; }
+    if (s.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _permEsc(s.error) + '</div>'; return; }
+    _permUsers = u.users || [];
+    _permSessions = s.sessions || [];
+    renderPermUsers();
+    if (forceRefresh) toast('Lista atualizada', 'success');
+  }).catch(function(err){
+    box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + _permEsc(err.message) + '</div>';
+  }).then(function(){
+    if (btn) { btn.disabled = false; btn.innerHTML = '↻ Atualizar'; }
+  });
 }
 
-function filtrarTodosUsuarios() {
-  var results = document.getElementById('perm-search-results');
-  if (!results) return;
-  var q = (document.getElementById('perm-search-input').value || '').toLowerCase();
-  if (!_permAllUsersLoaded) {
-    results.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Carregando usuários do Bitrix...</div>';
+function renderPermUsers() {
+  var box = document.getElementById('perm-user-list');
+  if (!_permUsers.length) {
+    box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:13px;">Nenhum usuário interno ativo no portal.</div>';
     return;
   }
-  var list = _permAllUsers;
-  if (q) {
-    list = list.filter(function(u) {
-      return (u.name||'').toLowerCase().indexOf(q) !== -1
-          || (u.email||'').toLowerCase().indexOf(q) !== -1
-          || String(u.id).indexOf(q) !== -1
-          || (u.position||'').toLowerCase().indexOf(q) !== -1;
-    });
-  }
-  var totalMatched = list.length;
-  if (list.length === 0) {
-    results.innerHTML = '<div style="padding:18px;text-align:center;color:#475569;font-size:12px;">Nenhum usuário encontrado</div>';
+  if (!_permSessions.length) {
+    box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:13px;line-height:1.6;">Nenhuma sessão configurada neste portal.<br><span style="color:#334155;font-size:12px;">Vá em <strong>Sessões WhatsApp</strong> para conectar um número primeiro.</span></div>';
     return;
   }
-  results.innerHTML = list.map(function(u) {
+
+  var q = (document.getElementById('perm-search-input').value || '').trim().toLowerCase();
+  var filtered = q ? _permUsers.filter(function(u){
+    return (u.name||'').toLowerCase().indexOf(q) !== -1
+        || (u.email||'').toLowerCase().indexOf(q) !== -1
+        || (u.position||'').toLowerCase().indexOf(q) !== -1
+        || String(u.id||'').indexOf(q) !== -1;
+  }) : _permUsers;
+
+  var totalGranted = _permUsers.filter(function(u){ return (u.allowed_sessions||[]).length > 0; }).length;
+  document.getElementById('perm-status').textContent =
+    _permUsers.length + ' usuário(s) interno(s) · ' +
+    totalGranted + ' com pelo menos 1 número · ' +
+    _permSessions.length + ' número(s) disponível(eis)';
+
+  if (!filtered.length) {
+    box.innerHTML = '<div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Nenhum usuário casou com o filtro.</div>';
+    return;
+  }
+
+  var html = '';
+  for (var i = 0; i < filtered.length; i++) {
+    var u = filtered[i];
     var initials = (u.name||'?')[0].toUpperCase();
-    var badge = u.has_access
-      ? '<span style="font-size:9px;color:#25D366;background:rgba(37,211,102,.15);padding:2px 6px;border-radius:8px;font-weight:700;">JÁ LIBERADO</span>'
+    var allowedSet = {};
+    (u.allowed_sessions||[]).forEach(function(jid){ allowedSet[jid] = true; });
+    var hasWildcard = !!allowedSet['']; // grant legacy = libera tudo
+
+    // Chips de sessões — verde se liberado, cinza se não
+    var chips = '';
+    for (var j = 0; j < _permSessions.length; j++) {
+      var s = _permSessions[j];
+      var on = hasWildcard || !!allowedSet[s.jid];
+      var bg = on ? 'rgba(37,211,102,.16)' : 'rgba(255,255,255,.04)';
+      var fg = on ? '#25D366' : '#94a3b8';
+      var border = on ? '1px solid rgba(37,211,102,.4)' : '1px solid rgba(255,255,255,.08)';
+      var ico = on ? '✓' : '+';
+      var tipo = s.type === 'cloud_api' ? ' Cloud' : ' QR';
+      var statusMark = s.status === 'active' ? '' : ' ·';
+      var lbl = '+' + (s.phone || s.jid) + tipo + statusMark;
+      chips += '<button class="perm-chip" data-user="' + _permEsc(u.id) + '" data-jid="' + _permEsc(s.jid) + '" data-on="' + (on?'1':'0') + '" '
+            +  'onclick="permToggle(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\', \'' + _permEsc(s.jid) + '\', ' + (on?'true':'false') + ')" '
+            +  'style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:' + bg + ';color:' + fg + ';border:' + border + ';font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;margin:3px;">'
+            +    '<span style="font-weight:700;">' + ico + '</span> ' + _permEsc(lbl)
+            +  '</button>';
+    }
+
+    var wildcardBadge = hasWildcard
+      ? '<div style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.12);padding:2px 8px;border-radius:8px;font-weight:700;margin-top:4px;display:inline-block;">LEGACY: TODOS NÚMEROS</div>'
       : '';
-    var inactive = u.active === false
-      ? '<span style="font-size:9px;color:#f87171;background:rgba(248,113,113,.15);padding:2px 6px;border-radius:8px;font-weight:700;margin-left:4px;">INATIVO</span>'
-      : '';
-    var rowStyle = u.has_access
-      ? 'opacity:.55;cursor:not-allowed;'
-      : 'cursor:pointer;';
-    var click = u.has_access ? '' : 'onclick="selecionarUsuarioParaLiberar(\'' + _permEsc(u.id) + '\')"';
-    return ''
-      + '<div ' + click + ' style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.04);transition:background .12s;' + rowStyle + '"'
-      + (u.has_access ? '' : ' onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'transparent\'"') + '>'
-      +   '<div style="width:28px;height:28px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + _permEsc(initials) + '</div>'
-      +   '<div style="flex:1;min-width:0;">'
-      +     '<div style="font-size:13px;color:#e2e8f0;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' + _permEsc(u.name) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(u.id) + '</span>' + badge + inactive + '</div>'
-      +     (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + (u.position ? ' · ' + _permEsc(u.position) : '') + '</div>' : (u.position ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.position) + '</div>' : ''))
-      +   '</div>'
-      + '</div>';
-  }).join('') + '<div style="padding:8px;text-align:center;color:#475569;font-size:11px;background:rgba(0,0,0,.2);">' + totalMatched + ' usuário(s)' + (q ? ' encontrado(s)' : ' ativo(s) no portal') + '</div>';
-}
 
-function selecionarUsuarioParaLiberar(userID) {
-  var u = _permAllUsers.find(function(x) { return x.id === userID; });
-  if (!u) return;
-  if (u.has_access) {
-    toast('Usuário ' + userID + ' já está liberado', 'error');
-    return;
+    html += '<div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.04);">'
+         +    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+         +      '<div style="width:30px;height:30px;border-radius:50%;background:rgba(96,165,250,.18);color:#60a5fa;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">' + _permEsc(initials) + '</div>'
+         +      '<div style="flex:1;min-width:0;">'
+         +        '<div style="font-size:13.5px;color:#e2e8f0;font-weight:600;">' + _permEsc(u.name||('User #'+u.id)) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(u.id) + '</span></div>'
+         +        (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + (u.position ? ' · ' + _permEsc(u.position) : '') + '</div>' : (u.position ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.position) + '</div>' : ''))
+         +        wildcardBadge
+         +      '</div>'
+         +    '</div>'
+         +    '<div style="padding-left:40px;">' + chips + '</div>'
+         +  '</div>';
   }
-  _permPreviewUser = { id: u.id, name: u.name, email: u.email, position: u.position, active: u.active };
-  // Preenche o input com o nome selecionado (mais visual)
-  document.getElementById('perm-search-input').value = u.name + ' (#' + u.id + ')';
-  var html = ''
-    + '<div style="font-size:14px;color:#e2e8f0;font-weight:600;margin-bottom:4px;">' + _permEsc(u.name) + ' <span style="color:#475569;font-weight:400;font-size:12px;">#' + _permEsc(u.id) + '</span></div>'
-    + (u.email ? '<div style="font-size:12px;color:#94a3b8;">' + _permEsc(u.email) + '</div>' : '')
-    + (u.position ? '<div style="font-size:11.5px;color:#64748b;">' + _permEsc(u.position) + '</div>' : '')
-    + (u.active === false ? '<div style="font-size:11.5px;color:#f87171;margin-top:4px;">⚠ Usuário inativo no Bitrix</div>' : '');
-  document.getElementById('perm-preview-body').innerHTML = html;
-  document.getElementById('perm-preview').style.display = 'block';
-  // Scroll suave até o preview
-  document.getElementById('perm-preview').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  box.innerHTML = html;
 }
 
-function permCancelarSelecao() {
-  _permPreviewUser = null;
-  document.getElementById('perm-preview').style.display = 'none';
-  document.getElementById('perm-search-input').value = '';
-  filtrarTodosUsuarios();
-}
-
-function renderPermList() {
-  var box = document.getElementById('perm-list');
-  if (_permCache.length === 0) {
-    box.innerHTML = '<div style="padding:24px;text-align:center;color:#334155;font-size:13px;">Nenhum usuário liberado ainda. Use o formulário acima para adicionar.</div>';
-    return;
-  }
-  box.innerHTML = _permCache.map(function(u) {
-    var name = u.user_name || ('Usuário #' + u.user_id);
-    return ''
-      + '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
-      +   '<div style="width:30px;height:30px;border-radius:50%;background:rgba(37,211,102,.18);color:#25D366;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">' + (name[0] || '?').toUpperCase() + '</div>'
-      +   '<div style="flex:1;min-width:0;">'
-      +     '<div style="font-size:13.5px;color:#e2e8f0;font-weight:600;">' + _permEsc(name) + ' <span style="color:#475569;font-weight:400;font-size:12px;">#' + _permEsc(u.user_id) + '</span></div>'
-      +     (u.granted_at ? '<div style="font-size:11px;color:#475569;">Liberado em ' + _permEsc(u.granted_at) + '</div>' : '')
-      +   '</div>'
-      +   '<button class="btn btn-ghost btn-sm" style="color:#f87171;border:1px solid rgba(248,113,113,.3);" onclick="permRevoke(\'' + _permEsc(u.user_id) + '\', this)">Remover</button>'
-      + '</div>';
-  }).join('');
-}
-
-function permGrantUser() {
-  if (!_permPreviewUser) return;
-  var u = _permPreviewUser;
-  var btn = document.getElementById('perm-grant-btn');
-  btn.disabled = true; btn.textContent = 'Liberando...';
-  fetch(apiUrl('/ui/permissions/grant'), {
+function permToggle(userID, userName, sessionJID, isOn) {
+  var key = userID + '|' + sessionJID;
+  if (_permLoading[key]) return;
+  _permLoading[key] = true;
+  var endpoint = isOn ? '/ui/permissions/revoke' : '/ui/permissions/grant';
+  fetch(apiUrl(endpoint), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: u.id, user_name: u.name }),
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ user_id: userID, user_name: userName, session_jid: sessionJID }),
   })
-    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
       if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
-      toast('Usuário liberado com sucesso!', 'success');
-      _permPreviewUser = null;
-      document.getElementById('perm-preview').style.display = 'none';
-      var inp = document.getElementById('perm-search-input');
-      if (inp) inp.value = '';
-      // Atualiza flag has_access localmente para refletir na busca
-      var cached = _permAllUsers.find(function(x) { return x.id === u.id; });
-      if (cached) cached.has_access = true;
-      carregarPermissoes();
+      // Atualiza local
+      var u = _permUsers.find(function(x){ return x.id === userID; });
+      if (u) {
+        var set = (u.allowed_sessions||[]).filter(function(j){ return j !== sessionJID; });
+        if (!isOn) set.push(sessionJID);
+        u.allowed_sessions = set;
+      }
+      renderPermUsers();
     })
-    .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); })
-    .then(function() { btn.disabled = false; btn.textContent = '✓ Liberar acesso'; });
-}
-
-function permRevoke(userID, btn) {
-  if (!confirm('Remover acesso do usuário #' + userID + '?')) return;
-  btn.disabled = true;
-  fetch(apiUrl('/ui/permissions/revoke'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userID }),
-  })
-    .then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d}; }); })
-    .then(function(res) {
-      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); btn.disabled = false; return; }
-      toast('Acesso removido', 'success');
-      // Atualiza flag has_access localmente
-      var cached = _permAllUsers.find(function(x) { return x.id === userID; });
-      if (cached) cached.has_access = false;
-      carregarPermissoes();
-    })
-    .catch(function(err) { toast('Erro de rede: ' + err.message, 'error'); btn.disabled = false; });
+    .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); })
+    .then(function(){ delete _permLoading[key]; });
 }
 
 // ─── Templates de Mensagem ──────────────────────────────────────────────────

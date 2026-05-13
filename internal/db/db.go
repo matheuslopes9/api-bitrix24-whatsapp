@@ -206,6 +206,49 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
+		{"018_session_permissions", `
+			-- Mudanca de modelo: ate aqui crm_user_permissions controlava QUEM
+			-- acessava o CRM tab. Novo comportamento: CRM tab e aberto pra todo
+			-- colaborador interno ativo; o que essa tabela controla agora e
+			-- QUAIS NUMEROS (session_jid) o operador pode usar pra enviar.
+			--
+			-- Estrategia: adiciona coluna session_jid. Linhas legadas (com
+			-- session_jid='') ficam como wildcard — interpretadas pelo backend
+			-- como "esse user esta liberado pra qualquer sessao do dominio".
+			-- Novos grants viram com session_jid especifico.
+			ALTER TABLE crm_user_permissions
+				ADD COLUMN IF NOT EXISTS session_jid TEXT NOT NULL DEFAULT '';
+
+			-- Recria a UNIQUE incluindo session_jid (so se a antiga ainda existe).
+			-- A constraint antiga era UNIQUE(domain, user_id).
+			DO $$
+			BEGIN
+				IF EXISTS (
+					SELECT 1 FROM pg_constraint
+					WHERE conname = 'crm_user_permissions_domain_user_id_key'
+				) THEN
+					ALTER TABLE crm_user_permissions
+						DROP CONSTRAINT crm_user_permissions_domain_user_id_key;
+				END IF;
+			END $$;
+
+			-- Nova UNIQUE: (domain, user_id, session_jid). Permite varias linhas
+			-- pro mesmo user (1 por sessao liberada).
+			DO $$
+			BEGIN
+				IF NOT EXISTS (
+					SELECT 1 FROM pg_constraint
+					WHERE conname = 'crm_user_permissions_domain_user_id_session_jid_key'
+				) THEN
+					ALTER TABLE crm_user_permissions
+						ADD CONSTRAINT crm_user_permissions_domain_user_id_session_jid_key
+						UNIQUE (domain, user_id, session_jid);
+				END IF;
+			END $$;
+
+			CREATE INDEX IF NOT EXISTS idx_crm_user_permissions_user
+				ON crm_user_permissions (domain, user_id);
+		`},
 	}
 
 	for _, m := range migrations {

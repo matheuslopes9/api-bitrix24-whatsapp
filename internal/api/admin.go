@@ -541,9 +541,9 @@ func (h *handlers) adminFlushQueue(c *fiber.Ctx) error {
 // ─── CRM Permissions ─────────────────────────────────────────────────────
 
 // GET /admin/api/tenant/users?domain=... — lista usuarios LIBERADOS desse tenant.
-// Como o app nao tem scope `user`, nao listamos todos do portal — apenas os
-// que ja estao em crm_user_permissions. UI permite buscar mais por ID via
-// /admin/api/tenant/user-info.
+// Modelo novo (post-migration 018): cada user pode ter varias linhas (uma por
+// session_jid liberado). Aqui dedupe: mostra cada user uma vez, com a contagem
+// de numeros liberados.
 func (h *handlers) adminTenantListUsers(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	if domain == "" {
@@ -557,21 +557,31 @@ func (h *handlers) adminTenantListUsers(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	type userOut struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		HasAccess bool   `json:"has_access"`
-		GrantedAt string `json:"granted_at,omitempty"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		HasAccess     bool   `json:"has_access"`
+		GrantedAt     string `json:"granted_at,omitempty"`
+		SessionsCount int    `json:"sessions_count"`
 	}
-	out := make([]userOut, 0, len(perms))
+	byID := map[string]*userOut{}
 	for _, p := range perms {
-		out = append(out, userOut{
-			ID:        p.UserID,
-			Name:      p.UserName,
-			HasAccess: true,
-			GrantedAt: p.GrantedAt.Format("2006-01-02 15:04"),
-		})
+		u, ok := byID[p.UserID]
+		if !ok {
+			u = &userOut{
+				ID:        p.UserID,
+				Name:      p.UserName,
+				HasAccess: true,
+				GrantedAt: p.GrantedAt.Format("2006-01-02 15:04"),
+			}
+			byID[p.UserID] = u
+		}
+		u.SessionsCount++
 	}
-	return c.JSON(fiber.Map{"users": out, "granted": len(perms)})
+	out := make([]*userOut, 0, len(byID))
+	for _, u := range byID {
+		out = append(out, u)
+	}
+	return c.JSON(fiber.Map{"users": out, "granted": len(out)})
 }
 
 // GET /admin/api/tenant/user-info?domain=...&user_id=...
@@ -622,9 +632,10 @@ func (h *handlers) adminTenantSetPermission(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "domain query param obrigatorio"})
 	}
 	var req struct {
-		UserID   string `json:"user_id"`
-		UserName string `json:"user_name"`
-		Action   string `json:"action"`
+		UserID     string `json:"user_id"`
+		UserName   string `json:"user_name"`
+		Action     string `json:"action"`
+		SessionJID string `json:"session_jid"` // vazio = wildcard (todas as sessoes)
 	}
 	if err := c.BodyParser(&req); err != nil || req.UserID == "" || req.Action == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "user_id e action sao obrigatorios"})
@@ -632,21 +643,23 @@ func (h *handlers) adminTenantSetPermission(c *fiber.Ctx) error {
 	key := normalizeDomainKey(domain)
 	switch req.Action {
 	case "grant":
-		if err := h.repo.GrantCrmPermission(c.Context(), key, req.UserID, req.UserName, "super-admin"); err != nil {
-			h.log.Error("admin: GrantCrmPermission failed", zap.Error(err))
+		if err := h.repo.GrantSessionPermission(c.Context(), key, req.UserID, req.UserName, req.SessionJID, "super-admin"); err != nil {
+			h.log.Error("admin: GrantSessionPermission failed", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
-		h.log.Info("admin: granted CRM access",
-			zap.String("domain", key), zap.String("user_id", req.UserID))
+		h.log.Info("admin: granted session access",
+			zap.String("domain", key), zap.String("user_id", req.UserID),
+			zap.String("session_jid", req.SessionJID))
 		return c.JSON(fiber.Map{"ok": true, "action": "granted"})
 	case "revoke":
-		removed, err := h.repo.RevokeCrmPermission(c.Context(), key, req.UserID)
+		removed, err := h.repo.RevokeSessionPermission(c.Context(), key, req.UserID, req.SessionJID)
 		if err != nil {
-			h.log.Error("admin: RevokeCrmPermission failed", zap.Error(err))
+			h.log.Error("admin: RevokeSessionPermission failed", zap.Error(err))
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
-		h.log.Info("admin: revoked CRM access",
+		h.log.Info("admin: revoked session access",
 			zap.String("domain", key), zap.String("user_id", req.UserID),
+			zap.String("session_jid", req.SessionJID),
 			zap.Bool("removed", removed))
 		return c.JSON(fiber.Map{"ok": true, "action": "revoked", "removed": removed})
 	default:

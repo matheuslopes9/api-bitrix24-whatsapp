@@ -1409,22 +1409,29 @@ func (r *Repository) DeleteLegacyMessagesByDomain(ctx context.Context, domain st
 
 // CrmUserPermission representa um usuário Bitrix24 liberado para acessar o CRM tab
 // de um dominio especifico.
+// CrmUserPermission representa "user X pode usar session Y no portal Z"
+// (model novo). session_jid vazio = wildcard legacy (compatibilidade com
+// linhas pre-migration 018, equivale a "qualquer sessao do dominio").
 type CrmUserPermission struct {
-	ID        uuid.UUID `db:"id"          json:"id"`
-	Domain    string    `db:"domain"      json:"domain"`
-	UserID    string    `db:"user_id"     json:"user_id"`
-	UserName  string    `db:"user_name"   json:"user_name"`
-	GrantedAt time.Time `db:"granted_at"  json:"granted_at"`
-	GrantedBy string    `db:"granted_by"  json:"granted_by"`
+	ID         uuid.UUID `db:"id"           json:"id"`
+	Domain     string    `db:"domain"       json:"domain"`
+	UserID     string    `db:"user_id"      json:"user_id"`
+	UserName   string    `db:"user_name"    json:"user_name"`
+	SessionJID string    `db:"session_jid"  json:"session_jid"`
+	GrantedAt  time.Time `db:"granted_at"   json:"granted_at"`
+	GrantedBy  string    `db:"granted_by"   json:"granted_by"`
 }
 
-// ListCrmPermissionsByDomain retorna todos os usuários liberados para o domain.
+// ListCrmPermissionsByDomain retorna todas as linhas de permissao do
+// dominio — uma linha por (user, session_jid). Mesmo user pode aparecer
+// varias vezes (uma vez por sessao liberada). Linhas legadas tem
+// session_jid='' = wildcard.
 func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain string) ([]*CrmUserPermission, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, domain, user_id, user_name, granted_at, granted_by
+		SELECT id, domain, user_id, user_name, session_jid, granted_at, granted_by
 		FROM crm_user_permissions
 		WHERE domain = $1
-		ORDER BY user_name`, domain)
+		ORDER BY user_name, session_jid`, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -1432,7 +1439,7 @@ func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain stri
 	var out []*CrmUserPermission
 	for rows.Next() {
 		var p CrmUserPermission
-		if err := rows.Scan(&p.ID, &p.Domain, &p.UserID, &p.UserName, &p.GrantedAt, &p.GrantedBy); err != nil {
+		if err := rows.Scan(&p.ID, &p.Domain, &p.UserID, &p.UserName, &p.SessionJID, &p.GrantedAt, &p.GrantedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
@@ -1440,43 +1447,88 @@ func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain stri
 	return out, rows.Err()
 }
 
-// GrantCrmPermission libera um usuário Bitrix para acessar o CRM do domain.
-// Idempotente: se ja existe, atualiza user_name (snapshot) e mantem granted_at.
-func (r *Repository) GrantCrmPermission(ctx context.Context, domain, userID, userName, grantedBy string) error {
+// GrantSessionPermission libera UM usuario pra usar UMA sessao (numero
+// especifico). Idempotente — refresh do user_name a cada grant.
+func (r *Repository) GrantSessionPermission(ctx context.Context, domain, userID, userName, sessionJID, grantedBy string) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, granted_by)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4)
-		ON CONFLICT (domain, user_id) DO UPDATE SET user_name = EXCLUDED.user_name`,
-		domain, userID, userName, grantedBy)
+		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, session_jid, granted_by)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
+		ON CONFLICT (domain, user_id, session_jid) DO UPDATE SET user_name = EXCLUDED.user_name`,
+		domain, userID, userName, sessionJID, grantedBy)
 	return err
 }
 
-// RevokeCrmPermission remove a permissao de um usuário para o domain. Retorna
-// true se algo foi removido.
-func (r *Repository) RevokeCrmPermission(ctx context.Context, domain, userID string) (bool, error) {
+// RevokeSessionPermission remove o vinculo (user, sessao) no dominio.
+// Retorna true se algo foi removido.
+func (r *Repository) RevokeSessionPermission(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
 	tag, err := r.pool.Exec(ctx,
-		`DELETE FROM crm_user_permissions WHERE domain = $1 AND user_id = $2`, domain, userID)
+		`DELETE FROM crm_user_permissions
+		  WHERE domain = $1 AND user_id = $2 AND session_jid = $3`,
+		domain, userID, sessionJID)
 	if err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
 }
 
-// HasCrmAccess checa se um user_id tem permissao para o domain.
-// Politica estrita: se nenhuma linha existe pro domain, NINGUEM acessa.
-// Retorna (allowed, totalRows). totalRows permite ao caller distinguir
-// entre "lista vazia (config inicial pendente)" e "usuario nao listado".
-func (r *Repository) HasCrmAccess(ctx context.Context, domain, userID string) (allowed bool, totalRows int, err error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE user_id = $2) AS mine
-		FROM crm_user_permissions WHERE domain = $1`, domain, userID)
-	var mine int
-	if err := row.Scan(&totalRows, &mine); err != nil {
-		return false, 0, err
+// ListUserAllowedSessions retorna as session_jids que esse user pode usar
+// no dominio. Linha legada com session_jid='' funciona como wildcard:
+// libera qualquer sessao ativa do dominio (mantem compat sem migrate manual).
+func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT session_jid
+		  FROM crm_user_permissions
+		 WHERE domain = $1 AND user_id = $2`, domain, userID)
+	if err != nil {
+		return nil, err
 	}
-	return mine > 0, totalRows, nil
+	defer rows.Close()
+
+	var hasWildcard bool
+	var specific []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		if jid == "" {
+			hasWildcard = true
+		} else {
+			specific = append(specific, jid)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if hasWildcard {
+		// Wildcard = todas as sessoes ativas do dominio
+		all, err := r.ListActiveSessionsByDomain(ctx, domain)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(all))
+		for _, s := range all {
+			out = append(out, s.JID)
+		}
+		return out, nil
+	}
+	return specific, nil
+}
+
+// IsSessionAllowed: o user pode enviar com esta sessao?
+// Match exato + match wildcard (session_jid='').
+func (r *Repository) IsSessionAllowed(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM crm_user_permissions
+		 WHERE domain = $1
+		   AND user_id = $2
+		   AND (session_jid = $3 OR session_jid = '')`,
+		domain, userID, sessionJID).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // ListPhonesByDomain retorna os telefones QR (nao-Cloud) associados a um dominio

@@ -59,7 +59,9 @@ func (h *handlers) resolveDashboardDomain(ctx context.Context, c *fiber.Ctx) (st
 	return "", fmt.Errorf("informe ?domain= ou ?portal=")
 }
 
-// GET /ui/permissions/list — lista usuarios liberados para o portal atual.
+// GET /ui/permissions/list — lista permissoes (user x session_jid) do
+// dominio. Agrupa por user_id para o frontend renderizar como
+// "Joao: +5519... +5511...".
 func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 	ctx := c.Context()
 	domain, err := h.resolveDashboardDomain(ctx, c)
@@ -71,15 +73,36 @@ func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	out := make([]fiber.Map, 0, len(perms))
-	for _, p := range perms {
-		out = append(out, fiber.Map{
-			"user_id":    p.UserID,
-			"user_name":  p.UserName,
-			"granted_at": p.GrantedAt.Format("2006-01-02 15:04"),
-		})
+	// Agrupa por user_id
+	type userEntry struct {
+		UserID    string   `json:"user_id"`
+		UserName  string   `json:"user_name"`
+		Sessions  []string `json:"sessions"`  // session_jids liberados (string vazia = wildcard)
+		GrantedAt string   `json:"granted_at"`
 	}
-	return c.JSON(fiber.Map{"users": out, "granted": len(perms), "domain": domain})
+	byUser := map[string]*userEntry{}
+	for _, p := range perms {
+		e, ok := byUser[p.UserID]
+		if !ok {
+			e = &userEntry{
+				UserID:    p.UserID,
+				UserName:  p.UserName,
+				Sessions:  []string{},
+				GrantedAt: p.GrantedAt.Format("2006-01-02 15:04"),
+			}
+			byUser[p.UserID] = e
+		}
+		e.Sessions = append(e.Sessions, p.SessionJID)
+	}
+	out := make([]*userEntry, 0, len(byUser))
+	for _, e := range byUser {
+		out = append(out, e)
+	}
+	return c.JSON(fiber.Map{
+		"users":   out,
+		"total":   len(out),
+		"domain":  domain,
+	})
 }
 
 // Cache em memoria de usuarios listados por dominio. TTL 10min.
@@ -134,13 +157,13 @@ func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
 	return c.JSON(buildAllUsersResponse(ctx, h, key, users, false))
 }
 
-// buildAllUsersResponse adiciona flag has_access para cada user (cruza com
-// crm_user_permissions). Retorno enxuto para o frontend.
+// buildAllUsersResponse retorna lista de users com as session_jids ja
+// liberadas para cada um, pra dashboard renderizar checkboxes.
 func buildAllUsersResponse(ctx context.Context, h *handlers, domainKey string, users []bitrix.BitrixUser, fromCache bool) fiber.Map {
 	perms, _ := h.repo.ListCrmPermissionsByDomain(ctx, domainKey)
-	granted := map[string]bool{}
+	byUser := map[string][]string{}
 	for _, p := range perms {
-		granted[p.UserID] = true
+		byUser[p.UserID] = append(byUser[p.UserID], p.SessionJID)
 	}
 	out := make([]fiber.Map, 0, len(users))
 	for _, u := range users {
@@ -148,20 +171,24 @@ func buildAllUsersResponse(ctx context.Context, h *handlers, domainKey string, u
 		if full == "" {
 			full = "User #" + u.ID
 		}
+		sess := byUser[u.ID]
+		if sess == nil {
+			sess = []string{}
+		}
 		out = append(out, fiber.Map{
-			"id":         u.ID,
-			"name":       full,
-			"email":      u.Email,
-			"position":   u.Position,
-			"active":     u.Active,
-			"has_access": granted[u.ID],
+			"id":               u.ID,
+			"name":             full,
+			"email":            u.Email,
+			"position":         u.Position,
+			"active":           u.Active,
+			"allowed_sessions": sess, // pode incluir "" = wildcard legacy
 		})
 	}
 	return fiber.Map{
-		"users":      out,
-		"total":      len(out),
-		"granted":    len(perms),
-		"from_cache": fromCache,
+		"users":         out,
+		"total":         len(out),
+		"granted_users": len(byUser),
+		"from_cache":    fromCache,
 	}
 }
 
@@ -216,27 +243,33 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	var req struct {
-		UserID   string `json:"user_id"`
-		UserName string `json:"user_name"`
+		UserID     string `json:"user_id"`
+		UserName   string `json:"user_name"`
+		SessionJID string `json:"session_jid"`
 	}
 	if err := c.BodyParser(&req); err != nil || req.UserID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "user_id obrigatorio"})
 	}
+	if req.SessionJID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "session_jid obrigatorio"})
+	}
 	key := strings.ToLower(domain)
 	if grant {
-		if err := h.repo.GrantCrmPermission(ctx, key, req.UserID, req.UserName, "dashboard"); err != nil {
+		if err := h.repo.GrantSessionPermission(ctx, key, req.UserID, req.UserName, req.SessionJID, "dashboard"); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
-		h.log.Info("ui: granted CRM access",
-			zap.String("domain", key), zap.String("user_id", req.UserID))
+		h.log.Info("ui: granted session access",
+			zap.String("domain", key), zap.String("user_id", req.UserID),
+			zap.String("session_jid", req.SessionJID))
 		return c.JSON(fiber.Map{"ok": true, "action": "granted"})
 	}
-	removed, err := h.repo.RevokeCrmPermission(ctx, key, req.UserID)
+	removed, err := h.repo.RevokeSessionPermission(ctx, key, req.UserID, req.SessionJID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	h.log.Info("ui: revoked CRM access",
-		zap.String("domain", key), zap.String("user_id", req.UserID))
+	h.log.Info("ui: revoked session access",
+		zap.String("domain", key), zap.String("user_id", req.UserID),
+		zap.String("session_jid", req.SessionJID))
 	return c.JSON(fiber.Map{"ok": true, "action": "revoked", "removed": removed})
 }
 
@@ -451,27 +484,61 @@ func historyMediaPlaceholder(t string) string {
 }
 
 // GET /bitrix/crm/check-access?domain=...&user_id=...
-// Retorna { allowed: bool, configured: bool }
-//   - configured: tenant tem pelo menos 1 user liberado (config foi feita)
-//   - allowed: este user esta na lista
-// JS do CRM tab chama isso antes de carregar a interface. Se !allowed,
-// mostra pagina amigavel de "Sem permissao".
+// Modelo novo: CRM tab e aberto pra todo colaborador interno ativo do portal.
+// Externos/bots/desativados sao bloqueados. O que controla o ENVIO e a aba
+// "Permissoes por Numero" (allowed_sessions), nao mais o acesso ao tab.
+//
+// Retorno mantido por compat de JS: {allowed, configured}. Configured fica
+// sempre true (nao bloqueia mais por "config inicial pendente").
 func (h *handlers) bitrixCRMCheckAccess(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	userID := strings.TrimSpace(c.Query("user_id"))
 	if domain == "" || userID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "domain e user_id obrigatorios"})
 	}
-	key := normalizeDomainKey(domain)
-	allowed, total, err := h.repo.HasCrmAccess(c.Context(), key, userID)
+	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.GetUserByIDs(c.Context(), creds, []string{userID})
 	if err != nil {
-		h.log.Error("crm check access failed", zap.Error(err))
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		h.log.Error("crm check access: GetUserByIDs failed", zap.Error(err))
+		// Falha temporaria do Bitrix nao deve trancar — libera e auditoria
+		// via logs detecta abusos. Politica conservadora seria 403; preferimos
+		// disponibilidade.
+		return c.JSON(fiber.Map{"allowed": true, "configured": true, "warning": "user_lookup_failed"})
+	}
+	allowed := false
+	for _, u := range users {
+		if u.ID == userID && u.Active && !u.Extranet && !u.Bot {
+			allowed = true
+			break
+		}
 	}
 	return c.JSON(fiber.Map{
 		"allowed":    allowed,
-		"configured": total > 0,
+		"configured": true,
 	})
+}
+
+// GET /bitrix/crm/allowed-sessions?domain=...&user_id=...
+// Retorna a lista de session_jids que esse usuario pode usar pra enviar.
+// CRM tab usa pra montar o seletor de numero — sem fila aqui, mostra tudo
+// que esta autorizado (independente de estar ativo na hora; ate sessoes
+// desconectadas voltam, com badge).
+func (h *handlers) bitrixCRMAllowedSessions(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	userID := strings.TrimSpace(c.Query("user_id"))
+	if domain == "" || userID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain e user_id obrigatorios"})
+	}
+	key := normalizeDomainKey(domain)
+	jids, err := h.repo.ListUserAllowedSessions(c.Context(), key, userID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"sessions": jids, "count": len(jids)})
 }
 
 // GET /bitrix/crm/entity?domain=...&entity_type=contact|lead|deal&entity_id=...
@@ -530,7 +597,12 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 }
 
 // POST /bitrix/crm/send
-// Body: { "domain", "entity_type", "entity_id", "phone", "session_jid", "message", "line_id", "operator_name" }
+// Body: { "domain", "entity_type", "entity_id", "phone", "session_jid", "message", "line_id", "operator_name", "user_id" }
+//
+// Guard: o user_id precisa ter session_jid liberado em crm_user_permissions
+// (a aba "Permissoes por Numero" no /dashboard). Sem libera o envio retorna
+// 403. Compat: linhas legacy com session_jid='' (pre-migration 018) valem
+// como wildcard.
 func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	var body struct {
 		Domain       string `json:"domain"`
@@ -541,6 +613,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		Message      string `json:"message"`
 		LineID       int    `json:"line_id"`
 		OperatorName string `json:"operator_name"`
+		UserID       string `json:"user_id"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -550,6 +623,26 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 	if body.Message == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message é obrigatório"})
+	}
+
+	// Permission guard — operador so envia se a sessao escolhida esta liberada
+	// pra ele. user_id obrigatorio nesse modelo novo. Se vier vazio (JS antigo
+	// que ainda nao foi atualizado), bloqueia com mensagem explicita.
+	if body.UserID == "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "user_id ausente — atualize a aba do CRM (Ctrl+Shift+R)",
+		})
+	}
+	domainKey := normalizeDomainKey(body.Domain)
+	ok, err := h.repo.IsSessionAllowed(c.Context(), domainKey, body.UserID, body.SessionJID)
+	if err != nil {
+		h.log.Error("crm send: permission check failed", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "voce nao tem permissao pra enviar com este numero. Peca para um admin liberar.",
+		})
 	}
 
 	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), normalizePortalDomain(body.Domain))
@@ -638,15 +731,32 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 }
 
 // POST /bitrix/crm/upload — recebe arquivo multipart e enfileira envio via WA
-// Form fields: domain, phone, session_jid + file (multipart)
+// Form fields: domain, phone, session_jid, user_id + file (multipart)
+// Mesmo guard de permissao do bitrixCRMSend.
 func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 	domain     := c.FormValue("domain")
 	phone      := c.FormValue("phone")
 	sessionJID := c.FormValue("session_jid")
 	caption    := c.FormValue("caption") // texto opcional junto ao arquivo
+	userID     := c.FormValue("user_id")
 
 	if domain == "" || phone == "" || sessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
+	}
+	if userID == "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "user_id ausente — atualize a aba do CRM (Ctrl+Shift+R)",
+		})
+	}
+	ok, err := h.repo.IsSessionAllowed(c.Context(), normalizeDomainKey(domain), userID, sessionJID)
+	if err != nil {
+		h.log.Error("crm upload: permission check failed", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "voce nao tem permissao pra enviar arquivos com este numero. Peca para um admin liberar.",
+		})
 	}
 
 	fileHeader, err := c.FormFile("file")
@@ -1515,7 +1625,8 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 
 <script src="https://api.bitrix24.com/api/v1/"></script>
 <script>
-var _domain = '', _entityType = 'contact', _entityId = '';
+var _domain = '', _entityType = 'contact', _entityId = '', _userID = '';
+var _allowedSessions = null; // Set de session_jids liberados pra este user (null=ainda carregando)
 var _contactName = '', _contactPhone = '', _contactInitials = '?';
 var _baseUrl = window.location.origin;
 var _sessions = [];
@@ -1567,31 +1678,44 @@ function init() {
       var name  = [u.NAME, u.LAST_NAME].filter(Boolean).join(' ') || u.ID || 'Operador';
       var email = u.EMAIL || '';
       var userID = String(u.ID || '');
+      _userID = userID;
       document.getElementById('op-name').textContent     = name;
       document.getElementById('op-email').textContent    = email;
       document.getElementById('op-initials').textContent = initials(name);
 
-      // ── Checagem de permissao de acesso ao CRM tab ──
       if (!userID || !_domain) {
-        // Sem user_id ou dominio nao consegue checar — bloqueia por seguranca
         showAccessDenied('Não foi possível identificar o usuário');
         return;
       }
+
+      // Modelo novo: check-access valida apenas que o user e' interno ativo.
+      // O que controla envio e' /bitrix/crm/allowed-sessions, carregado em
+      // paralelo — JS filtra o dropdown com isso.
       var checkUrl = _baseUrl + '/bitrix/crm/check-access'
         + '?domain=' + encodeURIComponent(_domain)
         + '&user_id=' + encodeURIComponent(userID);
-      fetch(checkUrl).then(function(r){ return r.json(); }).then(function(data) {
-        if (data.allowed) {
-          // Permissao OK — segue fluxo normal
-          loadSessions();
-          loadEntity();
-        } else {
-          showAccessDenied(data.configured
-            ? 'Seu usuário não tem permissão para acessar o CRM. Peça a um administrador da UC Technology para liberar seu acesso.'
-            : 'O acesso ao CRM ainda não foi configurado neste portal. Entre em contato com a UC Technology para configurar permissões.');
+      var allowedUrl = _baseUrl + '/bitrix/crm/allowed-sessions'
+        + '?domain=' + encodeURIComponent(_domain)
+        + '&user_id=' + encodeURIComponent(userID);
+
+      Promise.all([
+        fetch(checkUrl).then(function(r){ return r.json(); }),
+        fetch(allowedUrl).then(function(r){ return r.json(); }),
+      ]).then(function(arr) {
+        var access = arr[0] || {};
+        var allowed = arr[1] || {};
+        if (!access.allowed) {
+          showAccessDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
+          return;
         }
+        var list = allowed.sessions || [];
+        var set = {};
+        for (var i = 0; i < list.length; i++) set[list[i]] = true;
+        _allowedSessions = set;
+        loadSessions();
+        loadEntity();
       }).catch(function(err) {
-        showAccessDenied('Erro ao verificar permissões: ' + err.message);
+        showAccessDenied('Erro ao verificar permissões: ' + (err && err.message || err));
       });
     });
   });
@@ -1622,8 +1746,7 @@ function initials(name) {
 function loadSessions() {
   var url = _baseUrl + '/bitrix/crm/sessions' + (_domain ? ('?domain=' + enc(_domain)) : '');
   fetch(url).then(function(r){ return r.json(); }).then(function(d) {
-    _sessions = (d.sessions || []).map(function(s) {
-      // Aceita tanto string (formato antigo) quanto objeto (novo com type/phone/label).
+    var raw = (d.sessions || []).map(function(s) {
       if (typeof s === 'string') {
         var num = s.split('@')[0];
         if (num.indexOf(':') !== -1) num = num.split(':')[0];
@@ -1631,6 +1754,11 @@ function loadSessions() {
       }
       return {jid: s.jid, phone: s.phone || '', type: s.type || 'qr', label: s.label || ''};
     });
+    // Filtra pelas sessoes que o operador pode usar. Se _allowedSessions nao
+    // carregou (erro de rede), preferimos NAO listar nada — operador nao
+    // envia sem permissao explicita.
+    var allowed = _allowedSessions || {};
+    _sessions = raw.filter(function(s){ return allowed[s.jid]; });
     renderWADropdown();
   });
 }
@@ -1640,8 +1768,11 @@ function renderWADropdown() {
   var label = document.getElementById('wa-sel-label');
   dd.innerHTML = '';
   if (!_sessions.length) {
-    dd.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:#64748b">Nenhuma sessão conectada</div>';
-    label.textContent = 'Desconectado';
+    var msg = (_allowedSessions && Object.keys(_allowedSessions).length === 0)
+      ? 'Você não tem nenhum número liberado.<br><span style="color:#475569">Peça para um admin liberar na aba Permissões.</span>'
+      : 'Nenhuma sessão conectada';
+    dd.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:#64748b;line-height:1.5">' + msg + '</div>';
+    label.textContent = 'Sem permissão';
     document.getElementById('wa-selector').style.borderColor = '#7f1d1d';
     return;
   }
@@ -1964,6 +2095,7 @@ function sendMsg() {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ domain:_domain, entity_type:_entityType, entity_id:_entityId,
                            phone:_contactPhone, session_jid:_activeSession, message:msg,
+                           user_id: _userID,
                            operator_name: document.getElementById('op-name').textContent || 'UC Talk' })
   })
   .then(function(r){ return r.json(); })
@@ -1991,6 +2123,7 @@ function uploadFile() {
   fd.append('domain',      _domain);
   fd.append('phone',       _contactPhone);
   fd.append('session_jid', _activeSession);
+  fd.append('user_id',     _userID);
   fd.append('caption',     caption);
   fd.append('file',        _pendingFile, _pendingFile.name);
 
@@ -2188,9 +2321,7 @@ BX24.init(function() {
           document.getElementById('wrap').outerHTML =
             '<iframe src="' + _baseUrl + '/bitrix/crm/tab?menu=1&domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
         } else {
-          showDenied(data.configured
-            ? 'Seu usuário não tem permissão para acessar o UC Talk. Peça a um administrador da UC Technology para liberar seu acesso.'
-            : 'O acesso ao UC Talk ainda não foi configurado neste portal. Entre em contato com a UC Technology.');
+          showDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
         }
       })
       .catch(function(err) { showDenied('Erro ao verificar permissões: ' + err.message); });
