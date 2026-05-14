@@ -3035,19 +3035,35 @@ function carregarSMSPage() {
 
 function renderSMSConfig() {
   var sel = document.getElementById('sms-session-select');
+  // Campanhas SMS usam SOMENTE sessoes nao oficiais (Multi-Device / QR).
+  // Cloud API tem regra de 24h que descarta disparo ativo silenciosamente —
+  // entao filtramos do dropdown pra evitar configuracao quebrada por engano.
+  var nonOfficial = _smsState.sessions.filter(function(s){ return s.type !== 'cloud_api'; });
   var opts = '<option value="">— desativado —</option>';
-  for (var i = 0; i < _smsState.sessions.length; i++) {
-    var s = _smsState.sessions[i];
-    var tipo = s.type === 'cloud_api' ? ' (Cloud)' : ' (QR)';
-    var lbl = '+' + (s.phone || s.jid) + tipo;
+  for (var i = 0; i < nonOfficial.length; i++) {
+    var s = nonOfficial[i];
+    var lbl = '+' + (s.phone || s.jid) + ' (Multi-Device)';
     var sel_attr = (s.jid === _smsState.default_session_jid) ? ' selected' : '';
     opts += '<option value="' + _smsEsc(s.jid) + '"' + sel_attr + '>' + _smsEsc(lbl) + '</option>';
   }
   sel.innerHTML = opts;
-  document.getElementById('sms-config-status').textContent = _smsState.default_session_jid
-    ? '✓ Configurado — campanhas saem por ' + _smsState.default_session_jid.replace(/^cloud:/,'').split('@')[0]
-    : 'Desativado — escolha uma sessão para ativar';
-  // Banner de risco e' permanente agora (nao depende mais de risk_acknowledged).
+
+  // Se o default salvo era Cloud (configurado antes do filtro), avisa pra
+  // o cliente trocar — Cloud API nao funciona pra disparo ativo.
+  var defIsCloud = (_smsState.default_session_jid || '').indexOf('cloud:') === 0;
+  if (!nonOfficial.length) {
+    document.getElementById('sms-config-status').innerHTML =
+      '<span style="color:#fbbf24">⚠ Nenhuma sessão Multi-Device conectada. Conecte um número via QR Code em "Sessões WhatsApp" antes de configurar.</span>';
+  } else if (defIsCloud) {
+    document.getElementById('sms-config-status').innerHTML =
+      '<span style="color:#fbbf24">⚠ Sessão atual é Cloud API e não funciona para disparo ativo. Escolha uma sessão Multi-Device acima.</span>';
+  } else if (_smsState.default_session_jid) {
+    document.getElementById('sms-config-status').textContent =
+      '✓ Configurado — campanhas saem por ' + _smsState.default_session_jid.split('@')[0].split(':')[0];
+  } else {
+    document.getElementById('sms-config-status').textContent =
+      'Desativado — escolha uma sessão para ativar';
+  }
 }
 
 function onSMSSessionChange() {
