@@ -206,6 +206,23 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
+		{"022_template_meta", `
+			-- Templates podem opcionalmente apontar pra um template Meta
+			-- aprovado (WhatsApp Cloud API). Quando o template tem
+			-- meta_template_name preenchido, disparo ativo (Marketing > SMS
+			-- Campaigns ou outros canais fora da janela de 24h) usa modo
+			-- "template" do Meta em vez de texto livre — unica forma oficial
+			-- de entregar mensagem ativa via Cloud API.
+			--
+			-- Campos vazios = template "livre" (texto normal, funciona so
+			-- dentro da janela 24h ou via WhatsApp Multi-Device).
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_name TEXT NOT NULL DEFAULT '';
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_lang TEXT NOT NULL DEFAULT '';
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_vars INT NOT NULL DEFAULT 0;
+		`},
 		{"021_sms_provider", `
 			-- Modulo SMS Campaigns: Bitrix Marketing > Campanhas SMS escolhe o
 			-- UC Talk como provedor. Bitrix manda POSTs de SMS pra gente, nos

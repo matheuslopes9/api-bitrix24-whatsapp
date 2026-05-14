@@ -159,22 +159,50 @@ func (h *handlers) smsProviderSend(c *fiber.Ctx) error {
 
 // processSMSSend roda em goroutine separada. Envia via WhatsApp e atualiza
 // status local + status no Bitrix.
+//
+// Detecta marcador "[meta:template_name|var1|var2]" no inicio do body. Se
+// presente E a sessao for Cloud API, envia como template (caminho oficial
+// pra disparo ativo). Se nao, manda texto livre (so funciona dentro da
+// janela de 24h — fora dela Meta descarta silenciosamente).
 func (h *handlers) processSMSSend(creds bitrix.TenantCreds, sessionJID string, m *db.BitrixSMSMessage) {
-	// Context proprio — 60s pra send + reportagem.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	toJID := m.ToPhone + "@s.whatsapp.net"
 	var waMsgID string
 	var sendErr error
+	var sendMode string // "template" | "text"
 
-	if strings.HasPrefix(sessionJID, "cloud:") {
-		// Cloud API: aceita telefone direto.
-		waMsgID, sendErr = h.cloudMgr.SendText(ctx, sessionJID, m.ToPhone, m.Body)
+	tplName, tplVars, bodyAfterMarker := parseMetaMarker(m.Body)
+
+	if tplName != "" && strings.HasPrefix(sessionJID, "cloud:") {
+		// Resolve lang do template no banco (Meta exige).
+		t, err := h.repo.GetMessageTemplateByMetaName(ctx, m.Domain, tplName)
+		lang := "pt_BR" // default razoavel
+		if err == nil && t != nil && t.MetaTemplateLang != "" {
+			lang = t.MetaTemplateLang
+		}
+		sendMode = "template"
+		waMsgID, sendErr = h.cloudMgr.SendTemplate(ctx, sessionJID, m.ToPhone, tplName, lang, tplVars)
+		h.log.Info("sms-provider: routing as template",
+			zap.String("template", tplName),
+			zap.String("lang", lang),
+			zap.Int("vars", len(tplVars)))
 	} else {
-		// Multi-Device (whatsmeow): JID completo.
-		waMsgID, sendErr = h.waManager.Send(ctx, sessionJID, toJID, m.Body)
+		// Texto livre. Marcador (se presente mas sessao Multi-Device) ja foi
+		// removido — manda apenas o body limpo.
+		text := bodyAfterMarker
+		if text == "" {
+			text = m.Body
+		}
+		sendMode = "text"
+		if strings.HasPrefix(sessionJID, "cloud:") {
+			waMsgID, sendErr = h.cloudMgr.SendText(ctx, sessionJID, m.ToPhone, text)
+		} else {
+			waMsgID, sendErr = h.waManager.Send(ctx, sessionJID, toJID, text)
+		}
 	}
+	_ = sendMode // captured em logs abaixo
 
 	if sendErr != nil {
 		h.log.Warn("sms-provider: WA send failed",
@@ -240,6 +268,41 @@ func (h *handlers) ReportSMSDelivered(ctx context.Context, waMessageID string) {
 
 // captureBindings extrai bindings[0][OWNER_TYPE_ID]/OWNER_ID etc.
 // Salva como JSON cru pra UI futura. Best-effort — se vazio, ok.
+// parseMetaMarker extrai marcador "[meta:template_name|var1|var2|...]" do
+// inicio do body. Retorna (templateName, vars, bodyAfterMarker).
+//
+// Examples:
+//   "[meta:welcome_msg]"                              -> ("welcome_msg", [], "")
+//   "[meta:promo|Joao|R$100]"                         -> ("promo", ["Joao","R$100"], "")
+//   "[meta:promo|Joao] texto livre depois"            -> ("promo", ["Joao"], " texto livre depois")
+//   "Sem marcador, texto puro"                        -> ("", nil, "Sem marcador, texto puro")
+//
+// Marcador deve estar EXATAMENTE no inicio (sem espaco antes). Case-sensitive
+// no prefixo "[meta:". O delimitador de variaveis e' "|".
+func parseMetaMarker(body string) (string, []string, string) {
+	const prefix = "[meta:"
+	if !strings.HasPrefix(body, prefix) {
+		return "", nil, body
+	}
+	end := strings.Index(body, "]")
+	if end < 0 {
+		// "[meta:" sem fechamento — trata como texto livre
+		return "", nil, body
+	}
+	inner := body[len(prefix):end]
+	rest := body[end+1:]
+	parts := strings.Split(inner, "|")
+	name := strings.TrimSpace(parts[0])
+	if name == "" {
+		return "", nil, body
+	}
+	vars := make([]string, 0, len(parts)-1)
+	for _, p := range parts[1:] {
+		vars = append(vars, strings.TrimSpace(p))
+	}
+	return name, vars, rest
+}
+
 func captureBindings(c *fiber.Ctx) string {
 	binds := []map[string]string{}
 	// Bitrix manda como bindings[0][OWNER_TYPE_ID]=X&bindings[0][OWNER_ID]=Y...
