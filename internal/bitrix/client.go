@@ -1307,3 +1307,15 @@ func (c *Client) UpdateSMSMessageStatus(ctx context.Context, creds TenantCreds, 
 	})
 	return err
 }
+
+// ListSMSSenders retorna os senders registrados pelo app neste portal.
+// Util pra debug: confirma se o messageservice.sender.add do install
+// realmente persistiu. Tambem revela se o app esta sem scope `messageservice`
+// (nesse caso retorna ACCESS_DENIED).
+func (c *Client) ListSMSSenders(ctx context.Context, creds TenantCreds) (string, error) {
+	raw, err := c.call(ctx, creds, "messageservice.sender.list", map[string]interface{}{})
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}

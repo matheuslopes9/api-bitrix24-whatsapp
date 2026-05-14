@@ -797,3 +797,64 @@ func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
 }
+
+// ─── SMS Provider — debug + retry manual (super-admin) ───────────────────
+
+// GET /admin/api/tenant/sms-debug?domain=... — mostra o que o Bitrix tem
+// registrado como SMS senders DESTE app no portal. Diagnostica scope
+// faltando, registro nao persistido, etc.
+func (h *handlers) adminTenantSMSDebug(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	raw, listErr := h.bitrixClient.ListSMSSenders(ctx, creds)
+	out := fiber.Map{
+		"domain":              portal.Domain,
+		"default_session_jid": portal.DefaultSMSSessionJID,
+		"expected_sender_code": SMSSenderCode,
+		"expected_handler_url": h.cfg.App.BaseURL() + smsHandlerPath,
+	}
+	if listErr != nil {
+		out["list_error"] = listErr.Error()
+		out["hint"] = "Se o erro contem 'ACCESS_DENIED' ou 'INVALID_TOKEN', o scope `messageservice` provavelmente NAO esta no manifest do app no Marketplace. Adicione e re-instale."
+	} else {
+		out["bitrix_senders_raw"] = raw
+	}
+	return c.JSON(out)
+}
+
+// POST /admin/api/tenant/sms-register?domain=... — forca registro do
+// nosso provedor SMS no portal. Util quando o auto-register do install
+// falhou (scope faltando, racing etc).
+func (h *handlers) adminTenantSMSRegister(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	handlerURL := h.cfg.App.BaseURL() + smsHandlerPath
+	if err := h.bitrixClient.RegisterSMSSender(ctx, creds, SMSSenderCode, "UC Talk WhatsApp", handlerURL); err != nil {
+		h.log.Error("admin: SMS register failed",
+			zap.String("domain", portal.Domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"error": err.Error(),
+			"hint":  "Se o erro contem 'ACCESS_DENIED', o scope `messageservice` esta faltando no manifest do app. Adicione no Marketplace e o cliente precisa re-instalar/re-autorizar.",
+		})
+	}
+	h.log.Info("admin: SMS sender registered manually",
+		zap.String("domain", portal.Domain),
+		zap.String("handler", handlerURL))
+	return c.JSON(fiber.Map{"ok": true, "handler_url": handlerURL, "sender_code": SMSSenderCode})
+}
