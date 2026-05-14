@@ -241,10 +241,12 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 				NOW()                     AS last_seen
 			FROM shadow_jids sj
 		)
-		SELECT * FROM real
-		UNION ALL
-		SELECT * FROM shadow
-		ORDER BY (status = 'active') DESC, last_seen DESC`)
+		SELECT * FROM (
+			SELECT * FROM real
+			UNION ALL
+			SELECT * FROM shadow
+		) combined
+		ORDER BY (combined.status = 'active') DESC, combined.last_seen DESC`)
 	if err != nil {
 		return nil, err
 	}
