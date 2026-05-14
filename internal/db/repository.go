@@ -1214,14 +1214,16 @@ func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID str
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
-		       COALESCE(legacy_admin_user_id, '')
+		       COALESCE(legacy_admin_user_id, ''),
+		       COALESCE(default_sms_session_jid, ''),
+		       COALESCE(sms_risk_acknowledged, FALSE)
 		FROM bitrix_portals WHERE member_id = $1
 		ORDER BY installed_at DESC LIMIT 1`, memberID)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-		&p.LegacyAdminUserID)
+		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged)
 	if err != nil {
 		return nil, err
 	}
@@ -1242,13 +1244,15 @@ func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string)
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
-		       COALESCE(legacy_admin_user_id, '')
+		       COALESCE(legacy_admin_user_id, ''),
+		       COALESCE(default_sms_session_jid, ''),
+		       COALESCE(sms_risk_acknowledged, FALSE)
 		FROM bitrix_portals WHERE domain = $1`, domain)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-		&p.LegacyAdminUserID)
+		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,7 +1351,9 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
-		       COALESCE(legacy_admin_user_id, '')
+		       COALESCE(legacy_admin_user_id, ''),
+		       COALESCE(default_sms_session_jid, ''),
+		       COALESCE(sms_risk_acknowledged, FALSE)
 		FROM bitrix_portals ORDER BY installed_at DESC`)
 	if err != nil {
 		return nil, err
@@ -1359,7 +1365,7 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		var p BitrixPortal
 		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-			&p.LegacyAdminUserID); err != nil {
+			&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged); err != nil {
 			return nil, err
 		}
 		portals = append(portals, &p)
@@ -1806,4 +1812,106 @@ func (r *Repository) DeleteMessageTemplate(ctx context.Context, id uuid.UUID, do
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ─── SMS Provider (Marketing > Campanhas SMS via WhatsApp) ────────────────
+// Modulo isolado: nao toca em messages/sessions existentes.
+
+// InsertSMSMessage cria registro de uma mensagem SMS recebida do Bitrix.
+// Idempotente: se bitrix_message_id ja existe (retry do Bitrix), nao falha.
+func (r *Repository) InsertSMSMessage(ctx context.Context, m *BitrixSMSMessage) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO bitrix_sms_messages
+			(bitrix_message_id, domain, sender_code, session_jid, to_phone, body,
+			 bindings_json, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'queued')
+		ON CONFLICT (bitrix_message_id) DO NOTHING`,
+		m.BitrixMessageID, m.Domain, m.SenderCode, m.SessionJID,
+		m.ToPhone, m.Body, m.BindingsJSON)
+	return err
+}
+
+// UpdateSMSMessageSent marca como enviado ao WA e guarda wa_message_id.
+func (r *Repository) UpdateSMSMessageSent(ctx context.Context, bitrixMsgID, waMsgID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE bitrix_sms_messages
+		   SET wa_message_id = $2, status = 'sent', sent_at = NOW(),
+		       status_updated_at = NOW()
+		 WHERE bitrix_message_id = $1`, bitrixMsgID, waMsgID)
+	return err
+}
+
+// UpdateSMSMessageStatus seta status final + opcional error_msg.
+// Status validos: queued|sent|delivered|undelivered|failed.
+func (r *Repository) UpdateSMSMessageStatus(ctx context.Context, bitrixMsgID, status, errorMsg string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE bitrix_sms_messages
+		   SET status = $2, error_msg = $3, status_updated_at = NOW()
+		 WHERE bitrix_message_id = $1`, bitrixMsgID, status, errorMsg)
+	return err
+}
+
+// GetSMSMessageByWAID busca o registro SMS pelo wa_message_id (delivery
+// receipt do WhatsApp Cloud/Multi-Device chega com esse id).
+func (r *Repository) GetSMSMessageByWAID(ctx context.Context, waMsgID string) (*BitrixSMSMessage, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT bitrix_message_id, domain, sender_code, session_jid, to_phone, body,
+		       COALESCE(wa_message_id,''), status, COALESCE(error_msg,''),
+		       COALESCE(bindings_json,''), created_at, sent_at, status_updated_at
+		  FROM bitrix_sms_messages WHERE wa_message_id = $1 LIMIT 1`, waMsgID)
+	var m BitrixSMSMessage
+	if err := row.Scan(&m.BitrixMessageID, &m.Domain, &m.SenderCode, &m.SessionJID,
+		&m.ToPhone, &m.Body, &m.WAMessageID, &m.Status, &m.ErrorMsg,
+		&m.BindingsJSON, &m.CreatedAt, &m.SentAt, &m.StatusUpdatedAt); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// ListSMSMessagesByDomain pagina as ultimas N msgs pra UI do dashboard.
+func (r *Repository) ListSMSMessagesByDomain(ctx context.Context, domain string, limit int) ([]*BitrixSMSMessage, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT bitrix_message_id, domain, sender_code, session_jid, to_phone, body,
+		       COALESCE(wa_message_id,''), status, COALESCE(error_msg,''),
+		       COALESCE(bindings_json,''), created_at, sent_at, status_updated_at
+		  FROM bitrix_sms_messages
+		 WHERE domain = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2`, domain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BitrixSMSMessage
+	for rows.Next() {
+		var m BitrixSMSMessage
+		if err := rows.Scan(&m.BitrixMessageID, &m.Domain, &m.SenderCode, &m.SessionJID,
+			&m.ToPhone, &m.Body, &m.WAMessageID, &m.Status, &m.ErrorMsg,
+			&m.BindingsJSON, &m.CreatedAt, &m.SentAt, &m.StatusUpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &m)
+	}
+	return out, rows.Err()
+}
+
+// SetDefaultSMSSession define a sessao WA padrao do tenant pra campanhas SMS.
+// Vazio = desativado.
+func (r *Repository) SetDefaultSMSSession(ctx context.Context, domain, sessionJID string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bitrix_portals SET default_sms_session_jid = $1, updated_at = NOW() WHERE domain = $2`,
+		sessionJID, domain)
+	return err
+}
+
+// AckSMSRisk marca que o tenant ja viu e aceitou o aviso de risco de
+// banimento por uso massivo do WhatsApp. Modal nao reaparece.
+func (r *Repository) AckSMSRisk(ctx context.Context, domain string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bitrix_portals SET sms_risk_acknowledged = TRUE, updated_at = NOW() WHERE domain = $1`,
+		domain)
+	return err
 }

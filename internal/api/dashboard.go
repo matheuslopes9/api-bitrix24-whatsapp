@@ -423,6 +423,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     Histórico
   </div>
+  <div class="nav-item" id="nav-sms" onclick="showPage('sms')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18v14H3z"/><path d="M3 5l9 7 9-7"/></svg>
+    Campanhas SMS
+  </div>
   <div class="nav-item" id="nav-relatorios" onclick="showPage('relatorios')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
@@ -961,6 +965,55 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- ══════════════════════ CAMPANHAS SMS ══════════════════════ -->
+  <div id="page-sms" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Campanhas SMS</div>
+        <div class="section-sub">Use o módulo Marketing &gt; Campanhas SMS do Bitrix24 para enviar via WhatsApp</div>
+      </div>
+    </div>
+
+    <!-- Info box explicando como funciona -->
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+      <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
+        O <strong style="color:#cbd5e1;">UC Talk</strong> aparece como um provedor no menu <strong style="color:#cbd5e1;">Marketing &gt; Campanhas SMS</strong> do Bitrix24. Quando o cliente escolher o UC Talk e disparar uma campanha, nós roteamos cada mensagem pelo WhatsApp da sessão configurada abaixo. O Bitrix mostra os status (enviado/entregue/falhou) normalmente.
+      </div>
+    </div>
+
+    <!-- Aviso de risco de banimento -->
+    <div id="sms-risk-box" class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:none;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.25);">
+      <div style="font-size:12.5px;color:#fca5a5;line-height:1.7;">
+        <strong>⚠ Atenção — risco de banimento:</strong> disparos em massa para contatos que <strong>não conversaram com você nas últimas 24h</strong> podem resultar em <strong>banimento do número</strong> pelo WhatsApp. Use com responsabilidade e prefira mensagens para clientes já ativos.
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" onclick="ackRiscoSMS()">✓ Entendi os riscos</button>
+      </div>
+    </div>
+
+    <!-- Configuracao -->
+    <div class="card" style="padding:18px;margin-bottom:14px;">
+      <div style="font-size:13px;color:#cbd5e1;font-weight:600;margin-bottom:10px;">Sessão WhatsApp padrão para campanhas</div>
+      <div style="font-size:11.5px;color:#64748b;margin-bottom:10px;">Todas as campanhas SMS disparadas pelo Bitrix sairão por este número. Deixe vazio para desativar o módulo.</div>
+      <select id="sms-session-select" class="inp" style="width:100%;max-width:520px;" onchange="onSMSSessionChange()">
+        <option value="">— desativado —</option>
+      </select>
+      <div id="sms-config-status" style="margin-top:8px;font-size:11.5px;color:#64748b;">—</div>
+    </div>
+
+    <!-- Histórico de envios -->
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Últimos envios</div>
+        <button class="btn btn-ghost btn-sm" onclick="carregarSMSMessages()" style="font-size:11px;color:#94a3b8;">↻ Atualizar</button>
+      </div>
+      <div id="sms-msg-list" style="max-height:420px;overflow-y:auto;padding:4px;">
+        <div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══════════════════════ FILAS BITRIX ══════════════════════ -->
   <div id="page-filas" class="page">
     <div class="section-hdr">
@@ -1390,7 +1443,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', relatorios: 'Relatórios' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -1407,6 +1460,7 @@ function showPage(nome) {
   if (nome === 'permissoes') carregarPermissoes();
   if (nome === 'templates') carregarTemplatesDashboard();
   if (nome === 'historico') carregarHistoricoSessoes();
+  if (nome === 'sms') carregarSMSPage();
 }
 
 function openSidebar() {
@@ -2946,6 +3000,133 @@ function _histFmtFull(iso) {
       hour:'2-digit', minute:'2-digit'
     });
   } catch(e) { return ''; }
+}
+
+// ─── Campanhas SMS (Marketing > Campanhas SMS via WhatsApp) ─────────────
+var _smsState = { sessions: [], default_session_jid: '', risk_acknowledged: true };
+
+function _smsEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+  });
+}
+
+function carregarSMSPage() {
+  fetch('/ui/sms/status?domain=' + encodeURIComponent(PORTAL || ''))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) {
+        document.getElementById('sms-config-status').textContent = 'Erro: ' + d.error;
+        return;
+      }
+      _smsState = d;
+      renderSMSConfig();
+    })
+    .catch(function(err){
+      document.getElementById('sms-config-status').textContent = 'Erro de rede: ' + err.message;
+    });
+  carregarSMSMessages();
+}
+
+function renderSMSConfig() {
+  var sel = document.getElementById('sms-session-select');
+  var opts = '<option value="">— desativado —</option>';
+  for (var i = 0; i < _smsState.sessions.length; i++) {
+    var s = _smsState.sessions[i];
+    var tipo = s.type === 'cloud_api' ? ' (Cloud)' : ' (QR)';
+    var lbl = '+' + (s.phone || s.jid) + tipo;
+    var sel_attr = (s.jid === _smsState.default_session_jid) ? ' selected' : '';
+    opts += '<option value="' + _smsEsc(s.jid) + '"' + sel_attr + '>' + _smsEsc(lbl) + '</option>';
+  }
+  sel.innerHTML = opts;
+  document.getElementById('sms-config-status').textContent = _smsState.default_session_jid
+    ? '✓ Configurado — campanhas saem por ' + _smsState.default_session_jid.replace(/^cloud:/,'').split('@')[0]
+    : 'Desativado — escolha uma sessão para ativar';
+
+  // Risk box: mostra somente se ainda nao acknowledged
+  document.getElementById('sms-risk-box').style.display = _smsState.risk_acknowledged ? 'none' : 'block';
+}
+
+function onSMSSessionChange() {
+  var jid = document.getElementById('sms-session-select').value;
+  var caller = typeof USER_ID !== 'undefined' ? USER_ID : '';
+  if (!caller) {
+    toast('Sem user_id — não foi possível identificar o master', 'error');
+    return;
+  }
+  fetch('/ui/sms/set-session?domain=' + encodeURIComponent(PORTAL || ''), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ session_jid: jid, caller_user_id: caller }),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
+      _smsState.default_session_jid = jid;
+      renderSMSConfig();
+      toast(jid ? 'Sessão configurada para campanhas SMS' : 'Módulo desativado', 'success');
+    })
+    .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
+}
+
+function ackRiscoSMS() {
+  var caller = typeof USER_ID !== 'undefined' ? USER_ID : '';
+  if (!caller) { toast('Sem user_id', 'error'); return; }
+  fetch('/ui/sms/ack-risk?domain=' + encodeURIComponent(PORTAL || ''), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ caller_user_id: caller }),
+  })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) { toast('Erro: ' + d.error, 'error'); return; }
+      _smsState.risk_acknowledged = true;
+      document.getElementById('sms-risk-box').style.display = 'none';
+    })
+    .catch(function(err){ toast('Erro: ' + err.message, 'error'); });
+}
+
+function carregarSMSMessages() {
+  var box = document.getElementById('sms-msg-list');
+  box.innerHTML = '<div style="padding:24px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>';
+  fetch('/ui/sms/messages?domain=' + encodeURIComponent(PORTAL || ''))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) {
+        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _smsEsc(d.error) + '</div>';
+        return;
+      }
+      var msgs = d.messages || [];
+      if (!msgs.length) {
+        box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:12px;line-height:1.6;">Nenhum envio ainda.<br><span style="color:#334155;">Quando você disparar uma campanha SMS no Bitrix24 escolhendo UC Talk como provedor, os envios aparecerão aqui.</span></div>';
+        return;
+      }
+      var statusColors = {
+        queued: '#94a3b8', sent: '#60a5fa', delivered: '#25D366',
+        undelivered: '#fbbf24', failed: '#f87171'
+      };
+      var html = '';
+      for (var i = 0; i < msgs.length; i++) {
+        var m = msgs[i];
+        var c = statusColors[m.status] || '#94a3b8';
+        var preview = (m.body || '').replace(/\n/g, ' ').slice(0, 80);
+        if ((m.body || '').length > 80) preview += '...';
+        var dt = new Date(m.created_at).toLocaleString('pt-BR');
+        html += '<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
+             +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px;">'
+             +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">+' + _smsEsc(m.to_phone) + '</div>'
+             +      '<div style="font-size:11px;color:' + c + ';font-weight:600;text-transform:uppercase;">' + _smsEsc(m.status) + '</div>'
+             +    '</div>'
+             +    '<div style="font-size:11.5px;color:#64748b;line-height:1.4;">' + _smsEsc(preview) + '</div>'
+             +    '<div style="font-size:10px;color:#334155;margin-top:3px;">' + _smsEsc(dt) + (m.error ? ' · <span style="color:#f87171">' + _smsEsc(m.error) + '</span>' : '') + '</div>'
+             +  '</div>';
+      }
+      box.innerHTML = html;
+    })
+    .catch(function(err){
+      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + _smsEsc(err.message) + '</div>';
+    });
 }
 
 function carregarHistoricoSessoes() {

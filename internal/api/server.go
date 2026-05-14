@@ -159,6 +159,15 @@ func New(
 	bx.Get("/crm/master/status", h.bitrixCRMMasterStatus)
 	bx.Post("/crm/master/set", h.bitrixCRMMasterSet)
 
+	// ─── SMS Provider (Marketing > Campanhas SMS via WhatsApp) ────────────
+	// Modulo isolado em sms_provider.go. Bitrix bate em /bitrix/sms/send,
+	// UI do dashboard usa os /ui/sms/* abaixo. Nao toca em rotas existentes.
+	bx.Post("/sms/send", h.smsProviderSend)
+	ui.Get("/sms/status", h.uiSMSStatus)
+	ui.Post("/sms/set-session", h.uiSMSSetSession)
+	ui.Post("/sms/ack-risk", h.uiSMSAckRisk)
+	ui.Get("/sms/messages", h.uiSMSMessages)
+
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
 	stats.Get("/daily", h.dailyStats)

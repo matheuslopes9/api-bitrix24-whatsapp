@@ -165,6 +165,14 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		}
 		h.log.Info("partner install: connector activated", zap.String("domain", domain))
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
+
+		// Best-effort: registra UC Talk como provedor SMS no portal (Marketing >
+		// Campanhas SMS). Falha aqui NAO quebra install. Requer scope
+		// `messageservice` no manifest do app — se nao tiver, retorna 403 e
+		// passa adiante (modulo SMS Campaigns fica desativado pra esse tenant).
+		if portalFresh, _ := h.repo.GetBitrixPortalByDomain(ctx, domain); portalFresh != nil {
+			h.RegisterSMSSenderForPortal(ctx, portalFresh)
+		}
 	}()
 
 	// Redireciona para /bitrix-connect — o Bitrix exibe essa página dentro do iframe

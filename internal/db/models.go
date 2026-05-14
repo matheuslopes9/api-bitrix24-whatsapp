@@ -150,4 +150,27 @@ type BitrixPortal struct {
 	// recebe permission wildcard automatica no install e e o unico que pode
 	// gerenciar permissoes dos outros. Troca via /admin/api/legacy-requests.
 	LegacyAdminUserID string `db:"legacy_admin_user_id"`
+	// DefaultSMSSessionJID: sessao WA escolhida pelo master pra rotear
+	// campanhas SMS. Vazio = modulo SMS Campaigns desativado.
+	DefaultSMSSessionJID string `db:"default_sms_session_jid"`
+	// SMSRiskAcknowledged: master confirmou o aviso de risco de banimento.
+	SMSRiskAcknowledged bool `db:"sms_risk_acknowledged"`
+}
+
+// BitrixSMSMessage representa um envio de SMS via Bitrix Marketing > Campanhas SMS
+// que e' roteado pelo nosso provedor para WhatsApp. Cada linha = 1 destinatario.
+type BitrixSMSMessage struct {
+	BitrixMessageID  string     `db:"bitrix_message_id"`
+	Domain           string     `db:"domain"`
+	SenderCode       string     `db:"sender_code"`
+	SessionJID       string     `db:"session_jid"`
+	ToPhone          string     `db:"to_phone"`
+	Body             string     `db:"body"`
+	WAMessageID      string     `db:"wa_message_id"`
+	Status           string     `db:"status"`
+	ErrorMsg         string     `db:"error_msg"`
+	BindingsJSON     string     `db:"bindings_json"`
+	CreatedAt        time.Time  `db:"created_at"`
+	SentAt           *time.Time `db:"sent_at"`
+	StatusUpdatedAt  *time.Time `db:"status_updated_at"`
 }

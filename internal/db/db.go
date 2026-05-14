@@ -206,6 +206,41 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
+		{"021_sms_provider", `
+			-- Modulo SMS Campaigns: Bitrix Marketing > Campanhas SMS escolhe o
+			-- UC Talk como provedor. Bitrix manda POSTs de SMS pra gente, nos
+			-- entregamos via WhatsApp e reportamos status de volta. Tudo
+			-- isolado em tabela propria — nao toca nada existente.
+			CREATE TABLE IF NOT EXISTS bitrix_sms_messages (
+				bitrix_message_id   TEXT PRIMARY KEY,           -- id que o Bitrix nos manda
+				domain              TEXT NOT NULL,              -- portal Bitrix
+				sender_code         TEXT NOT NULL DEFAULT 'uctalk_whatsapp',
+				session_jid         TEXT NOT NULL DEFAULT '',   -- sessao WA usada
+				to_phone            TEXT NOT NULL,              -- E.164 normalizado
+				body                TEXT NOT NULL,
+				wa_message_id       TEXT NOT NULL DEFAULT '',   -- id retornado pelo WA
+				status              TEXT NOT NULL DEFAULT 'queued', -- queued|sent|delivered|undelivered|failed
+				error_msg           TEXT NOT NULL DEFAULT '',
+				bindings_json       TEXT NOT NULL DEFAULT '',   -- bindings CRM raw (opcional)
+				created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				sent_at             TIMESTAMPTZ,
+				status_updated_at   TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_bsm_domain         ON bitrix_sms_messages (domain);
+			CREATE INDEX IF NOT EXISTS idx_bsm_wa_message_id  ON bitrix_sms_messages (wa_message_id) WHERE wa_message_id <> '';
+			CREATE INDEX IF NOT EXISTS idx_bsm_status         ON bitrix_sms_messages (status);
+			CREATE INDEX IF NOT EXISTS idx_bsm_created_at     ON bitrix_sms_messages (created_at);
+
+			-- Sessao WA padrao do tenant pra disparar campanhas SMS.
+			-- Vazio = nao configurado, modulo desativado pra esse tenant.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS default_sms_session_jid TEXT NOT NULL DEFAULT '';
+
+			-- Confirmacao do aviso de risco de banimento (modal 1a vez).
+			-- false = ainda nao mostrou. Marcamos true quando o tenant aceita.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS sms_risk_acknowledged BOOLEAN NOT NULL DEFAULT FALSE;
+		`},
 		{"020_messages_retention", `
 			-- Indice em created_at pra suportar a purga rolling (1 ano) e
 			-- todas as queries de Historico que filtram por created_at >.
