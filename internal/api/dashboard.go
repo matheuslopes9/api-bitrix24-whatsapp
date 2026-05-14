@@ -57,6 +57,9 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>UC Talk — Painel</title>
 <script src="/assets/chart.js"></script>
+<!-- BX24 carregado para auto-detectar o portal quando o /dashboard
+     roda dentro do iframe do Marketplace Bitrix (sem ?portal= na URL). -->
+<script src="https://api.bitrix24.com/api/v1/"></script>
 <link rel="icon" type="image/png" href="/assets/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1315,8 +1318,13 @@ var qrCountdown = 0;
 var qrLastCode = ''; // ultimo conteudo de QR mostrado — evita resetar timer a cada poll
 
 // ─── Isolamento por portal ────────────────────────────────────────────────────
-// Quando a URL contém ?portal=empresa.bitrix24.com.br, o dashboard filtra
-// apenas os dados daquele portal. Sem o param, mostra tudo (modo admin).
+// PORTAL e' o dominio do tenant que o /dashboard esta operando.
+//   1. ?portal=empresa.bitrix24.com.br na URL (acesso direto via browser)
+//   2. BX24.getDomain() quando rodando dentro do iframe do Marketplace Bitrix
+//      (caso "Aplicativos > UC Talk" no Bitrix do cliente)
+//   3. Vazio = modo admin (acessa /dashboard direto sem param) — mostra
+//      cards/listas agregados se ha so 1 portal.
+// var pra ser mutavel — BX24 resolve assincrono e atualiza depois.
 var PORTAL = (function() {
   try { return new URLSearchParams(window.location.search).get('portal') || ''; } catch(e) { return ''; }
 })();
@@ -3544,8 +3552,49 @@ function toggleTema() {
 })();
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-carregarVisaoGeral();
-setInterval(carregarVisaoGeral, 10000);
+// Dentro do iframe Bitrix, BX24.getDomain() so' funciona apos BX24.init().
+// Tentamos resolver o domain via BX24 antes de disparar as requests — se
+// BX24 nao existir (acesso direto fora do Bitrix), seguimos imediatamente.
+function _startDashboard() {
+  // Renderiza badge do portal no sidebar se acabamos de descobrir via BX24
+  if (PORTAL) {
+    var portalBadge = document.getElementById('sidebar-portal-badge');
+    if (portalBadge) { portalBadge.style.display = 'block'; portalBadge.textContent = PORTAL; }
+  }
+  carregarVisaoGeral();
+  setInterval(carregarVisaoGeral, 10000);
+}
+
+(function bootDashboard() {
+  // Se ja' veio ?portal= na URL, nao precisa esperar BX24.
+  if (PORTAL) { _startDashboard(); return; }
+  // BX24 nao carregou (acesso direto): segue sem portal.
+  if (typeof BX24 === 'undefined') { _startDashboard(); return; }
+  // Timeout de seguranca — se BX24.init nao callback em 2s, segue sem.
+  var done = false;
+  var timer = setTimeout(function(){
+    if (done) return;
+    done = true;
+    _startDashboard();
+  }, 2000);
+  try {
+    BX24.init(function() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        var d = (BX24.getDomain && BX24.getDomain()) || '';
+        if (d) {
+          // BX24.getDomain devolve "https://empresa.bitrix24.com" ou "empresa.bitrix24.com"
+          PORTAL = d.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+        }
+      } catch(e) {}
+      _startDashboard();
+    });
+  } catch(e) {
+    if (!done) { done = true; clearTimeout(timer); _startDashboard(); }
+  }
+})();
 </script>
 </body>
 </html>`
