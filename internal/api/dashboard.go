@@ -1,18 +1,51 @@
 package api
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 // GET /dashboard
+//
+// Pagina nao mais publica. Aceita acesso so' nas 2 situacoes:
+//   1) Cookie admin valido (super-admin UC Technology logado em /admin)
+//   2) Carregada dentro do iframe do APP UC Talk no Bitrix24 — detectado
+//      pelo header Sec-Fetch-Dest=iframe e/ou Referer do dominio bitrix24
+//
+// Acesso direto via browser sem cookie/iframe retorna 404 — modelo agora
+// e' /admin (UC) ou APP no Bitrix (master do tenant). CRM tab (canal
+// direto de atendimento) tem rota propria /bitrix/crm/tab.
 func (h *handlers) dashboardPage(c *fiber.Ctx) error {
+	if !dashboardCallerAllowed(c, h.cfg.App.Secret) {
+		return c.Status(fiber.StatusNotFound).SendString("404 not found")
+	}
 	c.Set("Content-Type", "text/html; charset=utf-8")
-	// HTML inline tem JS embutido — qualquer mudanca de UI/handler exige
-	// que o browser pegue a versao nova. Sem no-store o iframe do Bitrix
-	// e proxies intermediarios cachearam por horas e a UI virou "Carregando..."
-	// indefinido enquanto o JS antigo chamava endpoints que ja' mudaram.
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
 	return c.SendString(dashboardHTML)
+}
+
+// dashboardCallerAllowed: caller e' super-admin (cookie) OU vem do iframe
+// do Bitrix (que carrega via "src=https://uctalk.../dashboard?portal=...").
+//
+// Detecta iframe pelo Sec-Fetch-Dest (browsers modernos enviam "iframe"
+// nesse caso). Fallback: Referer contendo ".bitrix24." (cobre quando
+// Sec-Fetch-* nao chega — Safari antigo, alguns embeds).
+func dashboardCallerAllowed(c *fiber.Ctx, secret string) bool {
+	cookie := c.Cookies(adminCookieName)
+	if verifyAdminCookie(secret, cookie) {
+		return true
+	}
+	if c.Get("Sec-Fetch-Dest") == "iframe" {
+		return true
+	}
+	ref := strings.ToLower(c.Get("Referer"))
+	if strings.Contains(ref, ".bitrix24.") {
+		return true
+	}
+	return false
 }
 
 // GET /ui/overview — dados agregados para a dashboard (sem auth, apenas interna)
@@ -2307,7 +2340,7 @@ function carregarPermissoes(forceRefresh) {
   // lista do Bitrix (que pode demorar 5-10s na 1a vez).
   var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
   if (domain) {
-    fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain))
+    fetch('/bitrix/crm/master/status?domain=' + encodeURIComponent(domain))
       .then(function(r){ return r.json(); })
       .then(function(m){ _permMaster = m || {configured:false}; renderMasterCard(); })
       .catch(function(){
@@ -2465,7 +2498,7 @@ function confirmarSetupMaster(userID, userName) {
   if (!domain) { toast('Use ?portal=... na URL pra selecionar o tenant', 'error'); return; }
   // No onboarding inicial, caller_user_id pode ser o proprio novo master
   // (backend autoriza pq portal ainda nao tem master).
-  fetch(_baseUrl + '/bitrix/crm/master/set', {
+  fetch('/bitrix/crm/master/set', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -2688,7 +2721,7 @@ function confirmarTransferir(userID, userName) {
   }
   if (!confirm('Transferir controle para "' + userName + '"?\n\nO master atual perde a permissão wildcard e não poderá mais alterar permissões.')) return;
   var domain = (typeof PORTAL !== 'undefined' && PORTAL) ? PORTAL : '';
-  fetch(_baseUrl + '/bitrix/crm/master/set', {
+  fetch('/bitrix/crm/master/set', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
