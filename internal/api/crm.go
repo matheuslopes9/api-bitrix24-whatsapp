@@ -2451,18 +2451,34 @@ BX24.init(function() {
       showDenied('Não foi possível identificar o usuário.');
       return;
     }
-    fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID))
-      .then(function(r){ return r.json(); })
-      .then(function(data) {
-        if (data.allowed) {
-          // Permissao OK — carrega o CRM tab em modo "menu" (sem entity_id especifico).
-          document.getElementById('wrap').outerHTML =
-            '<iframe src="' + _baseUrl + '/bitrix/crm/tab?menu=1&domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
-        } else {
-          showDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
-        }
-      })
-      .catch(function(err) { showDenied('Erro ao verificar permissões: ' + err.message); });
+    // LEFT_MENU = painel administrativo do APP, restrito ao master do tenant.
+    // CRM tab dentro de Contato/Lead/Deal continua aberto pra todo interno
+    // ativo (canal direto pra enviar/receber mensagens).
+    Promise.all([
+      fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID)).then(function(r){ return r.json(); }),
+      fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); }),
+    ]).then(function(arr) {
+      var access = arr[0] || {};
+      var master = arr[1] || {};
+      if (!access.allowed) {
+        showDenied('Apenas colaboradores internos ativos podem acessar o UC Talk.');
+        return;
+      }
+      if (!master.configured) {
+        showDenied('O usuário master ainda não foi definido neste portal. Solicite à UC Technology para configurar o master inicial.');
+        return;
+      }
+      if (master.master_user_id !== userID) {
+        var nm = master.master_user_name || ('User #' + master.master_user_id);
+        showDenied('Apenas o usuário master (' + nm + ') pode acessar o painel administrativo do UC Talk. Para enviar mensagens, abra o UC Talk dentro de um Contato, Lead ou Deal.');
+        return;
+      }
+      // Master autenticado — carrega o /dashboard completo, ja' filtrado pelo portal.
+      document.getElementById('wrap').outerHTML =
+        '<iframe src="' + _baseUrl + '/dashboard?portal=' + encodeURIComponent(domain) + '"></iframe>';
+    }).catch(function(err){
+      showDenied('Erro ao verificar permissões: ' + (err && err.message || err));
+    });
   });
 });
 
