@@ -900,41 +900,13 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div style="font-size:14px;font-weight:600;color:#e2e8f0;" id="modal-tpl-titulo">Novo Template</div>
         <button onclick="fecharModalTemplate()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
       </div>
-      <div style="padding:20px;max-height:70vh;overflow-y:auto;">
+      <div style="padding:20px;">
         <input type="hidden" id="tpl-edit-id" value="">
         <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Título</div>
         <input type="text" id="tpl-title-input" class="inp" placeholder="Ex: Saudação inicial" style="width:100%;margin-bottom:14px;" maxlength="120">
         <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem</div>
         <textarea id="tpl-body-input" class="inp" placeholder="Digite o texto da mensagem... Pode ter várias linhas." rows="6" style="width:100%;resize:vertical;min-height:120px;font-family:inherit;"></textarea>
         <div style="font-size:11px;color:#475569;margin-top:6px;">Tip: use Shift+Enter para quebrar linha. Emojis 😀 funcionam.</div>
-
-        <!-- Template Meta (opcional) — habilita disparo ativo fora da janela 24h -->
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
-            <span style="font-size:11.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Template Meta (opcional)</span>
-          </div>
-          <div style="font-size:11.5px;color:#64748b;line-height:1.55;margin-bottom:10px;">
-            Necessário para <strong style="color:#cbd5e1;">disparo ativo</strong> via WhatsApp Cloud API (Marketing &gt; SMS Campaigns). Cadastre o template no <strong style="color:#cbd5e1;">Meta Business Manager</strong> e cole o nome abaixo. Sem isso, mensagens enviadas fora da janela de 24h serão silenciosamente descartadas pelo Meta.
-          </div>
-          <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;">
-            <div>
-              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">Nome do template Meta</div>
-              <input type="text" id="tpl-meta-name" class="inp" placeholder="ex: welcome_msg" style="width:100%;font-size:12px;">
-            </div>
-            <div>
-              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">Idioma</div>
-              <input type="text" id="tpl-meta-lang" class="inp" placeholder="ex: pt_BR" style="width:100%;font-size:12px;">
-            </div>
-            <div>
-              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">N° variáveis</div>
-              <input type="number" id="tpl-meta-vars" class="inp" min="0" max="20" placeholder="0" style="width:100%;font-size:12px;">
-            </div>
-          </div>
-          <div style="font-size:10.5px;color:#475569;margin-top:8px;line-height:1.5;">
-            Para usar na campanha SMS, coloque <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;color:#cbd5e1;">[meta:nome_do_template|valor1|valor2]</code> no início do texto da campanha. O número de valores separados por <code style="color:#cbd5e1;">|</code> deve bater com o N° variáveis cadastrado.
-          </div>
-        </div>
       </div>
       <div style="padding:14px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:flex-end;gap:8px;">
         <button class="btn btn-ghost" onclick="fecharModalTemplate()" style="color:#94a3b8;">Cancelar</button>
@@ -1002,21 +974,25 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
     </div>
 
+    <!-- Banner vermelho permanente — aviso de risco -->
+    <div class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.35);">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div style="font-size:12.5px;color:#fca5a5;line-height:1.75;">
+        <strong style="color:#fecaca;">⚠ ATENÇÃO — Envios não oficiais via WhatsApp</strong><br>
+        O UC Talk dispara campanhas SMS usando o caminho <strong>não oficial</strong> do WhatsApp (texto livre).
+        Mensagens em massa para contatos que <strong>não conversaram com você nas últimas 24h</strong> podem
+        ser bloqueadas pelo Meta ou resultar em <strong>banimento permanente do número</strong>.
+        <br><br>
+        <strong>Recomendado:</strong> use apenas para clientes já ativos, em pequenos lotes, com texto personalizado
+        e respeitando o opt-in. Disparos genéricos repetidos para listas frias têm alto risco de penalidade.
+      </div>
+    </div>
+
     <!-- Info box explicando como funciona -->
     <div class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
       <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
-        O <strong style="color:#cbd5e1;">UC Talk</strong> aparece como um provedor no menu <strong style="color:#cbd5e1;">Marketing &gt; Campanhas SMS</strong> do Bitrix24. Quando o cliente escolher o UC Talk e disparar uma campanha, nós roteamos cada mensagem pelo WhatsApp da sessão configurada abaixo. O Bitrix mostra os status (enviado/entregue/falhou) normalmente.
-      </div>
-    </div>
-
-    <!-- Aviso de risco de banimento -->
-    <div id="sms-risk-box" class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:none;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.25);">
-      <div style="font-size:12.5px;color:#fca5a5;line-height:1.7;">
-        <strong>⚠ Atenção — risco de banimento:</strong> disparos em massa para contatos que <strong>não conversaram com você nas últimas 24h</strong> podem resultar em <strong>banimento do número</strong> pelo WhatsApp. Use com responsabilidade e prefira mensagens para clientes já ativos.
-      </div>
-      <div style="margin-top:10px;">
-        <button class="btn btn-primary btn-sm" onclick="ackRiscoSMS()">✓ Entendi os riscos</button>
+        O <strong style="color:#cbd5e1;">UC Talk</strong> aparece como um provedor no menu <strong style="color:#cbd5e1;">Marketing &gt; Campanhas SMS</strong> do Bitrix24. Cada campanha é roteada para o WhatsApp da sessão configurada abaixo. O Bitrix mostra os status (enviado/entregue/falhou) normalmente.
       </div>
     </div>
 
@@ -2919,17 +2895,11 @@ function abrirModalTemplate(id) {
     document.getElementById('tpl-edit-id').value = id;
     document.getElementById('tpl-title-input').value = t.title || '';
     document.getElementById('tpl-body-input').value = t.body || '';
-    document.getElementById('tpl-meta-name').value = t.meta_template_name || '';
-    document.getElementById('tpl-meta-lang').value = t.meta_template_lang || '';
-    document.getElementById('tpl-meta-vars').value = t.meta_template_vars || 0;
   } else {
     document.getElementById('modal-tpl-titulo').textContent = 'Novo Template';
     document.getElementById('tpl-edit-id').value = '';
     document.getElementById('tpl-title-input').value = '';
     document.getElementById('tpl-body-input').value = '';
-    document.getElementById('tpl-meta-name').value = '';
-    document.getElementById('tpl-meta-lang').value = '';
-    document.getElementById('tpl-meta-vars').value = 0;
   }
   setTimeout(function(){ document.getElementById('tpl-title-input').focus(); }, 50);
 }
@@ -2942,32 +2912,21 @@ function salvarTemplate() {
   var id = document.getElementById('tpl-edit-id').value;
   var title = (document.getElementById('tpl-title-input').value || '').trim();
   var body = (document.getElementById('tpl-body-input').value || '').trim();
-  var metaName = (document.getElementById('tpl-meta-name').value || '').trim();
-  var metaLang = (document.getElementById('tpl-meta-lang').value || '').trim();
-  var metaVars = parseInt(document.getElementById('tpl-meta-vars').value || '0', 10) || 0;
   if (!title) { toast('Título é obrigatório', 'error'); return; }
   if (!body)  { toast('Mensagem é obrigatória', 'error'); return; }
-  if (metaName && !metaLang) { toast('Idioma é obrigatório se Nome do template Meta preenchido', 'error'); return; }
 
   var btn = document.getElementById('tpl-save-btn');
   btn.disabled = true;
   btn.textContent = 'Salvando...';
 
-  var common = {
-    title: title, body: body,
-    meta_template_name: metaName,
-    meta_template_lang: metaLang,
-    meta_template_vars: metaVars,
-  };
-
   var url, payload;
   if (id) {
     var u = apiUrl('/ui/templates/update');
     url = u + (u.indexOf('?') !== -1 ? '&' : '?') + 'id=' + encodeURIComponent(id);
-    payload = common;
+    payload = { title: title, body: body };
   } else {
     url = apiUrl('/ui/templates/create');
-    payload = Object.assign({ created_by: '' }, common);
+    payload = { title: title, body: body, created_by: '' };
   }
 
   fetch(url, {
@@ -3088,9 +3047,7 @@ function renderSMSConfig() {
   document.getElementById('sms-config-status').textContent = _smsState.default_session_jid
     ? '✓ Configurado — campanhas saem por ' + _smsState.default_session_jid.replace(/^cloud:/,'').split('@')[0]
     : 'Desativado — escolha uma sessão para ativar';
-
-  // Risk box: mostra somente se ainda nao acknowledged
-  document.getElementById('sms-risk-box').style.display = _smsState.risk_acknowledged ? 'none' : 'block';
+  // Banner de risco e' permanente agora (nao depende mais de risk_acknowledged).
 }
 
 function onSMSSessionChange() {
@@ -3113,23 +3070,6 @@ function onSMSSessionChange() {
       toast(jid ? 'Sessão configurada para campanhas SMS' : 'Módulo desativado', 'success');
     })
     .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
-}
-
-function ackRiscoSMS() {
-  var caller = typeof USER_ID !== 'undefined' ? USER_ID : '';
-  if (!caller) { toast('Sem user_id', 'error'); return; }
-  fetch('/ui/sms/ack-risk?domain=' + encodeURIComponent(PORTAL || ''), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ caller_user_id: caller }),
-  })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (d.error) { toast('Erro: ' + d.error, 'error'); return; }
-      _smsState.risk_acknowledged = true;
-      document.getElementById('sms-risk-box').style.display = 'none';
-    })
-    .catch(function(err){ toast('Erro: ' + err.message, 'error'); });
 }
 
 function carregarSMSMessages() {

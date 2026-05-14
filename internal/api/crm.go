@@ -319,32 +319,26 @@ func (h *handlers) uiTemplatesCreate(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	var req struct {
-		Title            string `json:"title"`
-		Body             string `json:"body"`
-		CreatedBy        string `json:"created_by"`
-		MetaTemplateName string `json:"meta_template_name"`
-		MetaTemplateLang string `json:"meta_template_lang"`
-		MetaTemplateVars int    `json:"meta_template_vars"`
+		Title     string `json:"title"`
+		Body      string `json:"body"`
+		CreatedBy string `json:"created_by"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
 	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Body = strings.TrimSpace(req.Body)
-	req.MetaTemplateName = strings.TrimSpace(req.MetaTemplateName)
-	req.MetaTemplateLang = strings.TrimSpace(req.MetaTemplateLang)
 	if req.Title == "" || req.Body == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "title e body obrigatorios"})
 	}
-	id, err := h.repo.CreateMessageTemplate(ctx, domain, req.Title, req.Body, req.CreatedBy,
-		req.MetaTemplateName, req.MetaTemplateLang, req.MetaTemplateVars)
+	id, err := h.repo.CreateMessageTemplate(ctx, domain, req.Title, req.Body, req.CreatedBy)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"id": id.String()})
 }
 
-// POST /ui/templates/update?id=... — body {title, body, meta_*}
+// POST /ui/templates/update?id=... — body {title, body}
 func (h *handlers) uiTemplatesUpdate(c *fiber.Ctx) error {
 	ctx := c.Context()
 	domain, err := h.resolveDashboardDomain(ctx, c)
@@ -357,24 +351,18 @@ func (h *handlers) uiTemplatesUpdate(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "id invalido"})
 	}
 	var req struct {
-		Title            string `json:"title"`
-		Body             string `json:"body"`
-		MetaTemplateName string `json:"meta_template_name"`
-		MetaTemplateLang string `json:"meta_template_lang"`
-		MetaTemplateVars int    `json:"meta_template_vars"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
 	}
 	req.Title = strings.TrimSpace(req.Title)
 	req.Body = strings.TrimSpace(req.Body)
-	req.MetaTemplateName = strings.TrimSpace(req.MetaTemplateName)
-	req.MetaTemplateLang = strings.TrimSpace(req.MetaTemplateLang)
 	if req.Title == "" || req.Body == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "title e body obrigatorios"})
 	}
-	ok, err := h.repo.UpdateMessageTemplate(ctx, id, domain, req.Title, req.Body,
-		req.MetaTemplateName, req.MetaTemplateLang, req.MetaTemplateVars)
+	ok, err := h.repo.UpdateMessageTemplate(ctx, id, domain, req.Title, req.Body)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
