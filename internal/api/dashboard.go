@@ -1362,6 +1362,14 @@ var PORTAL = (function() {
   try { return new URLSearchParams(window.location.search).get('portal') || ''; } catch(e) { return ''; }
 })();
 
+// USER_ID — id Bitrix do user logado no Bitrix, passado pelo /bitrix-app
+// quando o dashboard roda dentro do iframe do APP UC Talk. Usado pra
+// montar caller_user_id automaticamente nas mutations de permissoes
+// (sem precisar o admin digitar manualmente).
+var USER_ID = (function() {
+  try { return new URLSearchParams(window.location.search).get('user_id') || ''; } catch(e) { return ''; }
+})();
+
 // Adiciona ?portal= a uma URL de API se estivermos em modo portal
 function apiUrl(base) {
   if (!PORTAL) return base;
@@ -2410,8 +2418,28 @@ function renderMasterCard() {
   hintEl.textContent = 'Apenas o master pode alterar permissões e transferir o controle.';
   setupBtn.style.display = 'none';
   transferBtn.style.display = '';
-  callerCard.style.display = 'flex';
 
+  // Prioridades pra preencher o caller (quem está fazendo a edicao):
+  //   1) USER_ID da URL (passado pelo /bitrix-app quando rodando dentro do
+  //      iframe do APP Bitrix — o próprio master logado)
+  //   2) sessionStorage (admin externo que ja' digitou antes nesta sessão)
+  //   3) usuario digita manualmente (fluxo super-admin externo)
+  // Quando USER_ID vem da URL E bate com o master, escondemos o card de
+  // "Atuar como master" — não faz sentido pedir ao master pra digitar o
+  // proprio ID.
+  if (USER_ID && USER_ID === _permMaster.master_user_id) {
+    _permCaller = USER_ID;
+    callerCard.style.display = 'none';
+    renderPermUsers();
+    return;
+  }
+  callerCard.style.display = 'flex';
+  if (USER_ID && !_permCaller) {
+    document.getElementById('perm-caller-input').value = USER_ID;
+    _permCaller = USER_ID;
+    onPermCallerChange();
+    return;
+  }
   // Auto-preenche caller a partir da sessionStorage (se admin ja' editou antes)
   var saved = '';
   try { saved = sessionStorage.getItem('perm_caller_' + (PORTAL||'_')) || ''; } catch(e){}

@@ -2473,9 +2473,13 @@ BX24.init(function() {
         showDenied('Apenas o usuário master (' + nm + ') pode acessar o painel administrativo do UC Talk. Para enviar mensagens, abra o UC Talk dentro de um Contato, Lead ou Deal.');
         return;
       }
-      // Master autenticado — carrega o /dashboard completo, ja' filtrado pelo portal.
+      // Master autenticado — carrega o /dashboard com portal+user_id ja'
+      // preenchidos. Dashboard usa o user_id pra montar caller_user_id em
+      // todas as mutations (grant/revoke/transfer) sem precisar BX24 dentro
+      // do iframe interno.
       document.getElementById('wrap').outerHTML =
-        '<iframe src="' + _baseUrl + '/dashboard?portal=' + encodeURIComponent(domain) + '"></iframe>';
+        '<iframe src="' + _baseUrl + '/dashboard?portal=' + encodeURIComponent(domain)
+        + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
     }).catch(function(err){
       showDenied('Erro ao verificar permissões: ' + (err && err.message || err));
     });
