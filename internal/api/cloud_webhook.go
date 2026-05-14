@@ -95,14 +95,30 @@ func (h *handlers) cloudWebhookReceive(c *fiber.Ctx) error {
 			errorCount += len(change.Value.Errors)
 		}
 	}
+	// Extrai detalhe dos statuses pra log — Meta envia status com motivo
+	// (delivered, read, failed, sent) e codigo de erro quando aplicavel.
+	// Ajuda a diferenciar "Meta aceitou mas nao entregou" (regra das 24h)
+	// de "entregou mesmo" — sintoma identico ao olhar superficial.
+	statusSummary := []map[string]interface{}{}
+	for _, entry := range payload.Entry {
+		for _, change := range entry.Changes {
+			for _, st := range change.Value.Statuses {
+				statusSummary = append(statusSummary, map[string]interface{}{
+					"id":     st.ID,
+					"status": st.Status,
+					"to":     st.RecipientID,
+				})
+			}
+		}
+	}
 	h.log.Info("cloud webhook received",
 		zap.String("session_id", sessionIDStr),
 		zap.Int("messages", msgCount),
 		zap.Int("statuses", statusCount),
 		zap.Int("errors", errorCount),
-		zap.Int("body_bytes", len(body)))
+		zap.Int("body_bytes", len(body)),
+		zap.Any("status_detail", statusSummary))
 	if errorCount > 0 || (msgCount == 0 && statusCount == 0) {
-		// Dump completo do body quando há erro ou body inesperado.
 		h.log.Info("cloud webhook raw body", zap.String("body", string(body)))
 	}
 
