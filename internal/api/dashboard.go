@@ -3617,7 +3617,6 @@ function toggleTema() {
 // Tentamos resolver o domain via BX24 antes de disparar as requests — se
 // BX24 nao existir (acesso direto fora do Bitrix), seguimos imediatamente.
 function _startDashboard() {
-  // Renderiza badge do portal no sidebar se acabamos de descobrir via BX24
   if (PORTAL) {
     var portalBadge = document.getElementById('sidebar-portal-badge');
     if (portalBadge) { portalBadge.style.display = 'block'; portalBadge.textContent = PORTAL; }
@@ -3626,31 +3625,50 @@ function _startDashboard() {
   setInterval(carregarVisaoGeral, 10000);
 }
 
+// Resolve PORTAL e USER_ID via BX24 quando rodando dentro do iframe do
+// Bitrix (Marketplace, LEFT_MENU, ou qualquer outro placement). Necessario
+// pra que o caller_user_id seja preenchido automaticamente nas mutations
+// de permissoes — sem isso o master via Marketplace fica com chips
+// bloqueados ("Atuar como master" pedindo o ID).
 (function bootDashboard() {
-  // Se ja' veio ?portal= na URL, nao precisa esperar BX24.
-  if (PORTAL) { _startDashboard(); return; }
-  // BX24 nao carregou (acesso direto): segue sem portal.
+  // Se ja' veio TUDO na URL, segue direto.
+  if (PORTAL && USER_ID) { _startDashboard(); return; }
   if (typeof BX24 === 'undefined') { _startDashboard(); return; }
-  // Timeout de seguranca — se BX24.init nao callback em 2s, segue sem.
   var done = false;
   var timer = setTimeout(function(){
     if (done) return;
     done = true;
     _startDashboard();
-  }, 2000);
+  }, 4000);
   try {
     BX24.init(function() {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
       try {
-        var d = (BX24.getDomain && BX24.getDomain()) || '';
-        if (d) {
-          // BX24.getDomain devolve "https://empresa.bitrix24.com" ou "empresa.bitrix24.com"
-          PORTAL = d.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+        if (!PORTAL) {
+          var d = (BX24.getDomain && BX24.getDomain()) || '';
+          if (d) PORTAL = d.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
         }
       } catch(e) {}
-      _startDashboard();
+      // Se ja temos USER_ID via URL, nao precisa chamar profile
+      if (USER_ID) {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        _startDashboard();
+        return;
+      }
+      // Tenta profile com timeout — se falhar, segue sem USER_ID
+      try {
+        BX24.callMethod('profile', {}, function(res) {
+          try {
+            var u = res && res.data ? (res.data() || {}) : {};
+            if (u && u.ID) USER_ID = String(u.ID);
+          } catch(e) {}
+          if (done) return;
+          done = true; clearTimeout(timer);
+          _startDashboard();
+        });
+      } catch(e) {
+        if (!done) { done = true; clearTimeout(timer); _startDashboard(); }
+      }
     });
   } catch(e) {
     if (!done) { done = true; clearTimeout(timer); _startDashboard(); }
