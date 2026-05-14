@@ -185,11 +185,66 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 		return nil, nil
 	}
 
+	// Tradicional: sessoes ainda existentes em whatsapp_sessions (nao banidas).
+	// Histórico precisa funcionar mesmo se o registro de sessao foi deletado
+	// (master desconectou + admin limpou). Pra cobrir esse caso, retornamos
+	// tambem "sessoes sombra" — JIDs unicos que aparecem em messages mas
+	// nao existem mais em whatsapp_sessions. ON DELETE SET NULL ja preserva
+	// as msgs (FK), e aqui derivamos a sessao apenas pra alimentar o dropdown.
 	rows, err := r.pool.Query(ctx, `
-		SELECT `+sessionColumns+`
-		  FROM whatsapp_sessions ws
-		 WHERE ws.status <> 'banned'
-		 ORDER BY (ws.status = 'active') DESC, ws.last_seen DESC`)
+		WITH real AS (
+			SELECT `+sessionColumns+`
+			  FROM whatsapp_sessions ws
+			 WHERE ws.status <> 'banned'
+		),
+		shadow_jids AS (
+			-- JIDs unicos que aparecem em messages mas NAO em whatsapp_sessions.
+			-- Limita a 30d retroativo pra nao ressuscitar lixo antigo.
+			SELECT DISTINCT j AS jid
+			  FROM (
+				SELECT from_jid AS j FROM messages
+				 WHERE direction = 'outbound'
+				   AND created_at > NOW() - INTERVAL '1 year'
+				UNION
+				SELECT to_jid   AS j FROM messages
+				 WHERE direction = 'inbound'
+				   AND created_at > NOW() - INTERVAL '1 year'
+			  ) all_jids
+			 WHERE j LIKE '%@%'
+			   AND j NOT IN (SELECT jid FROM whatsapp_sessions)
+			   AND j NOT LIKE '%@lid'
+		),
+		shadow AS (
+			-- Mesma ordem/forma de sessionColumns, apenas com valores derivados
+			-- do JID. Status='disconnected' marca como "sessao sombra" no UI.
+			SELECT
+				gen_random_uuid()         AS id,
+				sj.jid                    AS jid,
+				CASE
+					WHEN sj.jid LIKE 'cloud:%' THEN ''
+					ELSE SPLIT_PART(SPLIT_PART(sj.jid, '@', 1), ':', 1)
+				END                       AS phone,
+				''                        AS display_name,
+				'disconnected'::text      AS status,
+				''                        AS session_file,
+				CASE
+					WHEN sj.jid LIKE 'cloud:%' THEN 'cloud_api'
+					ELSE 'qr'
+				END                       AS type,
+				''                        AS cloud_phone_number_id,
+				''                        AS cloud_waba_id,
+				''                        AS cloud_access_token,
+				''                        AS cloud_verify_token,
+				''                        AS cloud_app_secret,
+				''                        AS cloud_display_phone,
+				NOW()                     AS created_at,
+				NOW()                     AS last_seen
+			FROM shadow_jids sj
+		)
+		SELECT * FROM real
+		UNION ALL
+		SELECT * FROM shadow
+		ORDER BY (status = 'active') DESC, last_seen DESC`)
 	if err != nil {
 		return nil, err
 	}

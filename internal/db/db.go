@@ -206,6 +206,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
+		{"020_messages_retention", `
+			-- Indice em created_at pra suportar a purga rolling (1 ano) e
+			-- todas as queries de Historico que filtram por created_at >.
+			CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages (created_at);
+
+			-- Indices auxiliares pra Historico em escala (matches por JID).
+			-- Idempotente — IF NOT EXISTS evita problema em re-runs.
+			CREATE INDEX IF NOT EXISTS idx_messages_from_to_created
+				ON messages (from_jid, to_jid, created_at DESC);
+		`},
 		{"019_master_user", `
 			-- "Master user" por tenant: o usuario Bitrix que controla quem pode
 			-- usar quais numeros. Escolhido pelo proprio cliente na primeira

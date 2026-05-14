@@ -2474,12 +2474,14 @@ BX24.init(function() {
         return;
       }
       // Master autenticado — carrega o /dashboard com portal+user_id ja'
-      // preenchidos. Dashboard usa o user_id pra montar caller_user_id em
-      // todas as mutations (grant/revoke/transfer) sem precisar BX24 dentro
-      // do iframe interno.
+      // preenchidos. Cache buster (v=<timestamp>) garante que iframes do
+      // Bitrix nao sirvam HTML antigo mesmo com no-store no header — Bitrix
+      // tem CDN intermediario agressivo em alguns regions.
+      var v = Date.now();
       document.getElementById('wrap').outerHTML =
         '<iframe src="' + _baseUrl + '/dashboard?portal=' + encodeURIComponent(domain)
-        + '&user_id=' + encodeURIComponent(userID) + '"></iframe>';
+        + '&user_id=' + encodeURIComponent(userID)
+        + '&v=' + v + '"></iframe>';
     }).catch(function(err){
       showDenied('Erro ao verificar permissões: ' + (err && err.message || err));
     });

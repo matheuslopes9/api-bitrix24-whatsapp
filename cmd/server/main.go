@@ -289,16 +289,20 @@ func main() {
 	wd := watchdog.New(waManager, repo, &cfg.Watchdog, log)
 	wd.Start(ctx)
 
-	// ─── Limpeza de mensagens antigas (retenção 90 dias) ─────────────────
+	// ─── Limpeza de mensagens antigas (retencao 1 ano rolling) ──────────
+	// Politica de historico: mantemos 365 dias. Suficiente pra atendimento
+	// (referencias a interacoes passadas) e mantem o banco em tamanho
+	// razoavel pra qualquer tenant. Roda diariamente.
 	go func() {
-		const retentionDays = 90
-		// Roda imediatamente na inicialização, depois a cada 24h
+		const retentionDays = 365
 		for {
 			n, err := repo.DeleteOldMessages(context.Background(), retentionDays)
 			if err != nil {
 				log.Warn("cleanup: delete old messages failed", zap.Error(err))
 			} else if n > 0 {
-				log.Info("cleanup: old messages deleted", zap.Int64("count", n), zap.Int("retention_days", retentionDays))
+				log.Info("cleanup: old messages deleted",
+					zap.Int64("count", n),
+					zap.Int("retention_days", retentionDays))
 			}
 			select {
 			case <-ctx.Done():
