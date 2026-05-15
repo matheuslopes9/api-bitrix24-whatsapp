@@ -93,6 +93,8 @@ func New(
 	ui.Post("/templates/create", h.uiTemplatesCreate)
 	ui.Post("/templates/update", h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.uiTemplatesDelete)
+	ui.Get("/templates/meta-list", h.uiTemplatesMetaList)
+	ui.Post("/templates/meta-import", h.uiTemplatesMetaImport)
 
 	ui.Get("/history/sessions", h.uiHistorySessions)
 	ui.Get("/history/conversations", h.uiHistoryConversations)

@@ -604,3 +604,143 @@ func inferMediaType(mime string) string {
 		return "document"
 	}
 }
+
+// ─── Meta Graph API — templates (HSM) ──────────────────────────────────────
+
+// MetaTemplate representa um template HSM retornado pelo Graph API.
+// Resposta crua e' muito mais detalhada (components, parameters, header,
+// footer, buttons), aqui mantemos so o essencial pro nosso uso: nome,
+// idioma, status e contagem de variaveis.
+type MetaTemplate struct {
+	Name      string `json:"name"`
+	Language  string `json:"language"`
+	Status    string `json:"status"`     // APPROVED | PENDING | REJECTED | PAUSED
+	Category  string `json:"category"`   // MARKETING | UTILITY | AUTHENTICATION
+	BodyText  string `json:"body_text"`  // texto do component "BODY" (referencia)
+	VarsCount int    `json:"vars_count"` // numero de {{N}} no body
+}
+
+// metaGraphTemplatesResponse parseia a resposta crua do endpoint
+// /{waba_id}/message_templates da Graph API.
+type metaGraphTemplatesResponse struct {
+	Data []struct {
+		Name       string `json:"name"`
+		Language   string `json:"language"`
+		Status     string `json:"status"`
+		Category   string `json:"category"`
+		Components []struct {
+			Type   string `json:"type"`
+			Text   string `json:"text"`
+			Format string `json:"format"`
+		} `json:"components"`
+	} `json:"data"`
+	Paging struct {
+		Cursors struct {
+			Before string `json:"before"`
+			After  string `json:"after"`
+		} `json:"cursors"`
+		Next string `json:"next"`
+	} `json:"paging"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    int    `json:"code"`
+	} `json:"error"`
+}
+
+// FetchMetaTemplates chama Meta Graph API e retorna a lista de templates
+// HSM cadastrados na WABA. Filtra por status="APPROVED" por default.
+//
+// Requer:
+//   - wabaID: WhatsApp Business Account ID (NAO e' o phone_number_id)
+//   - accessToken: System User Token com scope whatsapp_business_management
+//   - includeAll: se true, retorna tambem PENDING/REJECTED (debug)
+//
+// Pagina o resultado: faz multiplas chamadas se houver paging.next.
+// Limite duro: 200 templates totais (defesa contra loop infinito).
+func FetchMetaTemplates(ctx context.Context, wabaID, accessToken string, includeAll bool) ([]MetaTemplate, error) {
+	if wabaID == "" {
+		return nil, fmt.Errorf("waba_id vazio")
+	}
+	if accessToken == "" {
+		return nil, fmt.Errorf("access_token vazio")
+	}
+
+	url := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/message_templates?limit=100&fields=name,language,status,category,components", wabaID)
+	var out []MetaTemplate
+	const maxPages = 4 // 4 paginas * 100 = 400 templates teto
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	for page := 0; page < maxPages && url != ""; page++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("new request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("graph api request: %w", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var parsed metaGraphTemplatesResponse
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return nil, fmt.Errorf("parse graph response (status %d): %w — body: %s",
+				resp.StatusCode, err, string(body))
+		}
+		if parsed.Error != nil {
+			return nil, fmt.Errorf("graph api error: %s (code=%d type=%s)",
+				parsed.Error.Message, parsed.Error.Code, parsed.Error.Type)
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("graph api http %d: %s", resp.StatusCode, string(body))
+		}
+
+		for _, t := range parsed.Data {
+			if !includeAll && t.Status != "APPROVED" {
+				continue
+			}
+			// Pega texto do BODY component (referencia pra dashboard)
+			var bodyText string
+			for _, comp := range t.Components {
+				if strings.EqualFold(comp.Type, "BODY") {
+					bodyText = comp.Text
+					break
+				}
+			}
+			out = append(out, MetaTemplate{
+				Name:      t.Name,
+				Language:  t.Language,
+				Status:    t.Status,
+				Category:  t.Category,
+				BodyText:  bodyText,
+				VarsCount: countTemplateVars(bodyText),
+			})
+		}
+		url = parsed.Paging.Next
+	}
+	return out, nil
+}
+
+// countTemplateVars conta placeholders {{N}} no texto. Meta numera variaveis
+// na ordem em que aparecem; total = qtd de "{{...}}" no body. Bom o suficiente
+// pra UI mostrar contagem aproximada (cliente pode editar depois se precisar).
+func countTemplateVars(text string) int {
+	count := 0
+	idx := 0
+	for {
+		open := strings.Index(text[idx:], "{{")
+		if open < 0 {
+			break
+		}
+		closePos := strings.Index(text[idx+open:], "}}")
+		if closePos < 0 {
+			break
+		}
+		count++
+		idx = idx + open + closePos + 2
+	}
+	return count
+}

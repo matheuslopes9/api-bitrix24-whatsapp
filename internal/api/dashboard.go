@@ -896,12 +896,46 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       </div>
     </div>
 
-    <!-- Botão Novo Template (texto muda conforme aba) -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+    <!-- Botão Novo Template (texto muda conforme aba) + botao Importar Meta (so na aba oficial) -->
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px;">
+      <button id="tpl-import-btn" class="btn btn-ghost btn-sm" onclick="abrirModalImportarMeta()" style="display:none;font-size:12.5px;color:#60a5fa;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;vertical-align:-2px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Importar templates da Meta
+      </button>
       <button id="tpl-novo-btn" class="btn btn-primary" onclick="abrirModalTemplate()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span id="tpl-novo-btn-label">Novo Template Não Oficial</span>
       </button>
+    </div>
+
+    <!-- Modal: Importar templates Meta -->
+    <div id="modal-tpl-import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:760px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+        <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Importar templates da Meta</div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px;">Lista templates HSM aprovados na sua WhatsApp Business Account.</div>
+          </div>
+          <button onclick="fecharModalImportarMeta()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" id="tpl-import-fetch-btn" onclick="buscarTemplatesMeta()" style="font-size:12.5px;">↻ Buscar da Meta</button>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#94a3b8;cursor:pointer;">
+            <input type="checkbox" id="tpl-import-include-all"> Incluir PENDING/REJECTED
+          </label>
+          <span id="tpl-import-summary" style="margin-left:auto;font-size:11.5px;color:#64748b;">—</span>
+        </div>
+        <div id="tpl-import-list" style="flex:1;overflow-y:auto;padding:4px;min-height:280px;">
+          <div style="padding:30px;text-align:center;color:#475569;font-size:12.5px;line-height:1.6;">Clique em <strong>↻ Buscar da Meta</strong> para listar os templates aprovados na sua WABA.</div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <span id="tpl-import-count" style="font-size:11.5px;color:#94a3b8;">0 selecionados</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-ghost" onclick="fecharModalImportarMeta()" style="color:#94a3b8;">Cancelar</button>
+            <button class="btn btn-primary" id="tpl-import-save-btn" onclick="importarTemplatesSelecionados()" disabled>Importar selecionados</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Lista (mesmo container, filtrada por _tplActiveTab) -->
@@ -2974,6 +3008,7 @@ function trocarAbaTemplate(tab) {
     document.getElementById('tpl-info-official').style.display = 'none';
     document.getElementById('tpl-list-title').textContent = 'Templates Não Oficiais';
     document.getElementById('tpl-novo-btn-label').textContent = 'Novo Template Não Oficial';
+    document.getElementById('tpl-import-btn').style.display = 'none';
   } else {
     to.style.borderBottomColor = '#60a5fa'; to.style.color = '#60a5fa';
     tu.style.borderBottomColor = 'transparent'; tu.style.color = '#64748b';
@@ -2981,6 +3016,7 @@ function trocarAbaTemplate(tab) {
     document.getElementById('tpl-info-official').style.display = 'flex';
     document.getElementById('tpl-list-title').textContent = 'Templates Oficiais Meta (HSM)';
     document.getElementById('tpl-novo-btn-label').textContent = 'Novo Template Oficial Meta';
+    document.getElementById('tpl-import-btn').style.display = 'inline-flex';
   }
   renderTplList();
 }
@@ -3175,6 +3211,148 @@ function deletarTemplate(id) {
       carregarTemplatesDashboard();
     })
     .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
+}
+
+// ─── Modal: Importar templates da Meta ─────────────────────────────────────
+var _metaTplCache = [];
+var _metaTplSelected = {}; // name -> true
+
+function abrirModalImportarMeta() {
+  _metaTplCache = [];
+  _metaTplSelected = {};
+  document.getElementById('modal-tpl-import').style.display = 'flex';
+  document.getElementById('tpl-import-list').innerHTML =
+    '<div style="padding:30px;text-align:center;color:#475569;font-size:12.5px;line-height:1.6;">Clique em <strong>↻ Buscar da Meta</strong> para listar os templates aprovados na sua WABA.</div>';
+  document.getElementById('tpl-import-summary').textContent = '—';
+  document.getElementById('tpl-import-count').textContent = '0 selecionados';
+  document.getElementById('tpl-import-save-btn').disabled = true;
+  document.getElementById('tpl-import-include-all').checked = false;
+}
+
+function fecharModalImportarMeta() {
+  document.getElementById('modal-tpl-import').style.display = 'none';
+}
+
+function buscarTemplatesMeta() {
+  var btn = document.getElementById('tpl-import-fetch-btn');
+  var includeAll = document.getElementById('tpl-import-include-all').checked;
+  btn.disabled = true; btn.textContent = 'Buscando...';
+  var url = apiUrl('/ui/templates/meta-list');
+  if (includeAll) url += (url.indexOf('?') !== -1 ? '&' : '?') + 'all=1';
+  document.getElementById('tpl-import-list').innerHTML =
+    '<div style="padding:30px;text-align:center;color:#475569;font-size:12.5px;">Consultando Meta Graph API...</div>';
+  fetch(url)
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      btn.disabled = false; btn.textContent = '↻ Buscar da Meta';
+      if (!res.ok) {
+        var hint = res.data.hint ? '<div style="margin-top:8px;font-size:11.5px;color:#94a3b8;line-height:1.5;">' + _tplEsc(res.data.hint) + '</div>' : '';
+        document.getElementById('tpl-import-list').innerHTML =
+          '<div style="padding:24px;color:#f87171;font-size:12.5px;line-height:1.6;"><strong>Erro:</strong> ' + _tplEsc(res.data.error || 'falha') + hint + '</div>';
+        return;
+      }
+      _metaTplCache = res.data.templates || [];
+      _metaTplSelected = {};
+      document.getElementById('tpl-import-summary').textContent =
+        _metaTplCache.length + ' template(s) — WABA ' + _tplEsc(res.data.waba_id || '');
+      renderImportList();
+    })
+    .catch(function(err){
+      btn.disabled = false; btn.textContent = '↻ Buscar da Meta';
+      document.getElementById('tpl-import-list').innerHTML =
+        '<div style="padding:24px;color:#f87171;font-size:12.5px;">Erro de rede: ' + _tplEsc(err.message) + '</div>';
+    });
+}
+
+function renderImportList() {
+  var box = document.getElementById('tpl-import-list');
+  if (!_metaTplCache.length) {
+    box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:12.5px;line-height:1.6;">Nenhum template encontrado na sua WABA.<br><span style="color:#334155;font-size:11.5px;">Cadastre templates no Meta Business Manager > WhatsApp Manager > Message Templates e aguarde aprovação.</span></div>';
+    return;
+  }
+  // Lista de templates ja' importados pra mostrar tag "já existe"
+  var jaImportados = {};
+  for (var i = 0; i < _tplCache.length; i++) {
+    if (_tplCache[i].meta_template_name) jaImportados[_tplCache[i].meta_template_name] = true;
+  }
+  var statusColors = {
+    APPROVED: '#25D366', PENDING: '#fbbf24',
+    REJECTED: '#f87171', PAUSED: '#94a3b8', DISABLED: '#94a3b8'
+  };
+  var html = '';
+  for (var i = 0; i < _metaTplCache.length; i++) {
+    var t = _metaTplCache[i];
+    var alreadyImp = !!jaImportados[t.name];
+    var canSelect = !alreadyImp && t.status === 'APPROVED';
+    var checked = _metaTplSelected[t.name] ? 'checked' : '';
+    var disabled = canSelect ? '' : 'disabled';
+    var statusColor = statusColors[t.status] || '#94a3b8';
+    var preview = (t.body_text || '').replace(/\n/g, ' ').slice(0, 110);
+    if ((t.body_text || '').length > 110) preview += '...';
+    var existsBadge = alreadyImp
+      ? '<span style="font-size:10px;background:rgba(255,255,255,.06);color:#94a3b8;padding:2px 7px;border-radius:8px;margin-left:6px;">já importado</span>'
+      : '';
+    var opacity = canSelect ? '1' : '.55';
+    html += '<label style="display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:' + (canSelect ? 'pointer' : 'not-allowed') + ';opacity:' + opacity + ';">'
+         +   '<input type="checkbox" data-name="' + _tplEsc(t.name) + '" ' + checked + ' ' + disabled + ' onchange="toggleImportTpl(this)" style="margin-top:3px;flex-shrink:0;">'
+         +   '<div style="flex:1;min-width:0;">'
+         +     '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px;">'
+         +       '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">' + _tplEsc(t.name) + existsBadge + '</div>'
+         +       '<div style="font-size:10.5px;color:' + statusColor + ';font-weight:600;text-transform:uppercase;">' + _tplEsc(t.status) + '</div>'
+         +     '</div>'
+         +     '<div style="display:flex;gap:6px;font-size:10.5px;color:#64748b;margin-bottom:4px;">'
+         +       '<span>📍 ' + _tplEsc(t.language || '?') + '</span>'
+         +       '<span>·</span>'
+         +       '<span>' + (t.vars_count || 0) + ' var</span>'
+         +       (t.category ? '<span>·</span><span>' + _tplEsc(t.category) + '</span>' : '')
+         +     '</div>'
+         +     '<div style="font-size:11.5px;color:#94a3b8;line-height:1.4;">' + _tplEsc(preview) + '</div>'
+         +   '</div>'
+         + '</label>';
+  }
+  box.innerHTML = html;
+  atualizarContadorImport();
+}
+
+function toggleImportTpl(input) {
+  var name = input.dataset.name;
+  if (input.checked) _metaTplSelected[name] = true;
+  else delete _metaTplSelected[name];
+  atualizarContadorImport();
+}
+
+function atualizarContadorImport() {
+  var n = Object.keys(_metaTplSelected).length;
+  document.getElementById('tpl-import-count').textContent = n + ' selecionado(s)';
+  document.getElementById('tpl-import-save-btn').disabled = n === 0;
+}
+
+function importarTemplatesSelecionados() {
+  var selected = Object.keys(_metaTplSelected);
+  if (!selected.length) return;
+  var payload = { templates: [] };
+  for (var i = 0; i < _metaTplCache.length; i++) {
+    if (_metaTplSelected[_metaTplCache[i].name]) payload.templates.push(_metaTplCache[i]);
+  }
+  var btn = document.getElementById('tpl-import-save-btn');
+  btn.disabled = true; btn.textContent = 'Importando...';
+  fetch(apiUrl('/ui/templates/meta-import'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  })
+    .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+    .then(function(res){
+      btn.disabled = false; btn.textContent = 'Importar selecionados';
+      if (!res.ok) { toast('Erro: ' + (res.data.error || 'falha'), 'error'); return; }
+      toast('Importados: ' + res.data.created + ' | Pulados: ' + res.data.skipped, 'success');
+      fecharModalImportarMeta();
+      carregarTemplatesDashboard();
+    })
+    .catch(function(err){
+      btn.disabled = false; btn.textContent = 'Importar selecionados';
+      toast('Erro de rede: ' + err.message, 'error');
+    });
 }
 
 // ─── Histórico de Conversas ─────────────────────────────────────────────────

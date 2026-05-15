@@ -25,6 +25,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.uber.org/zap"
 )
 
@@ -404,6 +405,136 @@ func (h *handlers) uiTemplatesDelete(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "template nao encontrado"})
 	}
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// GET /ui/templates/meta-list?domain=... — chama Meta Graph API e retorna
+// templates HSM aprovados da sessao Cloud do tenant. Cliente abre a aba
+// "Importar da Meta" e ve quais sao APPROVED.
+//
+// Pre-requisitos no tenant:
+//   - Sessao Cloud configurada (whatsapp_sessions.type='cloud_api')
+//   - waba_id preenchido (pediu no formulario de Nova Sessao Cloud)
+//   - access_token com scope `whatsapp_business_management`
+//
+// Retorna erro claro se algum desses faltar.
+func (h *handlers) uiTemplatesMetaList(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	// Acha a primeira sessao Cloud ativa do dominio.
+	sessions, err := h.repo.ListSessionsByDomain(ctx, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	var cloud *db.WhatsAppSession
+	for _, s := range sessions {
+		if s.Type == db.SessionTypeCloudAPI && s.Status == db.SessionActive {
+			cloud = s
+			break
+		}
+	}
+	if cloud == nil {
+		return c.Status(404).JSON(fiber.Map{
+			"error": "nenhuma sessao Cloud API ativa neste tenant",
+			"hint":  "Conecte uma sessao Cloud em 'Sessoes WhatsApp' antes de importar templates.",
+		})
+	}
+	if cloud.CloudWABAID == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "sessao Cloud nao tem WABA_ID configurado",
+			"hint":  "Edite a sessao em 'Sessoes WhatsApp' e preencha o campo 'WABA ID' (encontrado no Meta Business Manager > WhatsApp Manager).",
+		})
+	}
+	includeAll := c.Query("all") == "1"
+	tmpls, err := whatsapp.FetchMetaTemplates(ctx, cloud.CloudWABAID, cloud.CloudAccessToken, includeAll)
+	if err != nil {
+		// Detecta scope faltando — mensagem clara pro cliente.
+		msg := err.Error()
+		hint := ""
+		if strings.Contains(msg, "permission") || strings.Contains(msg, "scope") || strings.Contains(msg, "OAuthException") {
+			hint = "O access_token da sua sessao Cloud nao tem scope 'whatsapp_business_management'. No Meta Business Manager > System Users > seu user, adicione essa permissao e gere um token novo. Depois edite a sessao Cloud aqui com o token novo."
+		}
+		return c.Status(500).JSON(fiber.Map{
+			"error":   msg,
+			"hint":    hint,
+			"waba_id": cloud.CloudWABAID,
+		})
+	}
+	return c.JSON(fiber.Map{
+		"templates": tmpls,
+		"waba_id":   cloud.CloudWABAID,
+		"count":     len(tmpls),
+	})
+}
+
+// POST /ui/templates/meta-import — body {templates:[{name,language,vars_count,body_text}, ...]}
+// Insere em lote no message_templates com meta_template_* preenchido.
+// Se nome ja existe no dominio (pra qualquer template), pula.
+func (h *handlers) uiTemplatesMetaImport(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	var req struct {
+		Templates []struct {
+			Name      string `json:"name"`
+			Language  string `json:"language"`
+			VarsCount int    `json:"vars_count"`
+			BodyText  string `json:"body_text"`
+		} `json:"templates"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	if len(req.Templates) == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "lista de templates vazia"})
+	}
+
+	// Pra evitar duplicatas, lista os ja cadastrados e indexa pelo nome Meta.
+	existing, _ := h.repo.ListMessageTemplates(ctx, domain)
+	known := map[string]bool{}
+	for _, t := range existing {
+		if t.MetaTemplateName != "" {
+			known[t.MetaTemplateName] = true
+		}
+	}
+
+	created := 0
+	skipped := 0
+	var errs []string
+	for _, t := range req.Templates {
+		t.Name = strings.TrimSpace(t.Name)
+		t.Language = strings.TrimSpace(t.Language)
+		if t.Name == "" || t.Language == "" {
+			skipped++
+			continue
+		}
+		if known[t.Name] {
+			skipped++
+			continue
+		}
+		// Titulo derivado do nome Meta (cliente edita depois se quiser).
+		title := t.Name
+		body := t.BodyText
+		if body == "" {
+			body = "(template Meta: " + t.Name + " — edite este texto como referencia)"
+		}
+		_, err := h.repo.CreateMessageTemplate(ctx, domain, title, body, "meta-import",
+			t.Name, t.Language, t.VarsCount)
+		if err != nil {
+			errs = append(errs, t.Name+": "+err.Error())
+			continue
+		}
+		created++
+	}
+	return c.JSON(fiber.Map{
+		"created": created,
+		"skipped": skipped,
+		"errors":  errs,
+	})
 }
 
 // ─── Historico de conversas (aba /dashboard) ──────────────────────────────
