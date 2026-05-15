@@ -229,6 +229,9 @@ func New(
 	admin.Get("/api/tenant/sms-debug", h.adminTenantSMSDebug)
 	admin.Post("/api/tenant/sms-register", h.adminTenantSMSRegister)
 	admin.Post("/api/tenant/bp-register", h.adminTenantBPRegister)
+	// Alias GET pra facilitar teste rapido via browser
+	admin.Get("/api/tenant/bp-register", h.adminTenantBPRegister)
+	admin.Get("/api/tenant/sms-register", h.adminTenantSMSRegister)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

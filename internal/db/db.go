@@ -206,21 +206,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
-		{"024_template_meta_redo", `
-			-- Recria os campos meta_template_* em message_templates. Cliente
-			-- vai usar pra automacoes do CRM Bitrix24 (robot/BizProc activity)
-			-- onde precisa escolher entre envio Oficial (Cloud API + template
-			-- HSM aprovado pela Meta) e Nao Oficial (texto livre Multi-Device).
-			--
-			-- Quando preenchidos, robot envia como template Cloud. Quando
-			-- vazios, robot envia texto livre (caminho com risco de banimento).
-			ALTER TABLE message_templates
-				ADD COLUMN IF NOT EXISTS meta_template_name TEXT NOT NULL DEFAULT '';
-			ALTER TABLE message_templates
-				ADD COLUMN IF NOT EXISTS meta_template_lang TEXT NOT NULL DEFAULT '';
-			ALTER TABLE message_templates
-				ADD COLUMN IF NOT EXISTS meta_template_vars INT NOT NULL DEFAULT 0;
-		`},
 		{"023_template_meta_revert", `
 			-- Reverte 022_template_meta. Cliente preferiu manter SMS Campaigns
 			-- apenas no caminho nao oficial (texto livre / Multi-Device).
@@ -233,6 +218,23 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- (descontinuada) — campos adicionados aqui foram removidos pela 023.
 			-- Mantida apenas pra historia da fila de migrations.
 			SELECT 1;
+		`},
+		{"024_template_meta_redo", `
+			-- IMPORTANTE: precisa rodar DEPOIS da 023 (que dropa as colunas).
+			-- Slice e' percorrido na ORDEM DECLARADA, nao alfabetica — entao
+			-- 024 vem depois de 023/022/etc no codigo, recriando as colunas
+			-- que a 023 removeu.
+			--
+			-- Recria os campos meta_template_* em message_templates. Cliente
+			-- usa pra automacoes do CRM Bitrix24 (robot/BizProc activity)
+			-- onde escolhe entre envio Oficial (Cloud API + template HSM
+			-- aprovado pela Meta) e Nao Oficial (texto livre Multi-Device).
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_name TEXT NOT NULL DEFAULT '';
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_lang TEXT NOT NULL DEFAULT '';
+			ALTER TABLE message_templates
+				ADD COLUMN IF NOT EXISTS meta_template_vars INT NOT NULL DEFAULT 0;
 		`},
 		{"021_sms_provider", `
 			-- Modulo SMS Campaigns: Bitrix Marketing > Campanhas SMS escolhe o
