@@ -864,27 +864,50 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div class="section-hdr">
       <div>
         <div class="section-title">Templates de Mensagem</div>
-        <div class="section-sub">Quick replies que aparecem para os atendentes no compositor do CRM</div>
+        <div class="section-sub">Duas categorias: Não Oficial (texto livre, atendimento) e Oficial Meta (HSM, disparo ativo)</div>
       </div>
-      <button class="btn btn-primary" onclick="abrirModalTemplate()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Novo Template
+    </div>
+
+    <!-- Tabs: Não Oficial vs Oficial Meta -->
+    <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:0;">
+      <button id="tpl-tab-unofficial" onclick="trocarAbaTemplate('unofficial')"
+              style="background:none;border:0;border-bottom:2px solid #25D366;color:#25D366;font-size:13px;font-weight:600;padding:10px 14px;cursor:pointer;font-family:inherit;">
+        Não Oficial (Multi-Device)
+      </button>
+      <button id="tpl-tab-official" onclick="trocarAbaTemplate('official')"
+              style="background:none;border:0;border-bottom:2px solid transparent;color:#64748b;font-size:13px;font-weight:600;padding:10px 14px;cursor:pointer;font-family:inherit;">
+        Oficial Meta (HSM)
       </button>
     </div>
 
-    <!-- Info box -->
-    <div class="card-flat" style="padding:14px 18px;margin-bottom:18px;display:flex;align-items:flex-start;gap:12px;">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+    <!-- Info box dinamico por aba -->
+    <div id="tpl-info-unofficial" class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:12px;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#25D366" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
       <div style="font-size:12.5px;color:#64748b;line-height:1.7;">
-        Templates aparecem na aba <strong style="color:#cbd5e1;">UC Talk</strong> dentro do CRM, no botão de templates ao lado do anexo. Atendente clica e o texto cai direto no compositor. <br>
-        <span style="color:#475569;">Use para saudações, respostas frequentes, condições comerciais — qualquer texto repetido vira clique.</span>
+        <strong style="color:#cbd5e1;">Texto livre via Multi-Device.</strong> Usado no compositor do CRM tab (atendente clica e o texto cai no campo de mensagem) e no robot CRM no modo Não Oficial.
+        <span style="color:#475569;">Funciona bem dentro de conversas ativas. Para disparo frio em massa, prefira a aba Oficial Meta.</span>
+      </div>
+    </div>
+    <div id="tpl-info-official" class="card-flat" style="padding:14px 18px;margin-bottom:14px;display:none;align-items:flex-start;gap:12px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.25);">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+      <div style="font-size:12.5px;color:#93c5fd;line-height:1.7;">
+        <strong style="color:#dbeafe;">Templates aprovados pela Meta (HSM).</strong> Único caminho seguro para disparo ativo (cold outreach) via Cloud API.
+        Antes de cadastrar aqui, crie o template no <strong>Meta Business Manager</strong> e aguarde aprovação. Depois cole o nome, idioma e nº de variáveis abaixo.
       </div>
     </div>
 
-    <!-- Lista -->
+    <!-- Botão Novo Template (texto muda conforme aba) -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px;">
+      <button id="tpl-novo-btn" class="btn btn-primary" onclick="abrirModalTemplate()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span id="tpl-novo-btn-label">Novo Template Não Oficial</span>
+      </button>
+    </div>
+
+    <!-- Lista (mesmo container, filtrada por _tplActiveTab) -->
     <div class="card" style="padding:0;">
       <div style="padding:14px 18px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
-        <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Templates cadastrados</div>
+        <div id="tpl-list-title" style="font-size:13px;color:#cbd5e1;font-weight:600;">Templates Não Oficiais</div>
         <span style="font-size:11px;color:#64748b;" id="tpl-status">—</span>
       </div>
       <div id="tpl-list" style="padding:8px;">
@@ -904,12 +927,12 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <input type="hidden" id="tpl-edit-id" value="">
         <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Título</div>
         <input type="text" id="tpl-title-input" class="inp" placeholder="Ex: Saudação inicial" style="width:100%;margin-bottom:14px;" maxlength="120">
-        <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem (Não Oficial / Multi-Device)</div>
+        <div id="tpl-body-label" style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem (Não Oficial / Multi-Device)</div>
         <textarea id="tpl-body-input" class="inp" placeholder="Texto livre — usado quando enviado via WhatsApp não oficial (Multi-Device)." rows="6" style="width:100%;resize:vertical;min-height:120px;font-family:inherit;"></textarea>
         <div style="font-size:11px;color:#475569;margin-top:6px;">Tip: use Shift+Enter para quebrar linha. Emojis 😀 funcionam.</div>
 
-        <!-- Template Meta (opcional) — habilita modo OFICIAL no robot CRM e SMS Campaigns -->
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);">
+        <!-- Template Meta — visivel apenas quando modal abre em modo Oficial -->
+        <div id="tpl-meta-section" style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);display:none;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
             <span style="font-size:11.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Template Oficial Meta (opcional)</span>
@@ -2922,14 +2945,44 @@ function confirmarTransferir(userID, userName) {
     .catch(function(err){ toast('Erro de rede: ' + err.message, 'error'); });
 }
 
-// ─── Templates de Mensagem ──────────────────────────────────────────────────
+// ─── Templates de Mensagem (2 categorias) ──────────────────────────────────
+// Mesma tabela message_templates no banco. Categorizamos client-side pela
+// presenca de meta_template_name:
+//   - meta_template_name == ''  → Nao Oficial (texto livre Multi-Device)
+//   - meta_template_name != ''  → Oficial Meta (HSM aprovado)
+// Abas no UI filtram a lista. Modal "Novo Template" abre pre-configurado
+// pra aba atual (modo determina se exige meta_template_name).
 var _tplCache = [];
+var _tplActiveTab = 'unofficial'; // 'unofficial' | 'official'
 
 function _tplEsc(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, function(c){
     return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
   });
+}
+
+function trocarAbaTemplate(tab) {
+  _tplActiveTab = tab;
+  // Estiliza tabs
+  var tu = document.getElementById('tpl-tab-unofficial');
+  var to = document.getElementById('tpl-tab-official');
+  if (tab === 'unofficial') {
+    tu.style.borderBottomColor = '#25D366'; tu.style.color = '#25D366';
+    to.style.borderBottomColor = 'transparent'; to.style.color = '#64748b';
+    document.getElementById('tpl-info-unofficial').style.display = 'flex';
+    document.getElementById('tpl-info-official').style.display = 'none';
+    document.getElementById('tpl-list-title').textContent = 'Templates Não Oficiais';
+    document.getElementById('tpl-novo-btn-label').textContent = 'Novo Template Não Oficial';
+  } else {
+    to.style.borderBottomColor = '#60a5fa'; to.style.color = '#60a5fa';
+    tu.style.borderBottomColor = 'transparent'; tu.style.color = '#64748b';
+    document.getElementById('tpl-info-unofficial').style.display = 'none';
+    document.getElementById('tpl-info-official').style.display = 'flex';
+    document.getElementById('tpl-list-title').textContent = 'Templates Oficiais Meta (HSM)';
+    document.getElementById('tpl-novo-btn-label').textContent = 'Novo Template Oficial Meta';
+  }
+  renderTplList();
 }
 
 function carregarTemplatesDashboard() {
@@ -2944,7 +2997,6 @@ function carregarTemplatesDashboard() {
       }
       _tplCache = d.templates || d.items || [];
       renderTplList();
-      document.getElementById('tpl-status').textContent = _tplCache.length + ' template(s)';
     })
     .catch(function(err){
       box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:13px;text-align:center;">Erro de rede: ' + err.message + '</div>';
@@ -2953,19 +3005,40 @@ function carregarTemplatesDashboard() {
 
 function renderTplList() {
   var box = document.getElementById('tpl-list');
-  if (!_tplCache.length) {
-    box.innerHTML = '<div style="padding:30px 18px;text-align:center;color:#475569;font-size:13px;line-height:1.6;">Nenhum template cadastrado ainda.<br><span style="color:#334155;font-size:12px;">Clique em <strong>Novo Template</strong> acima para criar o primeiro.</span></div>';
+  // Filtra pela aba ativa
+  var filtered = _tplCache.filter(function(t){
+    var isOfficial = !!(t.meta_template_name && t.meta_template_name.trim());
+    return _tplActiveTab === 'official' ? isOfficial : !isOfficial;
+  });
+  document.getElementById('tpl-status').textContent = filtered.length + ' template(s)';
+
+  if (!filtered.length) {
+    var hint = _tplActiveTab === 'official'
+      ? 'Cadastre o template no Meta Business Manager primeiro, aguarde aprovação, e clique em <strong>Novo Template Oficial Meta</strong> para vinculá-lo aqui.'
+      : 'Clique em <strong>Novo Template Não Oficial</strong> acima para criar o primeiro.';
+    box.innerHTML = '<div style="padding:30px 18px;text-align:center;color:#475569;font-size:13px;line-height:1.6;">Nenhum template cadastrado nesta categoria.<br><span style="color:#334155;font-size:12px;">' + hint + '</span></div>';
     return;
   }
   var html = '';
-  for (var i = 0; i < _tplCache.length; i++) {
-    var t = _tplCache[i];
+  for (var i = 0; i < filtered.length; i++) {
+    var t = filtered[i];
     var preview = (t.body || '').replace(/\n/g, ' ').slice(0, 140);
     if ((t.body || '').length > 140) preview += '...';
+    var metaBadge = '';
+    if (_tplActiveTab === 'official') {
+      var langTxt = t.meta_template_lang || '?';
+      var varsTxt = (t.meta_template_vars || 0) + ' var';
+      metaBadge = '<div style="display:inline-flex;gap:6px;margin-top:6px;font-size:10.5px;">'
+                + '<span style="background:rgba(96,165,250,.14);color:#60a5fa;padding:2px 7px;border-radius:8px;font-weight:600;">' + _tplEsc(t.meta_template_name) + '</span>'
+                + '<span style="background:rgba(255,255,255,.04);color:#94a3b8;padding:2px 7px;border-radius:8px;">' + _tplEsc(langTxt) + '</span>'
+                + '<span style="background:rgba(255,255,255,.04);color:#94a3b8;padding:2px 7px;border-radius:8px;">' + _tplEsc(varsTxt) + '</span>'
+                + '</div>';
+    }
     html += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:13px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
          +   '<div style="flex:1;min-width:0;">'
          +     '<div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:3px;">' + _tplEsc(t.title || '(sem título)') + '</div>'
          +     '<div style="font-size:12px;color:#64748b;line-height:1.5;">' + _tplEsc(preview) + '</div>'
+         +     metaBadge
          +   '</div>'
          +   '<div style="display:flex;gap:6px;flex-shrink:0;">'
          +     '<button class="btn btn-ghost btn-sm" onclick="abrirModalTemplate(\'' + t.id + '\')" style="font-size:11px;color:#94a3b8;">Editar</button>'
@@ -2979,10 +3052,15 @@ function renderTplList() {
 function abrirModalTemplate(id) {
   var modal = document.getElementById('modal-tpl');
   modal.style.display = 'flex';
+
+  // Determina modo: edicao usa o tipo do template existente; novo segue
+  // a aba ativa.
+  var isOfficial;
   if (id) {
     var t = _tplCache.find(function(x){ return x.id === id; });
     if (!t) { fecharModalTemplate(); return; }
-    document.getElementById('modal-tpl-titulo').textContent = 'Editar Template';
+    isOfficial = !!(t.meta_template_name && t.meta_template_name.trim());
+    document.getElementById('modal-tpl-titulo').textContent = isOfficial ? 'Editar Template Oficial Meta' : 'Editar Template Não Oficial';
     document.getElementById('tpl-edit-id').value = id;
     document.getElementById('tpl-title-input').value = t.title || '';
     document.getElementById('tpl-body-input').value = t.body || '';
@@ -2990,13 +3068,27 @@ function abrirModalTemplate(id) {
     document.getElementById('tpl-meta-lang').value = t.meta_template_lang || '';
     document.getElementById('tpl-meta-vars').value = t.meta_template_vars || 0;
   } else {
-    document.getElementById('modal-tpl-titulo').textContent = 'Novo Template';
+    isOfficial = _tplActiveTab === 'official';
+    document.getElementById('modal-tpl-titulo').textContent = isOfficial ? 'Novo Template Oficial Meta' : 'Novo Template Não Oficial';
     document.getElementById('tpl-edit-id').value = '';
     document.getElementById('tpl-title-input').value = '';
     document.getElementById('tpl-body-input').value = '';
     document.getElementById('tpl-meta-name').value = '';
     document.getElementById('tpl-meta-lang').value = '';
     document.getElementById('tpl-meta-vars').value = 0;
+  }
+
+  // Marca o modo no modal pra salvarTemplate validar
+  modal.dataset.mode = isOfficial ? 'official' : 'unofficial';
+
+  // Esconde/mostra secao Meta conforme o tipo
+  var metaSec = document.getElementById('tpl-meta-section');
+  if (metaSec) metaSec.style.display = isOfficial ? 'block' : 'none';
+  var bodyLabel = document.getElementById('tpl-body-label');
+  if (bodyLabel) {
+    bodyLabel.textContent = isOfficial
+      ? 'Mensagem (referência — Meta usa o template aprovado)'
+      : 'Mensagem (Não Oficial / Multi-Device)';
   }
   setTimeout(function(){ document.getElementById('tpl-title-input').focus(); }, 50);
 }
@@ -3007,6 +3099,7 @@ function fecharModalTemplate() {
 
 function salvarTemplate() {
   var id = document.getElementById('tpl-edit-id').value;
+  var mode = document.getElementById('modal-tpl').dataset.mode || 'unofficial';
   var title = (document.getElementById('tpl-title-input').value || '').trim();
   var body = (document.getElementById('tpl-body-input').value || '').trim();
   var metaName = (document.getElementById('tpl-meta-name').value || '').trim();
@@ -3014,7 +3107,16 @@ function salvarTemplate() {
   var metaVars = parseInt(document.getElementById('tpl-meta-vars').value || '0', 10) || 0;
   if (!title) { toast('Título é obrigatório', 'error'); return; }
   if (!body)  { toast('Mensagem é obrigatória', 'error'); return; }
-  if (metaName && !metaLang) { toast('Idioma é obrigatório se Nome do template Meta preenchido', 'error'); return; }
+  if (mode === 'official') {
+    if (!metaName) { toast('Nome do template Meta é obrigatório', 'error'); return; }
+    if (!metaLang) { toast('Idioma do template Meta é obrigatório', 'error'); return; }
+  } else {
+    // Modo Não Oficial: limpa campos meta pra evitar template "misturado"
+    // que apareceria em ambas as listas e confundiria o operador.
+    metaName = '';
+    metaLang = '';
+    metaVars = 0;
+  }
 
   var btn = document.getElementById('tpl-save-btn');
   btn.disabled = true;
