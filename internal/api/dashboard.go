@@ -1006,14 +1006,80 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <div id="sms-config-status" style="margin-top:8px;font-size:11.5px;color:#64748b;">—</div>
     </div>
 
-    <!-- Histórico de envios -->
+    <!-- Histórico de envios (resumido) -->
     <div class="card" style="padding:0;overflow:hidden;">
-      <div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+      <div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <div style="font-size:13px;color:#cbd5e1;font-weight:600;">Últimos envios</div>
-        <button class="btn btn-ghost btn-sm" onclick="carregarSMSMessages()" style="font-size:11px;color:#94a3b8;">↻ Atualizar</button>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="abrirModalSMSHistorico()" style="font-size:11px;color:#60a5fa;">📋 Ver histórico completo</button>
+          <button class="btn btn-ghost btn-sm" onclick="carregarSMSMessages()" style="font-size:11px;color:#94a3b8;">↻ Atualizar</button>
+        </div>
       </div>
       <div id="sms-msg-list" style="max-height:420px;overflow-y:auto;padding:4px;">
         <div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>
+      </div>
+      <div style="padding:8px 14px;border-top:1px solid rgba(255,255,255,.04);font-size:10.5px;color:#475569;text-align:center;">
+        Envios mantidos por 30 dias — histórico mais antigo é apagado automaticamente.
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Histórico completo SMS Campaigns -->
+  <div id="sms-historico-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:920px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5);">
+      <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:#e2e8f0;">Histórico de envios — Campanhas SMS</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px;">Mantemos os últimos 30 dias.</div>
+        </div>
+        <button onclick="fecharModalSMSHistorico()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
+      </div>
+
+      <!-- Filtros -->
+      <div style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;align-items:end;">
+        <div>
+          <div style="font-size:10.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">De</div>
+          <input type="date" id="sms-hist-from" class="inp" style="width:100%;font-size:12px;">
+        </div>
+        <div>
+          <div style="font-size:10.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Até</div>
+          <input type="date" id="sms-hist-to" class="inp" style="width:100%;font-size:12px;">
+        </div>
+        <div>
+          <div style="font-size:10.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Status</div>
+          <select id="sms-hist-status" class="inp" style="width:100%;font-size:12px;">
+            <option value="">Todos</option>
+            <option value="queued">Enfileirado</option>
+            <option value="sent">Enviado</option>
+            <option value="delivered">Entregue</option>
+            <option value="failed">Falhou</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:10.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Telefone</div>
+          <input type="text" id="sms-hist-phone" class="inp" placeholder="ex: 5519..." style="width:100%;font-size:12px;">
+        </div>
+      </div>
+      <div style="padding:8px 20px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div id="sms-hist-summary" style="font-size:11.5px;color:#94a3b8;">—</div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="resetFiltrosSMSHistorico()" style="font-size:11px;color:#94a3b8;">Limpar filtros</button>
+          <button class="btn btn-primary btn-sm" onclick="aplicarFiltrosSMSHistorico()" style="font-size:11.5px;">Aplicar</button>
+        </div>
+      </div>
+
+      <!-- Lista -->
+      <div id="sms-hist-list" style="flex:1;overflow-y:auto;padding:4px;min-height:300px;">
+        <div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>
+      </div>
+
+      <!-- Paginação -->
+      <div style="padding:10px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">
+        <span id="sms-hist-page-info" style="color:#64748b;">—</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" id="sms-hist-prev" onclick="pageSMSHistorico(-1)" style="font-size:11px;color:#94a3b8;">← Anterior</button>
+          <button class="btn btn-ghost btn-sm" id="sms-hist-next" onclick="pageSMSHistorico(1)" style="font-size:11px;color:#94a3b8;">Próximo →</button>
+        </div>
       </div>
     </div>
   </div>
@@ -3128,6 +3194,145 @@ function carregarSMSMessages() {
     .catch(function(err){
       box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + _smsEsc(err.message) + '</div>';
     });
+}
+
+// ─── Modal: Histórico completo SMS Campaigns ───────────────────────────
+// Lista paginada com filtros (data, status, telefone). Backend devolve
+// até 500 msgs por página; paginamos client-side com slice.
+var _smsHistAll = [];        // cache da página atual carregada do backend
+var _smsHistFiltered = [];   // aplicado filtros client-side
+var _smsHistPage = 0;
+var _smsHistPageSize = 25;
+
+function abrirModalSMSHistorico() {
+  document.getElementById('sms-historico-modal').style.display = 'flex';
+  // Default: últimos 30 dias
+  var today = new Date();
+  var monthAgo = new Date(today.getTime() - 30 * 86400000);
+  document.getElementById('sms-hist-from').value = monthAgo.toISOString().slice(0, 10);
+  document.getElementById('sms-hist-to').value = today.toISOString().slice(0, 10);
+  document.getElementById('sms-hist-status').value = '';
+  document.getElementById('sms-hist-phone').value = '';
+  _smsHistPage = 0;
+  carregarSMSHistorico();
+}
+
+function fecharModalSMSHistorico() {
+  document.getElementById('sms-historico-modal').style.display = 'none';
+}
+
+function resetFiltrosSMSHistorico() {
+  document.getElementById('sms-hist-from').value = '';
+  document.getElementById('sms-hist-to').value = '';
+  document.getElementById('sms-hist-status').value = '';
+  document.getElementById('sms-hist-phone').value = '';
+  _smsHistPage = 0;
+  aplicarFiltrosSMSHistorico();
+}
+
+function aplicarFiltrosSMSHistorico() {
+  _smsHistPage = 0;
+  filtrarSMSHistoricoClientSide();
+}
+
+function carregarSMSHistorico() {
+  var box = document.getElementById('sms-hist-list');
+  box.innerHTML = '<div style="padding:30px;text-align:center;color:#475569;font-size:12px;">Carregando...</div>';
+  // limit=500 — backend max e' bem maior; paginamos client-side abaixo
+  fetch('/ui/sms/messages?domain=' + encodeURIComponent(PORTAL || '') + '&limit=500')
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.error) {
+        box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro: ' + _smsEsc(d.error) + '</div>';
+        return;
+      }
+      _smsHistAll = d.messages || [];
+      filtrarSMSHistoricoClientSide();
+    })
+    .catch(function(err){
+      box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro de rede: ' + _smsEsc(err.message) + '</div>';
+    });
+}
+
+function filtrarSMSHistoricoClientSide() {
+  var from = document.getElementById('sms-hist-from').value;
+  var to = document.getElementById('sms-hist-to').value;
+  var status = document.getElementById('sms-hist-status').value;
+  var phone = (document.getElementById('sms-hist-phone').value || '').trim();
+
+  var fromTs = from ? new Date(from + 'T00:00:00').getTime() : 0;
+  var toTs = to ? new Date(to + 'T23:59:59').getTime() : Infinity;
+
+  _smsHistFiltered = _smsHistAll.filter(function(m){
+    var ts = new Date(m.created_at).getTime();
+    if (ts < fromTs || ts > toTs) return false;
+    if (status && m.status !== status) return false;
+    if (phone && (m.to_phone || '').indexOf(phone) === -1) return false;
+    return true;
+  });
+
+  renderSMSHistoricoPage();
+}
+
+function pageSMSHistorico(delta) {
+  var total = _smsHistFiltered.length;
+  var maxPage = Math.max(0, Math.ceil(total / _smsHistPageSize) - 1);
+  _smsHistPage += delta;
+  if (_smsHistPage < 0) _smsHistPage = 0;
+  if (_smsHistPage > maxPage) _smsHistPage = maxPage;
+  renderSMSHistoricoPage();
+}
+
+function renderSMSHistoricoPage() {
+  var box = document.getElementById('sms-hist-list');
+  var total = _smsHistFiltered.length;
+  var start = _smsHistPage * _smsHistPageSize;
+  var end = Math.min(start + _smsHistPageSize, total);
+  var page = _smsHistFiltered.slice(start, end);
+
+  // Summary com contagens por status
+  var counts = {queued:0, sent:0, delivered:0, failed:0};
+  _smsHistFiltered.forEach(function(m){ if (counts.hasOwnProperty(m.status)) counts[m.status]++; });
+  document.getElementById('sms-hist-summary').innerHTML =
+    '<strong>' + total + '</strong> envio(s) — '
+    + '<span style="color:#60a5fa">' + counts.sent + ' enviados</span>, '
+    + '<span style="color:#25D366">' + counts.delivered + ' entregues</span>, '
+    + '<span style="color:#fbbf24">' + counts.queued + ' fila</span>, '
+    + '<span style="color:#f87171">' + counts.failed + ' falhas</span>';
+
+  // Paginação
+  var maxPage = Math.max(0, Math.ceil(total / _smsHistPageSize) - 1);
+  document.getElementById('sms-hist-page-info').textContent =
+    total === 0 ? 'Nenhum resultado' : 'Página ' + (_smsHistPage + 1) + ' de ' + (maxPage + 1) + ' (' + (start+1) + '–' + end + ' de ' + total + ')';
+  document.getElementById('sms-hist-prev').disabled = _smsHistPage <= 0;
+  document.getElementById('sms-hist-next').disabled = _smsHistPage >= maxPage;
+
+  if (!page.length) {
+    box.innerHTML = '<div style="padding:40px;text-align:center;color:#475569;font-size:12px;line-height:1.6;">Nenhum envio com esses filtros.<br><span style="color:#334155;font-size:11px;">Tente ampliar o intervalo de datas ou limpar filtros.</span></div>';
+    return;
+  }
+
+  var statusColors = {
+    queued: '#94a3b8', sent: '#60a5fa', delivered: '#25D366',
+    undelivered: '#fbbf24', failed: '#f87171'
+  };
+  var html = '';
+  for (var i = 0; i < page.length; i++) {
+    var m = page[i];
+    var c = statusColors[m.status] || '#94a3b8';
+    var preview = (m.body || '').replace(/\n/g, ' ').slice(0, 100);
+    if ((m.body || '').length > 100) preview += '...';
+    var dt = new Date(m.created_at).toLocaleString('pt-BR');
+    html += '<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.04);">'
+         +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px;">'
+         +      '<div style="font-size:13px;color:#e2e8f0;font-weight:600;">+' + _smsEsc(m.to_phone) + '</div>'
+         +      '<div style="font-size:11px;color:' + c + ';font-weight:600;text-transform:uppercase;">' + _smsEsc(m.status) + '</div>'
+         +    '</div>'
+         +    '<div style="font-size:11.5px;color:#64748b;line-height:1.4;">' + _smsEsc(preview) + '</div>'
+         +    '<div style="font-size:10px;color:#334155;margin-top:3px;">' + _smsEsc(dt) + (m.error ? ' · <span style="color:#f87171">' + _smsEsc(m.error) + '</span>' : '') + '</div>'
+         +  '</div>';
+  }
+  box.innerHTML = html;
 }
 
 function carregarHistoricoSessoes() {

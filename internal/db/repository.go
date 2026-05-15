@@ -1898,6 +1898,21 @@ func (r *Repository) ListSMSMessagesByDomain(ctx context.Context, domain string,
 	return out, rows.Err()
 }
 
+// DeleteOldSMSMessages apaga linhas de bitrix_sms_messages com mais de
+// retentionDays dias. Politica de retencao do modulo SMS Campaigns.
+func (r *Repository) DeleteOldSMSMessages(ctx context.Context, retentionDays int) (int64, error) {
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM bitrix_sms_messages WHERE created_at < NOW() - make_interval(days => $1)`,
+		retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // SetDefaultSMSSession define a sessao WA padrao do tenant pra campanhas SMS.
 // Vazio = desativado.
 func (r *Repository) SetDefaultSMSSession(ctx context.Context, domain, sessionJID string) error {

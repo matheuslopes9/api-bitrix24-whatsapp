@@ -312,6 +312,29 @@ func main() {
 		}
 	}()
 
+	// ─── Limpeza de envios SMS Campaigns (retencao 30d) ─────────────────
+	// Tabela bitrix_sms_messages e' so' log de auditoria — Bitrix mantem
+	// status na campanha dele. 30 dias e' bastante pra debugar problemas
+	// recentes sem inchar o banco.
+	go func() {
+		const smsRetentionDays = 30
+		for {
+			n, err := repo.DeleteOldSMSMessages(context.Background(), smsRetentionDays)
+			if err != nil {
+				log.Warn("cleanup: delete old sms messages failed", zap.Error(err))
+			} else if n > 0 {
+				log.Info("cleanup: old sms messages deleted",
+					zap.Int64("count", n),
+					zap.Int("retention_days", smsRetentionDays))
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(24 * time.Hour):
+			}
+		}
+	}()
+
 	// ─── HTTP Server ─────────────────────────────────────────────────────
 	app := api.New(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
 
