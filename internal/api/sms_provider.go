@@ -21,9 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -33,64 +31,13 @@ import (
 )
 
 // SMSSenderCode: identificador unico do nosso provedor SMS no Bitrix.
-// Hardcoded — nao deveria ser configuravel pois e' chave de registro.
 const SMSSenderCode = "uctalk_whatsapp"
 
 // smsHandlerPath: rota onde o Bitrix vai bater. Tem que ser o caminho
 // real registrado no server.go (POST).
 const smsHandlerPath = "/bitrix/sms/send"
 
-// smsMinIntervalPerSession: intervalo minimo entre envios consecutivos pela
-// MESMA sessao WhatsApp. Reduz padrao "spammer" — Meta/whatsmeow ficam menos
-// agressivos no banimento quando ha gap humano entre as msgs.
-const smsMinIntervalPerSession = 5 * time.Second
-
-// Estado por sessao pra serializar envios e respeitar o intervalo minimo.
-// chave = sessionJID. Mutex separado por sessao (varias sessoes podem enviar
-// em paralelo entre si, mas msgs DA MESMA sessao sao serializadas).
-var (
-	smsSessionGateMu sync.Mutex
-	smsSessionGates  = map[string]*smsSessionGate{}
-)
-
-type smsSessionGate struct {
-	mu       sync.Mutex
-	lastSent time.Time
-}
-
-func getSMSGate(sessionJID string) *smsSessionGate {
-	smsSessionGateMu.Lock()
-	defer smsSessionGateMu.Unlock()
-	g, ok := smsSessionGates[sessionJID]
-	if !ok {
-		g = &smsSessionGate{}
-		smsSessionGates[sessionJID] = g
-	}
-	return g
-}
-
-// smsHumanTypingDuration calcula um tempo plausivel de "digitacao" pra
-// uma msg. Humano medio digita 200-300 caracteres por minuto (3-5 cps).
-// Adicionamos jitter aleatorio +- 30% pra variar entre msgs e evitar
-// padrao "exatamente 3s sempre".
-//
-// Limites: minimo 1.5s (msg curta), maximo 4s (msg longa). Acima disso
-// o destinatario poderia desistir de esperar e fechar o app, perdendo
-// o efeito visual.
-func smsHumanTypingDuration(text string) time.Duration {
-	const cps = 4.0 // chars por segundo, medio humano em mobile
-	base := float64(len(text)) / cps
-	// Jitter +-30%
-	jitter := (rand.Float64()*0.6 - 0.3) * base
-	d := time.Duration((base + jitter) * float64(time.Second))
-	if d < 1500*time.Millisecond {
-		d = 1500 * time.Millisecond
-	}
-	if d > 4*time.Second {
-		d = 4 * time.Second
-	}
-	return d
-}
+// Gate compartilhado: ver wa_send_gate.go.
 
 // RegisterSMSSenderForPortal e' chamado no install do app. Faz best-effort:
 // se falhar nao quebra o install — admin pode configurar manualmente via
@@ -228,27 +175,16 @@ func (h *handlers) processSMSSend(creds bitrix.TenantCreds, sessionJID string, m
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Adquire o gate da sessao — bloqueia ate' a vez chegar.
-	gate := getSMSGate(sessionJID)
-	gate.mu.Lock()
+	// Adquire o gate compartilhado da sessao (ver wa_send_gate.go).
+	gate := GetWASessionGate(sessionJID)
+	gate.Lock()
 
-	// Respeita intervalo minimo desde o ultimo envio nesta sessao.
-	elapsed := time.Since(gate.lastSent)
-	if elapsed < smsMinIntervalPerSession {
-		wait := smsMinIntervalPerSession - elapsed
-		h.log.Info("sms-provider: waiting rate limit",
-			zap.String("session", sessionJID),
-			zap.Duration("wait", wait),
+	if !gate.WaitMinInterval(ctx.Done()) {
+		gate.Unlock()
+		h.log.Warn("sms-provider: context cancelled while waiting rate limit",
 			zap.String("message_id", m.BitrixMessageID))
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			gate.mu.Unlock()
-			h.log.Warn("sms-provider: context cancelled while waiting rate limit",
-				zap.String("message_id", m.BitrixMessageID))
-			_ = h.repo.UpdateSMSMessageStatus(ctx, m.BitrixMessageID, "failed", "context cancelled in queue")
-			return
-		}
+		_ = h.repo.UpdateSMSMessageStatus(ctx, m.BitrixMessageID, "failed", "context cancelled in queue")
+		return
 	}
 
 	toJID := m.ToPhone + "@s.whatsapp.net"
@@ -259,18 +195,14 @@ func (h *handlers) processSMSSend(creds bitrix.TenantCreds, sessionJID string, m
 		// Cloud API nao tem "typing" via HTTPS. Manda direto.
 		waMsgID, sendErr = h.cloudMgr.SendText(ctx, sessionJID, m.ToPhone, m.Body)
 	} else {
-		// Multi-Device: simula digitacao 2-3s pra parecer humano. Whatsmeow
-		// dispara presence "composing" pro destinatario ver "digitando...".
-		typingDur := smsHumanTypingDuration(m.Body)
-		h.waManager.SendTyping(ctx, sessionJID, toJID, typingDur)
+		// Multi-Device: simula digitacao pra parecer humano.
+		h.waManager.SendTyping(ctx, sessionJID, toJID, WAHumanTypingDuration(m.Body))
 		waMsgID, sendErr = h.waManager.Send(ctx, sessionJID, toJID, m.Body)
 	}
 
-	// Marca timestamp imediatamente apos o envio (sucesso ou nao) pra que
-	// proxima tentativa nessa sessao respeite o 5s de gap. Solta o lock
-	// AQUI — reportar status ao Bitrix nao precisa segurar a fila.
-	gate.lastSent = time.Now()
-	gate.mu.Unlock()
+	// Solta o lock APOS o envio (antes de reportar status ao Bitrix).
+	gate.MarkSent()
+	gate.Unlock()
 
 	if sendErr != nil {
 		h.log.Warn("sms-provider: WA send failed",

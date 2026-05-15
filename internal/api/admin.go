@@ -858,3 +858,32 @@ func (h *handlers) adminTenantSMSRegister(c *fiber.Ctx) error {
 		zap.String("handler", handlerURL))
 	return c.JSON(fiber.Map{"ok": true, "handler_url": handlerURL, "sender_code": SMSSenderCode})
 }
+
+// POST /admin/api/tenant/bp-register?domain=... — forca registro do robot
+// no portal. Util quando auto-register do install falhou (scope `bizproc`
+// faltando no manifest, p.ex).
+func (h *handlers) adminTenantBPRegister(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
+	if err := h.bitrixClient.RegisterBPRobot(ctx, creds, BPRobotCode, "UC Talk: Enviar WhatsApp", handlerURL); err != nil {
+		h.log.Error("admin: BP robot register failed",
+			zap.String("domain", portal.Domain), zap.Error(err))
+		return c.Status(500).JSON(fiber.Map{
+			"error": err.Error(),
+			"hint":  "Se o erro contem 'ACCESS_DENIED' ou 'insufficient_scope', o scope `bizproc` esta faltando no manifest do app. Adicione no Marketplace e o cliente precisa re-instalar/re-autorizar.",
+		})
+	}
+	h.log.Info("admin: BP robot registered manually",
+		zap.String("domain", portal.Domain),
+		zap.String("handler", handlerURL))
+	return c.JSON(fiber.Map{"ok": true, "handler_url": handlerURL, "robot_code": BPRobotCode})
+}

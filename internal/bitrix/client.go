@@ -1308,6 +1308,73 @@ func (c *Client) UpdateSMSMessageStatus(ctx context.Context, creds TenantCreds, 
 	return err
 }
 
+// ─── BizProc (Automacoes do CRM Bitrix24) ─────────────────────────────────
+// Permite registrar nosso app como "atividade customizada" no menu
+// CRM > Automacoes > Regras de Automacao (e tambem em Modelos de Processo).
+// Cliente arrasta a atividade "UC Talk: Enviar WhatsApp" pra um robot/fluxo,
+// configura destinatario+modo+mensagem, e quando o robot dispara o Bitrix
+// POSTa no nosso handler.
+
+// RegisterBPRobot cadastra a atividade no portal. Idempotente (Bitrix
+// trata como upsert pelo CODE).
+//
+// Propriedades (PROPERTIES) declaram quais campos o cliente preenche
+// na UI do robot. O HANDLER recebe esses valores no POST quando o robot
+// dispara. Veja apidocs.bitrix24.com/api-reference/bizproc/bizproc-robot.
+func (c *Client) RegisterBPRobot(ctx context.Context, creds TenantCreds, code, name, handlerURL string) error {
+	props := map[string]interface{}{
+		"to_phone": map[string]interface{}{
+			"Name":      "Telefone destinatario",
+			"Type":      "string",
+			"Required":  "Y",
+			"Multiple":  "N",
+		},
+		"mode": map[string]interface{}{
+			"Name":     "Modo de envio",
+			"Type":     "select",
+			"Required": "Y",
+			"Options": map[string]string{
+				"unofficial": "Nao Oficial (Multi-Device)",
+				"official":   "Oficial (Cloud API + Template)",
+			},
+			"Default": "unofficial",
+		},
+		"template_id": map[string]interface{}{
+			"Name":     "Template (UUID — opcional pra Nao Oficial, obrigatorio pra Oficial)",
+			"Type":     "string",
+			"Required": "N",
+		},
+		"message": map[string]interface{}{
+			"Name":     "Mensagem (texto livre — usado se nao escolher template)",
+			"Type":     "text",
+			"Required": "N",
+			"Multiple": "N",
+		},
+		"template_vars": map[string]interface{}{
+			"Name":     "Variaveis do template (separadas por |, na ordem)",
+			"Type":     "string",
+			"Required": "N",
+		},
+	}
+	_, err := c.call(ctx, creds, "bizproc.robot.add", map[string]interface{}{
+		"CODE":            code,
+		"HANDLER":         handlerURL,
+		"AUTH_USER_ID":    1,
+		"NAME":            name,
+		"USE_SUBSCRIPTION": "N", // dispara fire-and-forget; nao espera ack
+		"PROPERTIES":      props,
+	})
+	return err
+}
+
+// DeleteBPRobot remove a atividade do portal. Usado no uninstall.
+func (c *Client) DeleteBPRobot(ctx context.Context, creds TenantCreds, code string) error {
+	_, err := c.call(ctx, creds, "bizproc.robot.delete", map[string]interface{}{
+		"CODE": code,
+	})
+	return err
+}
+
 // ListSMSSenders retorna os senders registrados pelo app neste portal.
 // Util pra debug: confirma se o messageservice.sender.add do install
 // realmente persistiu. Tambem revela se o app esta sem scope `messageservice`

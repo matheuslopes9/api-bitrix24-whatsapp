@@ -1757,12 +1757,23 @@ type MessageTemplate struct {
 	CreatedAt time.Time `db:"created_at"  json:"created_at"`
 	CreatedBy string    `db:"created_by"  json:"created_by"`
 	UpdatedAt time.Time `db:"updated_at"  json:"updated_at"`
+	// MetaTemplateName: se preenchido, template aponta pra um template
+	// aprovado no Meta Business Manager. Robot pode escolher modo
+	// "Oficial" e enviar via Cloud API com esse template HSM.
+	MetaTemplateName string `db:"meta_template_name"  json:"meta_template_name"`
+	// MetaTemplateLang: language code (ex: pt_BR, en_US).
+	MetaTemplateLang string `db:"meta_template_lang"  json:"meta_template_lang"`
+	// MetaTemplateVars: numero de variaveis {{1}}, {{2}}, ... do template.
+	MetaTemplateVars int `db:"meta_template_vars"  json:"meta_template_vars"`
 }
 
 // ListMessageTemplates retorna todos os templates do domain, ordenados por titulo.
 func (r *Repository) ListMessageTemplates(ctx context.Context, domain string) ([]*MessageTemplate, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, domain, title, body, created_at, created_by, updated_at
+		SELECT id, domain, title, body, created_at, created_by, updated_at,
+		       COALESCE(meta_template_name, ''),
+		       COALESCE(meta_template_lang, ''),
+		       COALESCE(meta_template_vars, 0)
 		FROM message_templates
 		WHERE domain = $1
 		ORDER BY title ASC`, domain)
@@ -1773,7 +1784,8 @@ func (r *Repository) ListMessageTemplates(ctx context.Context, domain string) ([
 	var out []*MessageTemplate
 	for rows.Next() {
 		var t MessageTemplate
-		if err := rows.Scan(&t.ID, &t.Domain, &t.Title, &t.Body, &t.CreatedAt, &t.CreatedBy, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Domain, &t.Title, &t.Body, &t.CreatedAt, &t.CreatedBy, &t.UpdatedAt,
+			&t.MetaTemplateName, &t.MetaTemplateLang, &t.MetaTemplateVars); err != nil {
 			return nil, err
 		}
 		out = append(out, &t)
@@ -1781,23 +1793,44 @@ func (r *Repository) ListMessageTemplates(ctx context.Context, domain string) ([
 	return out, rows.Err()
 }
 
+// GetMessageTemplateByID retorna 1 template do dominio. Usado pelo robot
+// quando precisa resolver nome+lang+vars antes de enviar via Cloud API.
+func (r *Repository) GetMessageTemplateByID(ctx context.Context, id uuid.UUID, domain string) (*MessageTemplate, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, title, body, created_at, created_by, updated_at,
+		       COALESCE(meta_template_name, ''),
+		       COALESCE(meta_template_lang, ''),
+		       COALESCE(meta_template_vars, 0)
+		FROM message_templates
+		WHERE id = $1 AND domain = $2`, id, domain)
+	var t MessageTemplate
+	if err := row.Scan(&t.ID, &t.Domain, &t.Title, &t.Body, &t.CreatedAt, &t.CreatedBy, &t.UpdatedAt,
+		&t.MetaTemplateName, &t.MetaTemplateLang, &t.MetaTemplateVars); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // CreateMessageTemplate insere um novo template. Retorna o ID gerado.
-func (r *Repository) CreateMessageTemplate(ctx context.Context, domain, title, body, createdBy string) (uuid.UUID, error) {
+func (r *Repository) CreateMessageTemplate(ctx context.Context, domain, title, body, createdBy, metaName, metaLang string, metaVars int) (uuid.UUID, error) {
 	id := uuid.New()
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO message_templates (id, domain, title, body, created_by)
-		VALUES ($1, $2, $3, $4, $5)`,
-		id, domain, title, body, createdBy)
+		INSERT INTO message_templates (id, domain, title, body, created_by,
+			meta_template_name, meta_template_lang, meta_template_vars)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, domain, title, body, createdBy, metaName, metaLang, metaVars)
 	return id, err
 }
 
-// UpdateMessageTemplate altera title/body de um template (validando dominio).
-func (r *Repository) UpdateMessageTemplate(ctx context.Context, id uuid.UUID, domain, title, body string) (bool, error) {
+// UpdateMessageTemplate altera title/body/meta_* de um template (validando dominio).
+func (r *Repository) UpdateMessageTemplate(ctx context.Context, id uuid.UUID, domain, title, body, metaName, metaLang string, metaVars int) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE message_templates
-		SET title = $1, body = $2, updated_at = NOW()
+		SET title = $1, body = $2,
+		    meta_template_name = $5, meta_template_lang = $6, meta_template_vars = $7,
+		    updated_at = NOW()
 		WHERE id = $3 AND domain = $4`,
-		title, body, id, domain)
+		title, body, id, domain, metaName, metaLang, metaVars)
 	if err != nil {
 		return false, err
 	}

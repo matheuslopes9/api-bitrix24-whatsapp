@@ -167,11 +167,12 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
 
 		// Best-effort: registra UC Talk como provedor SMS no portal (Marketing >
-		// Campanhas SMS). Falha aqui NAO quebra install. Requer scope
-		// `messageservice` no manifest do app — se nao tiver, retorna 403 e
-		// passa adiante (modulo SMS Campaigns fica desativado pra esse tenant).
+		// Campanhas SMS) e como atividade BizProc (CRM > Automacoes). Falhas
+		// aqui NAO quebram install — modulos ficam desativados pro tenant
+		// caso scopes (messageservice / bizproc) nao estejam no manifest.
 		if portalFresh, _ := h.repo.GetBitrixPortalByDomain(ctx, domain); portalFresh != nil {
 			h.RegisterSMSSenderForPortal(ctx, portalFresh)
+			h.RegisterBPRobotForPortal(ctx, portalFresh)
 		}
 	}()
 

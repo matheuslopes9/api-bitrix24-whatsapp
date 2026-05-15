@@ -311,6 +311,60 @@ func (cm *CloudManager) SendText(ctx context.Context, sessionJID, toPhone, text 
 	return cm.postMessage(ctx, s, payload)
 }
 
+// SendTemplate envia mensagem usando template aprovado pelo Meta. Caminho
+// oficial pra disparo ativo (fora janela de 24h) via Cloud API.
+//
+// Usado pelo robot CRM (automacoes Bitrix24) quando o cliente escolhe
+// modo "Oficial" e seleciona um template cadastrado em message_templates
+// com meta_template_name preenchido.
+//
+//   sessionJID: cloud:<phone_id>@s.whatsapp.net
+//   toPhone:    destinatario em E.164
+//   name:       nome exato como aprovado no Meta Business Manager
+//   lang:       language code (ex: pt_BR, en_US)
+//   variables:  valores das variaveis {{1}}, {{2}}... NA ORDEM. Vazio = sem variavel.
+//
+// Retorna wamid do Meta. Se Meta nao aceitar (template nao existe, lang
+// errado, variaveis erradas), retorna erro com mensagem do proprio Meta.
+func (cm *CloudManager) SendTemplate(ctx context.Context, sessionJID, toPhone, name, lang string, variables []string) (string, error) {
+	s, ok := cm.Get(sessionJID)
+	if !ok {
+		return "", fmt.Errorf("cloud session not found: %s", sessionJID)
+	}
+	if name == "" || lang == "" {
+		return "", fmt.Errorf("template name e lang obrigatorios")
+	}
+	template := map[string]interface{}{
+		"name": name,
+		"language": map[string]interface{}{
+			"code": lang,
+		},
+	}
+	if len(variables) > 0 {
+		params := make([]map[string]interface{}, 0, len(variables))
+		for _, v := range variables {
+			params = append(params, map[string]interface{}{
+				"type": "text",
+				"text": v,
+			})
+		}
+		template["components"] = []map[string]interface{}{
+			{
+				"type":       "body",
+				"parameters": params,
+			},
+		}
+	}
+	payload := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
+		"to":                normalizeRecipient(toPhone),
+		"type":              "template",
+		"template":          template,
+	}
+	return cm.postMessage(ctx, s, payload)
+}
+
 // SendDocument envia um arquivo (imagem/document/audio/video).
 // mediaType: "image" | "document" | "audio" | "video".
 func (cm *CloudManager) SendDocument(ctx context.Context, sessionJID, toPhone string, data []byte, mime, fileName, mediaType string) (string, error) {

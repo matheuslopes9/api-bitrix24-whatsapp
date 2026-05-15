@@ -900,13 +900,38 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
         <div style="font-size:14px;font-weight:600;color:#e2e8f0;" id="modal-tpl-titulo">Novo Template</div>
         <button onclick="fecharModalTemplate()" style="background:none;border:0;color:#64748b;cursor:pointer;font-size:18px;">✕</button>
       </div>
-      <div style="padding:20px;">
+      <div style="padding:20px;max-height:75vh;overflow-y:auto;">
         <input type="hidden" id="tpl-edit-id" value="">
         <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Título</div>
         <input type="text" id="tpl-title-input" class="inp" placeholder="Ex: Saudação inicial" style="width:100%;margin-bottom:14px;" maxlength="120">
-        <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem</div>
-        <textarea id="tpl-body-input" class="inp" placeholder="Digite o texto da mensagem... Pode ter várias linhas." rows="6" style="width:100%;resize:vertical;min-height:120px;font-family:inherit;"></textarea>
+        <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Mensagem (Não Oficial / Multi-Device)</div>
+        <textarea id="tpl-body-input" class="inp" placeholder="Texto livre — usado quando enviado via WhatsApp não oficial (Multi-Device)." rows="6" style="width:100%;resize:vertical;min-height:120px;font-family:inherit;"></textarea>
         <div style="font-size:11px;color:#475569;margin-top:6px;">Tip: use Shift+Enter para quebrar linha. Emojis 😀 funcionam.</div>
+
+        <!-- Template Meta (opcional) — habilita modo OFICIAL no robot CRM e SMS Campaigns -->
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+            <span style="font-size:11.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;">Template Oficial Meta (opcional)</span>
+          </div>
+          <div style="font-size:11.5px;color:#64748b;line-height:1.55;margin-bottom:10px;">
+            Permite enviar pelo <strong style="color:#cbd5e1;">caminho oficial</strong> (Cloud API + template HSM) nas automações do CRM Bitrix24. Cadastre primeiro o template no <strong style="color:#cbd5e1;">Meta Business Manager</strong>, aguarde aprovação, e cole os dados abaixo. Sem isso, este template só funciona como texto livre.
+          </div>
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;">
+            <div>
+              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">Nome do template Meta</div>
+              <input type="text" id="tpl-meta-name" class="inp" placeholder="ex: welcome_msg" style="width:100%;font-size:12px;">
+            </div>
+            <div>
+              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">Idioma</div>
+              <input type="text" id="tpl-meta-lang" class="inp" placeholder="ex: pt_BR" style="width:100%;font-size:12px;">
+            </div>
+            <div>
+              <div style="font-size:10.5px;color:#94a3b8;margin-bottom:4px;">N° variáveis</div>
+              <input type="number" id="tpl-meta-vars" class="inp" min="0" max="20" placeholder="0" style="width:100%;font-size:12px;">
+            </div>
+          </div>
+        </div>
       </div>
       <div style="padding:14px 20px;border-top:1px solid rgba(255,255,255,.06);display:flex;justify-content:flex-end;gap:8px;">
         <button class="btn btn-ghost" onclick="fecharModalTemplate()" style="color:#94a3b8;">Cancelar</button>
@@ -2961,11 +2986,17 @@ function abrirModalTemplate(id) {
     document.getElementById('tpl-edit-id').value = id;
     document.getElementById('tpl-title-input').value = t.title || '';
     document.getElementById('tpl-body-input').value = t.body || '';
+    document.getElementById('tpl-meta-name').value = t.meta_template_name || '';
+    document.getElementById('tpl-meta-lang').value = t.meta_template_lang || '';
+    document.getElementById('tpl-meta-vars').value = t.meta_template_vars || 0;
   } else {
     document.getElementById('modal-tpl-titulo').textContent = 'Novo Template';
     document.getElementById('tpl-edit-id').value = '';
     document.getElementById('tpl-title-input').value = '';
     document.getElementById('tpl-body-input').value = '';
+    document.getElementById('tpl-meta-name').value = '';
+    document.getElementById('tpl-meta-lang').value = '';
+    document.getElementById('tpl-meta-vars').value = 0;
   }
   setTimeout(function(){ document.getElementById('tpl-title-input').focus(); }, 50);
 }
@@ -2978,21 +3009,32 @@ function salvarTemplate() {
   var id = document.getElementById('tpl-edit-id').value;
   var title = (document.getElementById('tpl-title-input').value || '').trim();
   var body = (document.getElementById('tpl-body-input').value || '').trim();
+  var metaName = (document.getElementById('tpl-meta-name').value || '').trim();
+  var metaLang = (document.getElementById('tpl-meta-lang').value || '').trim();
+  var metaVars = parseInt(document.getElementById('tpl-meta-vars').value || '0', 10) || 0;
   if (!title) { toast('Título é obrigatório', 'error'); return; }
   if (!body)  { toast('Mensagem é obrigatória', 'error'); return; }
+  if (metaName && !metaLang) { toast('Idioma é obrigatório se Nome do template Meta preenchido', 'error'); return; }
 
   var btn = document.getElementById('tpl-save-btn');
   btn.disabled = true;
   btn.textContent = 'Salvando...';
 
+  var common = {
+    title: title, body: body,
+    meta_template_name: metaName,
+    meta_template_lang: metaLang,
+    meta_template_vars: metaVars,
+  };
+
   var url, payload;
   if (id) {
     var u = apiUrl('/ui/templates/update');
     url = u + (u.indexOf('?') !== -1 ? '&' : '?') + 'id=' + encodeURIComponent(id);
-    payload = { title: title, body: body };
+    payload = common;
   } else {
     url = apiUrl('/ui/templates/create');
-    payload = { title: title, body: body, created_by: '' };
+    payload = Object.assign({ created_by: '' }, common);
   }
 
   fetch(url, {

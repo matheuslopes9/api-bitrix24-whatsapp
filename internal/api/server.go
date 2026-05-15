@@ -168,6 +168,11 @@ func New(
 	ui.Post("/sms/ack-risk", h.uiSMSAckRisk)
 	ui.Get("/sms/messages", h.uiSMSMessages)
 
+	// ─── BizProc Robot (CRM > Automacoes) ─────────────────────────────────
+	// Modulo isolado em bp_robot.go. Bitrix bate em /bitrix/bp/send quando
+	// o robot "UC Talk: Enviar WhatsApp" dispara em algum workflow CRM.
+	bx.Post("/bp/send", h.bpRobotSend)
+
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
 	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
 	stats.Get("/daily", h.dailyStats)
@@ -223,6 +228,7 @@ func New(
 	admin.Post("/api/tenant/master", h.adminTenantSetMaster)
 	admin.Get("/api/tenant/sms-debug", h.adminTenantSMSDebug)
 	admin.Post("/api/tenant/sms-register", h.adminTenantSMSRegister)
+	admin.Post("/api/tenant/bp-register", h.adminTenantBPRegister)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)
