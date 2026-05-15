@@ -1315,54 +1315,56 @@ func (c *Client) UpdateSMSMessageStatus(ctx context.Context, creds TenantCreds, 
 // configura destinatario+modo+mensagem, e quando o robot dispara o Bitrix
 // POSTa no nosso handler.
 
-// RegisterBPRobot cadastra a atividade no portal. Idempotente (Bitrix
-// trata como upsert pelo CODE).
+// RegisterBPRobot cadastra a atividade no portal. Idempotente:
+// se ja existe, Bitrix retorna ERROR_ACTIVITY_ALREADY_INSTALLED (caller
+// trata como sucesso). Pra forcar update, deletar antes via DeleteBPRobot.
 //
-// Propriedades (PROPERTIES) declaram quais campos o cliente preenche
-// na UI do robot. O HANDLER recebe esses valores no POST quando o robot
-// dispara. Veja apidocs.bitrix24.com/api-reference/bizproc/bizproc-robot.
+// Properties tipos validos: string, text, int, double, bool, select, user.
+// "select" exige Options como array de {Value, Name}, NAO como map.
+//
+// Ref: apidocs.bitrix24.com/api-reference/bizproc/bizproc-robot/bizproc-robot-add.html
 func (c *Client) RegisterBPRobot(ctx context.Context, creds TenantCreds, code, name, handlerURL string) error {
 	props := map[string]interface{}{
 		"to_phone": map[string]interface{}{
-			"Name":      "Telefone destinatario",
-			"Type":      "string",
-			"Required":  "Y",
-			"Multiple":  "N",
+			"Name":     map[string]string{"en": "Recipient phone", "pt-BR": "Telefone destinatario"},
+			"Type":     "string",
+			"Required": "Y",
+			"Multiple": "N",
 		},
 		"mode": map[string]interface{}{
-			"Name":     "Modo de envio",
-			"Type":     "select",
+			"Name":     map[string]string{"en": "Send mode", "pt-BR": "Modo de envio"},
+			"Type":     "string",
 			"Required": "Y",
-			"Options": map[string]string{
-				"unofficial": "Nao Oficial (Multi-Device)",
-				"official":   "Oficial (Cloud API + Template)",
-			},
-			"Default": "unofficial",
+			"Default":  "unofficial",
+			// Sem select — operador digita "unofficial" ou "official" pra
+			// simplificar payload (alguns portais Bitrix renderizam Options
+			// de forma inconsistente). Backend valida o valor recebido.
 		},
 		"template_id": map[string]interface{}{
-			"Name":     "Template (UUID — opcional pra Nao Oficial, obrigatorio pra Oficial)",
+			"Name":     map[string]string{"en": "Template ID", "pt-BR": "ID do Template (UUID — opcional)"},
 			"Type":     "string",
 			"Required": "N",
+			"Multiple": "N",
 		},
 		"message": map[string]interface{}{
-			"Name":     "Mensagem (texto livre — usado se nao escolher template)",
-			"Type":     "text",
+			"Name":     map[string]string{"en": "Message", "pt-BR": "Mensagem (texto livre)"},
+			"Type":     "string",
 			"Required": "N",
 			"Multiple": "N",
 		},
 		"template_vars": map[string]interface{}{
-			"Name":     "Variaveis do template (separadas por |, na ordem)",
+			"Name":     map[string]string{"en": "Template variables", "pt-BR": "Variaveis do template (separadas por |)"},
 			"Type":     "string",
 			"Required": "N",
 		},
 	}
 	_, err := c.call(ctx, creds, "bizproc.robot.add", map[string]interface{}{
-		"CODE":            code,
-		"HANDLER":         handlerURL,
-		"AUTH_USER_ID":    1,
-		"NAME":            name,
-		"USE_SUBSCRIPTION": "N", // dispara fire-and-forget; nao espera ack
-		"PROPERTIES":      props,
+		"CODE":             code,
+		"HANDLER":          handlerURL,
+		"AUTH_USER_ID":     1,
+		"NAME":             map[string]string{"en": name, "pt-BR": name},
+		"USE_SUBSCRIPTION": "N",
+		"PROPERTIES":       props,
 	})
 	return err
 }
@@ -1373,6 +1375,17 @@ func (c *Client) DeleteBPRobot(ctx context.Context, creds TenantCreds, code stri
 		"CODE": code,
 	})
 	return err
+}
+
+// ListBPRobots retorna os robots registrados pelo app neste portal.
+// Util pra debug: confirma se o bizproc.robot.add do install/retry
+// realmente persistiu, e com qual payload.
+func (c *Client) ListBPRobots(ctx context.Context, creds TenantCreds) (string, error) {
+	raw, err := c.call(ctx, creds, "bizproc.robot.list", map[string]interface{}{})
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 // ListSMSSenders retorna os senders registrados pelo app neste portal.

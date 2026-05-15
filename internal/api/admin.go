@@ -887,3 +887,57 @@ func (h *handlers) adminTenantBPRegister(c *fiber.Ctx) error {
 		zap.String("handler", handlerURL))
 	return c.JSON(fiber.Map{"ok": true, "handler_url": handlerURL, "robot_code": BPRobotCode})
 }
+
+// GET /admin/api/tenant/bp-debug?domain=... — lista o que o Bitrix tem
+// como BizProc robots registrados pelo nosso app. Diagnostica registro
+// fantasma, properties mal-formadas, etc.
+func (h *handlers) adminTenantBPDebug(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	raw, listErr := h.bitrixClient.ListBPRobots(ctx, creds)
+	out := fiber.Map{
+		"domain":               portal.Domain,
+		"expected_robot_code":  BPRobotCode,
+		"expected_handler_url": h.cfg.App.BaseURL() + bpRobotHandlerPath,
+	}
+	if listErr != nil {
+		out["list_error"] = listErr.Error()
+	} else {
+		out["bitrix_robots_raw"] = raw
+	}
+	return c.JSON(out)
+}
+
+// POST /admin/api/tenant/bp-reregister?domain=... — forca delete + add
+// do robot. Util quando o registro persistiu mas com payload invalido
+// (ex: PROPERTIES que o Bitrix nao renderiza). Garante state limpo.
+func (h *handlers) adminTenantBPReregister(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	// Delete best-effort (ignora "nao existe")
+	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCode)
+	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
+	if err := h.bitrixClient.RegisterBPRobot(ctx, creds, BPRobotCode, "UC Talk: Enviar WhatsApp", handlerURL); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: BP robot re-registered manually",
+		zap.String("domain", portal.Domain),
+		zap.String("handler", handlerURL))
+	return c.JSON(fiber.Map{"ok": true, "action": "deleted_then_added", "handler_url": handlerURL, "robot_code": BPRobotCode})
+}
