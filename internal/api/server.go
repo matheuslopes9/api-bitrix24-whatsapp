@@ -93,6 +93,8 @@ func New(
 	ui.Get("/templates/debug", h.uiTemplatesDebug)
 	ui.Post("/templates/purge-broken", h.uiTemplatesPurgeBroken)
 	ui.Get("/templates/purge-broken", h.uiTemplatesPurgeBroken) // GET alias pra testar via browser
+	ui.Post("/bp-robots/refresh", h.uiBPRobotsRefresh)
+	ui.Get("/bp-robots/refresh", h.uiBPRobotsRefresh) // GET alias pra testar via browser
 	ui.Post("/templates/create", h.uiTemplatesCreate)
 	ui.Post("/templates/update", h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.uiTemplatesDelete)

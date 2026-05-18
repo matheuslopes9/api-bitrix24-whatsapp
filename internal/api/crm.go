@@ -298,6 +298,24 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 
 // ─── Templates de mensagem (quick replies) ─────────────────────────────────
 
+// POST /ui/bp-robots/refresh — forca re-register dos 2 robots BizProc no
+// Bitrix do dominio. Util quando o cliente conecta nova sessao WhatsApp
+// (QR ou Cloud) e quer ver no dropdown imediatamente, sem reinstalar o
+// app. Tambem util pra debug.
+func (h *handlers) uiBPRobotsRefresh(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.triggerBPRobotRefresh(domain, "manual_ui_refresh")
+	return c.JSON(fiber.Map{
+		"ok":     true,
+		"domain": domain,
+		"hint":   "Refresh em background — abra Bitrix > CRM > Automacoes em 5s pra ver dropdowns atualizados.",
+	})
+}
+
 // POST /ui/templates/purge-broken — apaga rows com created_by="meta-import"
 // e meta_template_name vazio. Usado UMA vez pra limpar a bagunca causada
 // pela migration 023 que dropava as colunas a cada restart.
@@ -408,6 +426,8 @@ func (h *handlers) uiTemplatesCreate(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
+	// Refresh dropdowns dos robots BizProc — template novo precisa aparecer.
+	h.triggerBPRobotRefresh(domain, "template_create")
 	return c.JSON(fiber.Map{"id": id.String()})
 }
 
@@ -448,6 +468,9 @@ func (h *handlers) uiTemplatesUpdate(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(404).JSON(fiber.Map{"error": "template nao encontrado"})
 	}
+	// Refresh dropdowns: title pode ter mudado, ou template Nao Oficial
+	// virou Oficial (e vice-versa) via edicao.
+	h.triggerBPRobotRefresh(domain, "template_update")
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -470,6 +493,8 @@ func (h *handlers) uiTemplatesDelete(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(404).JSON(fiber.Map{"error": "template nao encontrado"})
 	}
+	// Refresh dropdowns: template deletado precisa sair dos selects.
+	h.triggerBPRobotRefresh(domain, "template_delete")
 	return c.JSON(fiber.Map{"ok": true})
 }
 
@@ -608,28 +633,9 @@ func (h *handlers) uiTemplatesMetaImport(c *fiber.Ctx) error {
 		created++
 	}
 
-	// Apos importar templates novos, re-registra o robot Oficial no
-	// Bitrix pra atualizar o dropdown de templates na BizProc. Sem isso,
-	// usuario importa templates mas o robot continua mostrando a lista
-	// antiga. Best-effort: log e ignora erro (import em si ja funcionou).
+	// Apos importar templates novos, refresh dropdowns dos robots no Bitrix.
 	if created > 0 {
-		go func() {
-			bgCtx := context.Background()
-			portal, err := h.repo.GetBitrixPortalByDomain(bgCtx, normalizePortalDomain(domain))
-			if err != nil || portal == nil {
-				h.log.Warn("meta-import: portal lookup falhou pra reregister BP",
-					zap.String("domain", domain), zap.Error(err))
-				return
-			}
-			if err := h.ReregisterBPRobotOfficialForPortal(bgCtx, portal); err != nil {
-				h.log.Warn("meta-import: reregister BP Oficial falhou",
-					zap.String("domain", domain), zap.Error(err))
-				return
-			}
-			h.log.Info("meta-import: BP Oficial reregistered (dropdown refreshed)",
-				zap.String("domain", domain),
-				zap.Int("templates_created", created))
-		}()
+		h.triggerBPRobotRefresh(domain, "meta_import")
 	}
 
 	return c.JSON(fiber.Map{
