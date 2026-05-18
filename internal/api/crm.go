@@ -37,29 +37,7 @@ func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
 
-	// Se Bitrix mandou auth[] no POST do iframe, valida + seta cookie tenant
-	// pra chamadas /ui/* subsequentes do JS interno autenticarem sozinhas.
-	// Best-effort: GET sem auth (browser direct) continua servindo HTML, mas
-	// o JS interno vai dar 401 ate o cliente abrir pelo Bitrix de novo.
-	if c.Method() == fiber.MethodPost {
-		appToken := c.FormValue("auth[application_token]")
-		domainRaw := c.FormValue("auth[domain]")
-		if appToken != "" && domainRaw != "" {
-			if _, err := h.validateBitrixAppToken(c.Context(), domainRaw, appToken); err == nil {
-				tenantExpires := time.Now().Add(tenantCookieTTL)
-				c.Cookie(&fiber.Cookie{
-					Name:     tenantCookieName,
-					Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
-					Path:     "/",
-					Expires:  tenantExpires,
-					HTTPOnly: true,
-					Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
-					SameSite: "None",
-				})
-			}
-		}
-	}
-
+	h.maybeSetTenantCookieFromBitrixPost(c)
 	return c.Type("html").SendString(crmTabHTML)
 }
 
@@ -2689,11 +2667,44 @@ init();
 // GET/POST /bitrix-app — pagina servida no LEFT_MENU placement do Bitrix24.
 // Mostra UI completa (lista de conversas + chat) para usuarios liberados.
 // Checa permissao via mesma rota /bitrix/crm/check-access do CRM tab.
+//
+// Quando Bitrix carrega o iframe via POST, manda auth[domain] + auth[application_token].
+// Usamos isso pra setar cookie tenant (assinado HMAC) que autentica as
+// chamadas /ui/* feitas pelo JS interno depois.
 func (h *handlers) bitrixAppMenu(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
+	h.maybeSetTenantCookieFromBitrixPost(c)
 	return c.Type("html").SendString(bitrixAppMenuHTML)
+}
+
+// maybeSetTenantCookieFromBitrixPost: se o request e POST com auth[domain]
+// + auth[application_token] validos, seta cookie tenant. Best-effort:
+// silencioso em GET ou auth invalido. Usado nos handlers de pagina HTML
+// (iframe entry points) pra preparar o cookie antes das chamadas /ui/*.
+func (h *handlers) maybeSetTenantCookieFromBitrixPost(c *fiber.Ctx) {
+	if c.Method() != fiber.MethodPost {
+		return
+	}
+	appToken := c.FormValue("auth[application_token]")
+	domainRaw := c.FormValue("auth[domain]")
+	if appToken == "" || domainRaw == "" {
+		return
+	}
+	if _, err := h.validateBitrixAppToken(c.Context(), domainRaw, appToken); err != nil {
+		return
+	}
+	tenantExpires := time.Now().Add(tenantCookieTTL)
+	c.Cookie(&fiber.Cookie{
+		Name:     tenantCookieName,
+		Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
+		Path:     "/",
+		Expires:  tenantExpires,
+		HTTPOnly: true,
+		Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
+		SameSite: "None",
+	})
 }
 
 // HTML simples que carrega BX24, valida o user_id contra check-access e
@@ -2729,13 +2740,35 @@ BX24.init(function() {
       showDenied('Não foi possível identificar o usuário.');
       return;
     }
-    // LEFT_MENU = painel administrativo do APP, restrito ao master do tenant.
-    // CRM tab dentro de Contato/Lead/Deal continua aberto pra todo interno
-    // ativo (canal direto pra enviar/receber mensagens).
+    // HANDSHAKE: garante que o backend tem cookie tenant assinado e
+    // trial criado pra esse dominio. Usa BX24.getAuth() pra pegar token
+    // valido e fazer POST /bitrix/auth (mesma rota usada por /bitrix-connect).
+    // Idempotente: ja' salvo passa direto.
+    var auth = BX24.getAuth ? BX24.getAuth() : null;
+    var handshake;
+    if (auth && auth.access_token) {
+      handshake = fetch(_baseUrl + '/bitrix/auth', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({
+          domain: domain,
+          access_token: auth.access_token,
+          refresh_token: auth.refresh_token || '',
+          expires_in: auth.expires_in || 3600,
+          member_id: auth.member_id || ''
+        })
+      }).then(function(r){ return r.json(); }).catch(function(){ return null; });
+    } else {
+      handshake = Promise.resolve(null);
+    }
+    // Espera handshake + check-access + master.status em paralelo.
     Promise.all([
+      handshake,
       fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID)).then(function(r){ return r.json(); }),
       fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); }),
     ]).then(function(arr) {
+      arr.shift(); // remove handshake result, mantem [access, master]
       var access = arr[0] || {};
       var master = arr[1] || {};
       if (!access.allowed) {
