@@ -1034,3 +1034,97 @@ func (h *handlers) adminTenantBPReregister(c *fiber.Ctx) error {
 		"robot_codes": []string{BPRobotCodeUnofficial, BPRobotCodeOfficial},
 	})
 }
+
+// GET /admin/api/tenant/placements?domain=...
+// Lista placements registrados no portal Bitrix24. Util pra diagnosticar
+// placements orfaos ("Application was not found" no menu) — quando o app
+// foi reinstalado e o ID mudou mas placement antigo permanece.
+func (h *handlers) adminTenantListPlacements(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+	placements, err := h.bitrixClient.ListPlacements(ctx, creds)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": err.Error(),
+			"hint":  "Se token expirou, cliente precisa abrir o app no Bitrix uma vez pra renovar.",
+		})
+	}
+	return c.JSON(fiber.Map{
+		"domain":     portal.Domain,
+		"placements": placements,
+		"count":      len(placements),
+	})
+}
+
+// POST /admin/api/tenant/placements/cleanup?domain=...
+// Apaga TODOS os placements do nosso app no portal. Usado quando o app
+// foi reinstalado e placements antigos ficaram orfaos ("Application was
+// not found"). Depois do cleanup, chama RegisterPlacementsForPortal pra
+// re-registrar com URLs/IDs atuais.
+func (h *handlers) adminTenantPlacementsCleanup(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+
+	// 1) Lista placements registrados
+	placements, listErr := h.bitrixClient.ListPlacements(ctx, creds)
+	if listErr != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error": "placement.list falhou: " + listErr.Error(),
+			"hint":  "Se token expirou, cliente precisa abrir o app no Bitrix uma vez pra renovar.",
+		})
+	}
+
+	// 2) Unbind cada um (so do nosso app — Bitrix garante que placement.list
+	//    so devolve placements do app autenticado).
+	unbindResults := []map[string]interface{}{}
+	for _, p := range placements {
+		placementName, _ := p["placement"].(string)
+		handler, _ := p["handler"].(string)
+		if placementName == "" {
+			continue
+		}
+		err := h.bitrixClient.UnbindPlacement(ctx, creds, placementName, handler)
+		result := map[string]interface{}{
+			"placement": placementName,
+			"handler":   handler,
+		}
+		if err != nil {
+			result["status"] = "failed"
+			result["error"] = err.Error()
+		} else {
+			result["status"] = "unbound"
+		}
+		unbindResults = append(unbindResults, result)
+	}
+
+	// 3) Re-registra os placements corretos (CRM tabs + LEFT_MENU)
+	h.RegisterPlacementsForPortal(ctx, portal.Domain, creds)
+
+	h.log.Info("admin: placements cleanup done",
+		zap.String("domain", portal.Domain),
+		zap.Int("unbound", len(unbindResults)))
+
+	return c.JSON(fiber.Map{
+		"ok":              true,
+		"domain":          portal.Domain,
+		"unbound":         unbindResults,
+		"reregistered":    []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "LEFT_MENU"},
+		"hint":            "Reabra o app no Bitrix em 5s. Se ainda 'Application was not found', desinstale e reinstale pelo Marketplace.",
+	})
+}

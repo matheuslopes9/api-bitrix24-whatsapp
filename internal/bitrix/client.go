@@ -1063,6 +1063,50 @@ func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement
 	return err
 }
 
+// ListPlacements retorna a lista de placements registrados no portal pelo
+// nosso app. Cada item tem { id, placement, handler, title, ... }.
+//
+// Usado pra diagnosticar placements orfaos (app reinstalado, IDs novos
+// no marketplace mas placement antigo ainda vinculado).
+//
+// O método call() ja' faz unwrap do "result" automaticamente e devolve
+// raw JSON. O resultado de placement.list e' um array JSON.
+func (c *Client) ListPlacements(ctx context.Context, creds TenantCreds) ([]map[string]interface{}, error) {
+	raw, err := c.call(ctx, creds, "placement.list", map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	// placement.list devolve array de objetos direto em "result".
+	var arr []map[string]interface{}
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		// Fallback: pode vir embrulhado { result: [...] }
+		var wrap struct {
+			Result []map[string]interface{} `json:"result"`
+		}
+		if err2 := json.Unmarshal(raw, &wrap); err2 != nil {
+			return nil, fmt.Errorf("parse placement.list: %w (raw: %s)", err, string(raw))
+		}
+		return wrap.Result, nil
+	}
+	return arr, nil
+}
+
+// UnbindPlacement remove o registro de um placement pelo identificador.
+// Aceita o ID inteiro (vem em placement.list como "id") ou o nome do
+// placement (ex: "CRM_LEAD_DETAIL_TAB") — Bitrix aceita ambos via
+// PLACEMENT + HANDLER ou via ID. Mais robusto: passa ID quando souber.
+func (c *Client) UnbindPlacement(ctx context.Context, creds TenantCreds, placementName, handlerURL string) error {
+	params := map[string]interface{}{}
+	if placementName != "" {
+		params["PLACEMENT"] = placementName
+	}
+	if handlerURL != "" {
+		params["HANDLER"] = handlerURL
+	}
+	_, err := c.call(ctx, creds, "placement.unbind", params)
+	return err
+}
+
 func (c *Client) AddLeadComment(ctx context.Context, creds TenantCreds, leadID int64, text string) error {
 	_, err := c.call(ctx, creds, "crm.activity.add", map[string]interface{}{
 		"fields": map[string]interface{}{

@@ -253,6 +253,10 @@ func New(
 	admin.Get("/api/tenant/plan", h.adminTenantGetPlan)         // ?domain=...
 	admin.Post("/api/tenant/plan", h.adminTenantSetPlan)        // body: {domain, plan, status, active_until, notes}
 	admin.Get("/api/tenant/plans", h.adminListTenantPlans)      // lista geral
+	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────
+	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
+	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)
+	admin.Get("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup) // GET alias pra teste rapido
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)
