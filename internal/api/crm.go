@@ -298,7 +298,39 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 
 // ─── Templates de mensagem (quick replies) ─────────────────────────────────
 
+// GET /ui/templates/debug — diagnostico: lista templates com flag oficial
+// computada server-side. Util pra confirmar se meta_template_name esta
+// preenchido no banco (vs filtro JS errado no front).
+func (h *handlers) uiTemplatesDebug(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	tpls, err := h.repo.ListMessageTemplates(ctx, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	rows := make([]fiber.Map, 0, len(tpls))
+	for _, t := range tpls {
+		mn := strings.TrimSpace(t.MetaTemplateName)
+		rows = append(rows, fiber.Map{
+			"id":                     t.ID.String(),
+			"title":                  t.Title,
+			"meta_template_name_raw": t.MetaTemplateName,
+			"meta_template_name_len": len(t.MetaTemplateName),
+			"meta_template_lang":     t.MetaTemplateLang,
+			"meta_template_vars":     t.MetaTemplateVars,
+			"created_by":             t.CreatedBy,
+			"is_official":            mn != "",
+		})
+	}
+	return c.JSON(fiber.Map{"domain": domain, "rows": rows, "total": len(rows)})
+}
+
 // GET /ui/templates/list — lista templates do dominio atual.
+// Inclui contadores por categoria pra UI separar abas sem ter que filtrar
+// 2x o array.
 func (h *handlers) uiTemplatesList(c *fiber.Ctx) error {
 	ctx := c.Context()
 	domain, err := h.resolveDashboardDomain(ctx, c)
@@ -309,7 +341,22 @@ func (h *handlers) uiTemplatesList(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(fiber.Map{"templates": tpls, "total": len(tpls), "domain": domain})
+	countOfficial := 0
+	countUnofficial := 0
+	for _, t := range tpls {
+		if strings.TrimSpace(t.MetaTemplateName) != "" {
+			countOfficial++
+		} else {
+			countUnofficial++
+		}
+	}
+	return c.JSON(fiber.Map{
+		"templates":        tpls,
+		"total":            len(tpls),
+		"count_official":   countOfficial,
+		"count_unofficial": countUnofficial,
+		"domain":           domain,
+	})
 }
 
 // POST /ui/templates/create — body {title, body, created_by}
@@ -522,14 +569,50 @@ func (h *handlers) uiTemplatesMetaImport(c *fiber.Ctx) error {
 		if body == "" {
 			body = "(template Meta: " + t.Name + " — edite este texto como referencia)"
 		}
+		// Log antes de inserir pra desambiguar se algum field chega vazio
+		// (bug recorrente: import sumir do tab Oficial = meta_template_name
+		// gravado em branco).
+		h.log.Info("meta-import: inserindo template",
+			zap.String("domain", domain),
+			zap.String("meta_name", t.Name),
+			zap.String("meta_lang", t.Language),
+			zap.Int("meta_vars", t.VarsCount),
+			zap.Int("body_len", len(body)))
 		_, err := h.repo.CreateMessageTemplate(ctx, domain, title, body, "meta-import",
 			t.Name, t.Language, t.VarsCount)
 		if err != nil {
+			h.log.Warn("meta-import: insert falhou",
+				zap.String("meta_name", t.Name), zap.Error(err))
 			errs = append(errs, t.Name+": "+err.Error())
 			continue
 		}
 		created++
 	}
+
+	// Apos importar templates novos, re-registra o robot Oficial no
+	// Bitrix pra atualizar o dropdown de templates na BizProc. Sem isso,
+	// usuario importa templates mas o robot continua mostrando a lista
+	// antiga. Best-effort: log e ignora erro (import em si ja funcionou).
+	if created > 0 {
+		go func() {
+			bgCtx := context.Background()
+			portal, err := h.repo.GetBitrixPortalByDomain(bgCtx, normalizePortalDomain(domain))
+			if err != nil || portal == nil {
+				h.log.Warn("meta-import: portal lookup falhou pra reregister BP",
+					zap.String("domain", domain), zap.Error(err))
+				return
+			}
+			if err := h.ReregisterBPRobotOfficialForPortal(bgCtx, portal); err != nil {
+				h.log.Warn("meta-import: reregister BP Oficial falhou",
+					zap.String("domain", domain), zap.Error(err))
+				return
+			}
+			h.log.Info("meta-import: BP Oficial reregistered (dropdown refreshed)",
+				zap.String("domain", domain),
+				zap.Int("templates_created", created))
+		}()
+	}
+
 	return c.JSON(fiber.Map{
 		"created": created,
 		"skipped": skipped,

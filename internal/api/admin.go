@@ -872,20 +872,19 @@ func (h *handlers) adminTenantBPRegister(c *fiber.Ctx) error {
 	if err != nil || portal == nil {
 		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
 	}
-	creds := h.portalToCreds(portal)
 	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
-	if err := h.bitrixClient.RegisterBPRobot(ctx, creds, BPRobotCode, "UC Talk: Enviar WhatsApp", handlerURL); err != nil {
-		h.log.Error("admin: BP robot register failed",
-			zap.String("domain", portal.Domain), zap.Error(err))
-		return c.Status(500).JSON(fiber.Map{
-			"error": err.Error(),
-			"hint":  "Se o erro contem 'ACCESS_DENIED' ou 'insufficient_scope', o scope `bizproc` esta faltando no manifest do app. Adicione no Marketplace e o cliente precisa re-instalar/re-autorizar.",
-		})
-	}
-	h.log.Info("admin: BP robot registered manually",
+	// Registra os 2 robots (Nao Oficial + Oficial) + limpa legado.
+	// Erros sao logados internamente; aqui devolvemos status agregado.
+	h.RegisterBPRobotForPortal(ctx, portal)
+	h.log.Info("admin: BP robots registered manually",
 		zap.String("domain", portal.Domain),
 		zap.String("handler", handlerURL))
-	return c.JSON(fiber.Map{"ok": true, "handler_url": handlerURL, "robot_code": BPRobotCode})
+	return c.JSON(fiber.Map{
+		"ok":          true,
+		"handler_url": handlerURL,
+		"robot_codes": []string{BPRobotCodeUnofficial, BPRobotCodeOfficial},
+		"hint":        "Verifique /admin/api/tenant/bp-debug?domain=... para confirmar registro. Se faltar, conferir scope `bizproc` no manifest e re-instalar o app.",
+	})
 }
 
 // GET /admin/api/tenant/bp-debug?domain=... — lista o que o Bitrix tem
@@ -904,8 +903,12 @@ func (h *handlers) adminTenantBPDebug(c *fiber.Ctx) error {
 	creds := h.portalToCreds(portal)
 	raw, listErr := h.bitrixClient.ListBPRobots(ctx, creds)
 	out := fiber.Map{
-		"domain":               portal.Domain,
-		"expected_robot_code":  BPRobotCode,
+		"domain": portal.Domain,
+		"expected_robot_codes": []string{
+			BPRobotCodeUnofficial,
+			BPRobotCodeOfficial,
+		},
+		"legacy_robot_code":    BPRobotCodeLegacy,
 		"expected_handler_url": h.cfg.App.BaseURL() + bpRobotHandlerPath,
 	}
 	if listErr != nil {
@@ -930,14 +933,20 @@ func (h *handlers) adminTenantBPReregister(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
 	}
 	creds := h.portalToCreds(portal)
-	// Delete best-effort (ignora "nao existe")
-	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCode)
+	// Delete best-effort dos 3 codes (2 atuais + legado), depois re-registra
+	// os 2 atuais. Garante state limpo se algum payload anterior ficou ruim.
+	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeUnofficial)
+	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeOfficial)
+	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeLegacy)
 	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
-	if err := h.bitrixClient.RegisterBPRobot(ctx, creds, BPRobotCode, "UC Talk: Enviar WhatsApp", handlerURL); err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	h.log.Info("admin: BP robot re-registered manually",
+	h.RegisterBPRobotForPortal(ctx, portal)
+	h.log.Info("admin: BP robots re-registered manually",
 		zap.String("domain", portal.Domain),
 		zap.String("handler", handlerURL))
-	return c.JSON(fiber.Map{"ok": true, "action": "deleted_then_added", "handler_url": handlerURL, "robot_code": BPRobotCode})
+	return c.JSON(fiber.Map{
+		"ok":          true,
+		"action":      "deleted_then_added",
+		"handler_url": handlerURL,
+		"robot_codes": []string{BPRobotCodeUnofficial, BPRobotCodeOfficial},
+	})
 }

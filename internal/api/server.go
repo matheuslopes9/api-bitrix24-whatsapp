@@ -90,6 +90,7 @@ func New(
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
 	// ─── Templates de mensagem ──────────────────────────────────────────
 	ui.Get("/templates/list", h.uiTemplatesList)
+	ui.Get("/templates/debug", h.uiTemplatesDebug)
 	ui.Post("/templates/create", h.uiTemplatesCreate)
 	ui.Post("/templates/update", h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.uiTemplatesDelete)

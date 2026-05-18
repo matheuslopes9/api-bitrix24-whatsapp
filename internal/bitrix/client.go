@@ -1315,56 +1315,18 @@ func (c *Client) UpdateSMSMessageStatus(ctx context.Context, creds TenantCreds, 
 // configura destinatario+modo+mensagem, e quando o robot dispara o Bitrix
 // POSTa no nosso handler.
 
-// RegisterBPRobot cadastra a atividade no portal. Idempotente:
-// se ja existe, Bitrix retorna ERROR_ACTIVITY_ALREADY_INSTALLED (caller
-// trata como sucesso). Pra forcar update, deletar antes via DeleteBPRobot.
-//
-// Properties tipos validos: string, text, int, double, bool, select, user.
-// "select" exige Options como array de {Value, Name}, NAO como map.
+// RegisterBPRobot cadastra a atividade no portal. Wrapper generico — usado
+// pelo callsite que monta PROPERTIES customizado. Idempotente.
 //
 // Ref: apidocs.bitrix24.com/api-reference/bizproc/bizproc-robot/bizproc-robot-add.html
-func (c *Client) RegisterBPRobot(ctx context.Context, creds TenantCreds, code, name, handlerURL string) error {
-	props := map[string]interface{}{
-		"to_phone": map[string]interface{}{
-			"Name":     map[string]string{"en": "Recipient phone", "pt-BR": "Telefone destinatario"},
-			"Type":     "string",
-			"Required": "Y",
-			"Multiple": "N",
-		},
-		"mode": map[string]interface{}{
-			"Name":     map[string]string{"en": "Send mode", "pt-BR": "Modo de envio"},
-			"Type":     "string",
-			"Required": "Y",
-			"Default":  "unofficial",
-			// Sem select — operador digita "unofficial" ou "official" pra
-			// simplificar payload (alguns portais Bitrix renderizam Options
-			// de forma inconsistente). Backend valida o valor recebido.
-		},
-		"template_id": map[string]interface{}{
-			"Name":     map[string]string{"en": "Template ID", "pt-BR": "ID do Template (UUID — opcional)"},
-			"Type":     "string",
-			"Required": "N",
-			"Multiple": "N",
-		},
-		"message": map[string]interface{}{
-			"Name":     map[string]string{"en": "Message", "pt-BR": "Mensagem (texto livre)"},
-			"Type":     "string",
-			"Required": "N",
-			"Multiple": "N",
-		},
-		"template_vars": map[string]interface{}{
-			"Name":     map[string]string{"en": "Template variables", "pt-BR": "Variaveis do template (separadas por |)"},
-			"Type":     "string",
-			"Required": "N",
-		},
-	}
+func (c *Client) RegisterBPRobot(ctx context.Context, creds TenantCreds, code, name, handlerURL string, properties map[string]interface{}) error {
 	_, err := c.call(ctx, creds, "bizproc.robot.add", map[string]interface{}{
 		"CODE":             code,
 		"HANDLER":          handlerURL,
 		"AUTH_USER_ID":     1,
 		"NAME":             map[string]string{"en": name, "pt-BR": name},
 		"USE_SUBSCRIPTION": "N",
-		"PROPERTIES":       props,
+		"PROPERTIES":       properties,
 	})
 	return err
 }
