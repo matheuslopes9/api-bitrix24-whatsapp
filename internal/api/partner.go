@@ -13,6 +13,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"strings"
 	"time"
@@ -289,6 +290,20 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		}
 	}
 
+	// Cookie tenant assinado HMAC: identifica o tenant em chamadas /ui/*
+	// subsequentes do iframe. Sem isso, dependiamos de ?domain= query —
+	// que e' atacavel por qualquer um na internet.
+	tenantExpires := time.Now().Add(tenantCookieTTL)
+	c.Cookie(&fiber.Cookie{
+		Name:     tenantCookieName,
+		Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domain), tenantExpires),
+		Path:     "/",
+		Expires:  tenantExpires,
+		HTTPOnly: true,
+		Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
+		SameSite: "None", // iframe cross-site precisa
+	})
+
 	h.log.Info("partner auth: token updated", zap.String("domain", domain))
 	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "sessions": len(activeSessions)})
 }
@@ -416,6 +431,39 @@ func (h *handlers) bitrixConnectPage(c *fiber.Ctx) error {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// validateBitrixAppToken verifica que o `auth[application_token]` enviado
+// num POST server-to-server do Bitrix bate com o que persistimos no install.
+// Retorna (portal, err). Em caso de mismatch ou token vazio, devolve erro.
+//
+// Politica de "first-touch":
+//   - Se o portal ainda nao tem token persistido (instalado antes da feature),
+//     aceita o primeiro token que chegar e persiste. Trade-off: 1 atacante na
+//     janela exata entre install e primeiro POST legitimo poderia se passar
+//     pelo cliente. Risco baixo, ganho de compatibilidade alto.
+//   - Apos isso, compara com subtle.ConstantTimeCompare.
+func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken string) (*db.BitrixPortal, error) {
+	if domain == "" || appToken == "" {
+		return nil, fmt.Errorf("auth missing (domain ou application_token vazio)")
+	}
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
+	if err != nil || portal == nil {
+		return nil, fmt.Errorf("portal nao encontrado: %s", domain)
+	}
+	if portal.ApplicationToken == "" {
+		// First-touch: persiste o token recebido.
+		if err := h.repo.SetPortalApplicationToken(ctx, portal.Domain, appToken); err != nil {
+			h.log.Warn("validate app token: first-touch save failed",
+				zap.String("domain", portal.Domain), zap.Error(err))
+		}
+		portal.ApplicationToken = appToken
+		return portal, nil
+	}
+	if subtle.ConstantTimeCompare([]byte(appToken), []byte(portal.ApplicationToken)) != 1 {
+		return nil, fmt.Errorf("application_token mismatch")
+	}
+	return portal, nil
+}
 
 // normalizePortalDomain remove https://, http:// e trailing slash do domain.
 // Mantém a chave consistente no banco independentemente do formato recebido.

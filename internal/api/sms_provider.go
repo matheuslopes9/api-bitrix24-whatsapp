@@ -78,32 +78,17 @@ func (h *handlers) UnregisterSMSSenderForPortal(ctx context.Context, portal *db.
 // senao a UI da campanha trava. Persistimos rapido e processamos
 // em goroutine separada.
 func (h *handlers) smsProviderSend(c *fiber.Ctx) error {
-	// Validacao de seguranca: confirma que o POST vem de um Bitrix que
-	// instalou o app. application_token e' verificado contra o que
-	// salvamos no install.
+	// SEGURANCA: valida application_token persistido no install. Bloqueia
+	// atacante anonimo mandando POST com auth[domain] forjado.
 	appToken := c.FormValue("auth[application_token]")
 	domainRaw := c.FormValue("auth[domain]")
 	domain := normalizePortalDomain(domainRaw)
-	if domain == "" || appToken == "" {
-		h.log.Warn("sms-provider: missing auth in POST",
-			zap.String("domain", domainRaw))
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth missing"})
+	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken)
+	if err != nil {
+		h.log.Warn("sms-provider: auth invalid",
+			zap.String("domain", domainRaw), zap.Error(err))
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
-
-	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
-	if err != nil || portal == nil {
-		h.log.Warn("sms-provider: portal not found", zap.String("domain", domain))
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal not found"})
-	}
-	// application_token e' enviado pelo Bitrix em cada POST. Idealmente
-	// validariamos contra um valor guardado no install — por enquanto
-	// confiamos no fato de que:
-	//   1. domain veio no payload
-	//   2. portal existe no nosso banco com OAuth ativo
-	//   3. HTTPS impede MitM
-	// Defesa em profundidade: poderiamos guardar application_token no
-	// bitrix_portals na proxima migration e validar exato. TODO.
-	_ = appToken
 
 	// Tenant precisa ter sessao default configurada. Sem isso, modulo
 	// esta desligado pra esse portal — recusamos com 200 e status 'failed'

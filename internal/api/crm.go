@@ -36,6 +36,30 @@ func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
+
+	// Se Bitrix mandou auth[] no POST do iframe, valida + seta cookie tenant
+	// pra chamadas /ui/* subsequentes do JS interno autenticarem sozinhas.
+	// Best-effort: GET sem auth (browser direct) continua servindo HTML, mas
+	// o JS interno vai dar 401 ate o cliente abrir pelo Bitrix de novo.
+	if c.Method() == fiber.MethodPost {
+		appToken := c.FormValue("auth[application_token]")
+		domainRaw := c.FormValue("auth[domain]")
+		if appToken != "" && domainRaw != "" {
+			if _, err := h.validateBitrixAppToken(c.Context(), domainRaw, appToken); err == nil {
+				tenantExpires := time.Now().Add(tenantCookieTTL)
+				c.Cookie(&fiber.Cookie{
+					Name:     tenantCookieName,
+					Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
+					Path:     "/",
+					Expires:  tenantExpires,
+					HTTPOnly: true,
+					Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
+					SameSite: "None",
+				})
+			}
+		}
+	}
+
 	return c.Type("html").SendString(crmTabHTML)
 }
 
@@ -44,17 +68,20 @@ func (h *handlers) bitrixCRMTab(c *fiber.Ctx) error {
 // Quem acessa o /dashboard ja tem acesso ao backoffice do app, entao a
 // barreira aqui eh validar que o domain pedido EXISTE em bitrix_portals.
 
-// resolveDashboardDomain extrai o domain a operar.
-// Em modo "portal isolado" (?portal=x.bitrix24.com), usa esse valor;
-// senao usa o unico portal cadastrado. Retorna ("",err) se nada bater.
+// resolveDashboardDomain extrai o domain do tenant atual.
+//
+// SEGURANCA: a partir do middleware requireTenantOrAdmin (server.go), o
+// domain vem assinado em c.Locals("tenant_domain"). Query string nao e'
+// mais usada como fonte primaria — atacante podia passar ?domain=
+// qualquer um e acessar dados alheios.
+//
+// Caso o middleware nao tenha rodado (rota legada / teste local), faz
+// fallback pro unico portal cadastrado.
 func (h *handlers) resolveDashboardDomain(ctx context.Context, c *fiber.Ctx) (string, error) {
-	domain := strings.TrimSpace(c.Query("domain"))
-	if domain == "" {
-		domain = strings.TrimSpace(c.Query("portal"))
+	if d, ok := c.Locals("tenant_domain").(string); ok && strings.TrimSpace(d) != "" {
+		return normalizePortalDomain(d), nil
 	}
-	if domain != "" {
-		return normalizePortalDomain(domain), nil
-	}
+	// Fallback: unico portal (dev local / sanity).
 	portals, err := h.repo.ListBitrixPortals(ctx)
 	if err != nil {
 		return "", err
@@ -62,7 +89,7 @@ func (h *handlers) resolveDashboardDomain(ctx context.Context, c *fiber.Ctx) (st
 	if len(portals) == 1 {
 		return portals[0].Domain, nil
 	}
-	return "", fmt.Errorf("informe ?domain= ou ?portal=")
+	return "", fmt.Errorf("tenant nao identificado — abra o app pelo Bitrix24")
 }
 
 // GET /ui/permissions/list — lista permissoes (user x session_jid) do

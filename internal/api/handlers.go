@@ -140,7 +140,7 @@ func (h *handlers) sendMessage(c *fiber.Ctx) error {
 func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	h.log.Info("bitrix callback received",
 		zap.String("method", c.Method()),
-		zap.String("raw_body", string(c.Body())),
+		zap.String("raw_body", bitrix.RedactTokens(string(c.Body()))),
 		zap.String("content_type", c.Get("Content-Type")),
 	)
 
@@ -974,7 +974,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	h.log.Info("connector event received",
 		zap.String("method", c.Method()),
 		zap.String("content_type", c.Get("Content-Type")),
-		zap.String("raw_body", string(c.Body())),
+		zap.String("raw_body", bitrix.RedactTokens(string(c.Body()))),
 	)
 
 	// Tenta form-encoded primeiro (ONIMCONNECTORMESSAGEADD via event.bind)
@@ -1260,7 +1260,7 @@ func (h *handlers) debugBitrixEvent(c *fiber.Ctx) error {
 	h.log.Info("DEBUG bitrix-event",
 		zap.String("method", c.Method()),
 		zap.String("content_type", c.Get("Content-Type")),
-		zap.String("raw_body", string(c.Body())),
+		zap.String("raw_body", bitrix.RedactTokens(string(c.Body()))),
 		zap.String("query", string(c.Request().URI().QueryString())),
 	)
 	return c.JSON(fiber.Map{

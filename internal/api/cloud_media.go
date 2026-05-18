@@ -25,7 +25,7 @@ func (h *handlers) cloudMediaServe(c *fiber.Ctx) error {
 	}
 	media, err := h.q.LoadMedia(c.Context(), token)
 	if err != nil {
-		h.log.Warn("cloudMediaServe: load failed", zap.String("token", token), zap.Error(err))
+		h.log.Warn("cloudMediaServe: load failed", zap.String("token_prefix", safePrefix(token, 6)), zap.Error(err))
 		return c.Status(500).SendString("internal error")
 	}
 	if media == nil {

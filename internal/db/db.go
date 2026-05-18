@@ -341,6 +341,36 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			CREATE INDEX IF NOT EXISTS idx_crm_user_permissions_user
 				ON crm_user_permissions (domain, user_id);
 		`},
+		{"025_portal_application_token", `
+			-- application_token do Bitrix24: token que o Bitrix gera pra cada
+			-- install/app e envia em TODA chamada server-to-server (event handlers,
+			-- BizProc activities, SMS sender callbacks). Persistir no install pra
+			-- validar com constant-time-compare nos endpoints publicos
+			-- (/bitrix/bp/send, /bitrix/sms/send) — bloqueia atacante anonimo
+			-- mandando POSTs com auth[domain] forjado.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS application_token TEXT NOT NULL DEFAULT '';
+		`},
+		{"026_tenant_plans", `
+			-- Sistema de planos / trial / billing. Um row por dominio (portal
+			-- Bitrix24). Default: cria com trial 7 dias no install do app.
+			--
+			-- plan: 'basic' (limitado, default trial) | 'pro' (full features)
+			-- status: 'trial' | 'active' | 'expired' | 'suspended'
+			-- trial_ends_at: NULL para Pro pago; futuro para trial em andamento
+			-- active_until: NULL = vitalicio (Pro pago manual); futuro = renovacao
+			CREATE TABLE IF NOT EXISTS tenant_plans (
+				domain          TEXT PRIMARY KEY,
+				plan            TEXT NOT NULL DEFAULT 'basic',
+				status          TEXT NOT NULL DEFAULT 'trial',
+				trial_ends_at   TIMESTAMPTZ,
+				active_until    TIMESTAMPTZ,
+				created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				notes           TEXT NOT NULL DEFAULT ''
+			);
+			CREATE INDEX IF NOT EXISTS idx_tenant_plans_status ON tenant_plans (status);
+		`},
 	}
 
 	for _, m := range migrations {

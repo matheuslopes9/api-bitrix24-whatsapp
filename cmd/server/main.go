@@ -38,6 +38,20 @@ func main() {
 	}
 	log.Info("config loaded", zap.String("env", cfg.App.Env))
 
+	// SEGURANCA: alerta se credenciais admin sao fracas. Em producao, isso
+	// expoe TODOS os tenants (super-admin gerencia portais, sessoes, planos).
+	// Heuristica: senha < 12 chars OU igual ao user OU contendo "admin"/"password".
+	if cfg.App.AdminUser != "" && cfg.App.AdminPassword != "" {
+		weak := len(cfg.App.AdminPassword) < 12 ||
+			cfg.App.AdminPassword == cfg.App.AdminUser ||
+			strings.Contains(strings.ToLower(cfg.App.AdminPassword), "admin") ||
+			strings.Contains(strings.ToLower(cfg.App.AdminPassword), "password") ||
+			strings.Contains(strings.ToLower(cfg.App.AdminPassword), "123")
+		if weak {
+			log.Warn("SEGURANCA: ADMIN_PASSWORD parece fraca — troque pra senha forte (>=12 chars, aleatoria). Painel /admin controla TODOS os tenants.")
+		}
+	}
+
 	// ─── Contexto com cancelamento ───────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

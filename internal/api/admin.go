@@ -17,8 +17,58 @@ import (
 	"go.uber.org/zap"
 )
 
+// safePrefix devolve os primeiros n chars de s, ou s inteiro se menor.
+// Usado pra logar tokens parcialmente (debug) sem vazar o valor completo.
+func safePrefix(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 const adminCookieName = "uctalk_admin"
 const adminCookieTTL = 12 * time.Hour
+
+// Cookie tenant: assina o domain do portal Bitrix24 do cliente. Setado
+// apos /bitrix/auth validar o access_token vindo do BX24.js. Permite que
+// chamadas /ui/* subsequentes (do iframe) identifiquem o tenant SEM
+// confiar em query string. Inviolavel: HMAC-SHA256(APP_SECRET).
+const tenantCookieName = "uctalk_tenant"
+const tenantCookieTTL = 12 * time.Hour
+
+// signTenantCookie gera "exp.domain.hmac". domain incluido no MAC pra
+// inviabilizar swap entre tenants.
+func signTenantCookie(secret, domain string, expiresAt time.Time) string {
+	exp := strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := exp + "." + domain
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	return payload + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+// verifyTenantCookie retorna (domain, ok). Domain so e' confiavel se ok=true.
+func verifyTenantCookie(secret, raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
+	parts := strings.SplitN(raw, ".", 3)
+	if len(parts) != 3 {
+		return "", false
+	}
+	exp, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return "", false
+	}
+	domain := parts[1]
+	payload := parts[0] + "." + domain
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(parts[2]), []byte(expected)) != 1 {
+		return "", false
+	}
+	return domain, true
+}
 
 // signAdminCookie gera "exp.hmac" assinado com HMAC-SHA256(APP_SECRET).
 // exp é unix timestamp. Lookup em tempo constante.
@@ -45,6 +95,40 @@ func verifyAdminCookie(secret, raw string) bool {
 	mac.Write([]byte(parts[0]))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
+}
+
+// requireTenantOrAdmin — middleware pra rotas /ui/* que precisam saber
+// QUAL tenant esta operando. Aceita 2 caminhos:
+//  1. Cookie tenant valido (setado apos /bitrix/auth ok) — domain do cookie
+//  2. Cookie admin valido (super-admin acessa de qualquer tenant) — domain
+//     extraido de ?domain= ou ?portal= da query (so admin pode confiar nessa query)
+// Em ambos, salva o domain validado em c.Locals("tenant_domain") para os
+// handlers usarem via resolveDashboardDomain.
+func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
+	// 1) Cookie tenant assinado: extrai o domain dele.
+	if tenantCookie := c.Cookies(tenantCookieName); tenantCookie != "" {
+		if domain, ok := verifyTenantCookie(h.cfg.App.Secret, tenantCookie); ok {
+			c.Locals("tenant_domain", domain)
+			c.Locals("auth_source", "tenant")
+			return c.Next()
+		}
+	}
+	// 2) Cookie admin (super-admin): aceita ?domain= ou ?portal= da query.
+	if adminCookie := c.Cookies(adminCookieName); adminCookie != "" {
+		if verifyAdminCookie(h.cfg.App.Secret, adminCookie) {
+			queryDomain := strings.TrimSpace(c.Query("domain"))
+			if queryDomain == "" {
+				queryDomain = strings.TrimSpace(c.Query("portal"))
+			}
+			c.Locals("tenant_domain", normalizePortalDomain(queryDomain))
+			c.Locals("auth_source", "admin")
+			return c.Next()
+		}
+	}
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		"error": "unauthorized",
+		"hint":  "Abra o app pelo Bitrix24 (instalado) ou faca login em /admin",
+	})
 }
 
 // requireAdminAuth — middleware: verifica cookie.

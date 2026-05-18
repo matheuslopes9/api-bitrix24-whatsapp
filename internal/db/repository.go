@@ -167,12 +167,16 @@ func (r *Repository) ListActiveSessionsByDomain(ctx context.Context, domain stri
 //      adicional via JIDs de mensagens cuja session_id == sessoes da (1)
 //      OU cujo JID == session_jid de (1)).
 //
-// Simplificacao: pra cobrir QR -> Cloud no mesmo dominio sem complicar
-// schema, listamos TODAS sessoes nao banidas se o dominio tem ao menos
-// 1 bitrix_account. O tenant ve sessoes alheias so se o bitrix_account
-// foi compartilhado — risco aceito em troca de funcionalidade. Multi
-// tenant isolation ja se ergue via permissions (so super-admin acessa
-// /dashboard).
+// SEGURANCA: filtra estritamente por domain via bitrix_accounts. Versao
+// anterior listava TODAS as sessoes nao banidas se o dominio tivesse 1
+// account — vazava sessoes cross-tenant.
+//
+// "Real" = sessoes ainda existentes em whatsapp_sessions cujo JID esta
+// vinculado a bitrix_accounts.domain = $1.
+// "Shadow" = JIDs que aparecem em messages historicas mas nao em
+// whatsapp_sessions, restritos aos JIDs que JA FORAM vinculados ao
+// dominio (bitrix_accounts.domain = $1, mesmo que o account tenha sido
+// deletado depois — historico precisa aparecer).
 func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([]*WhatsAppSession, error) {
 	// Confirma que dominio existe em bitrix_accounts (sanity)
 	var hasDomain bool
@@ -185,21 +189,23 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 		return nil, nil
 	}
 
-	// Tradicional: sessoes ainda existentes em whatsapp_sessions (nao banidas).
-	// Histórico precisa funcionar mesmo se o registro de sessao foi deletado
-	// (master desconectou + admin limpou). Pra cobrir esse caso, retornamos
-	// tambem "sessoes sombra" — JIDs unicos que aparecem em messages mas
-	// nao existem mais em whatsapp_sessions. ON DELETE SET NULL ja preserva
-	// as msgs (FK), e aqui derivamos a sessao apenas pra alimentar o dropdown.
+	// SEGURANCA: filtra REAL e SHADOW por JIDs do dominio.
+	// Real: whatsapp_sessions.jid IN bitrix_accounts.session_jid WHERE domain=$1
+	// Shadow: messages JIDs que NAO estao em whatsapp_sessions, mas estao em
+	//   bitrix_accounts do dominio (historico de sessoes deletadas).
 	rows, err := r.pool.Query(ctx, `
-		WITH real AS (
+		WITH domain_jids AS (
+			SELECT session_jid FROM bitrix_accounts WHERE domain = $1
+		),
+		real AS (
 			SELECT `+sessionColumns+`
 			  FROM whatsapp_sessions ws
 			 WHERE ws.status <> 'banned'
+			   AND ws.jid IN (SELECT session_jid FROM domain_jids)
 		),
 		shadow_jids AS (
-			-- JIDs unicos que aparecem em messages mas NAO em whatsapp_sessions.
-			-- Limita a 30d retroativo pra nao ressuscitar lixo antigo.
+			-- JIDs unicos em messages mas NAO em whatsapp_sessions, restrito
+			-- a JIDs ja conhecidos pelo dominio em algum momento.
 			SELECT DISTINCT j AS jid
 			  FROM (
 				SELECT from_jid AS j FROM messages
@@ -213,10 +219,9 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 			 WHERE j LIKE '%@%'
 			   AND j NOT IN (SELECT jid FROM whatsapp_sessions)
 			   AND j NOT LIKE '%@lid'
+			   AND j IN (SELECT session_jid FROM domain_jids)
 		),
 		shadow AS (
-			-- Mesma ordem/forma de sessionColumns, apenas com valores derivados
-			-- do JID. Status='disconnected' marca como "sessao sombra" no UI.
 			SELECT
 				gen_random_uuid()         AS id,
 				sj.jid                    AS jid,
@@ -246,7 +251,7 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 			UNION ALL
 			SELECT * FROM shadow
 		) combined
-		ORDER BY (combined.status = 'active') DESC, combined.last_seen DESC`)
+		ORDER BY (combined.status = 'active') DESC, combined.last_seen DESC`, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -1216,18 +1221,36 @@ func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID str
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
 		       COALESCE(default_sms_session_jid, ''),
-		       COALESCE(sms_risk_acknowledged, FALSE)
+		       COALESCE(sms_risk_acknowledged, FALSE),
+		       COALESCE(application_token, '')
 		FROM bitrix_portals WHERE member_id = $1
 		ORDER BY installed_at DESC LIMIT 1`, memberID)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged)
+		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged,
+		&p.ApplicationToken)
 	if err != nil {
 		return nil, err
 	}
 	return &p, nil
+}
+
+// SetPortalApplicationToken persiste o application_token recebido pelo Bitrix
+// no callback de install (event=ONAPPINSTALL). Usado depois pra validar
+// autenticidade de POSTs server-to-server em endpoints publicos como
+// /bitrix/bp/send e /bitrix/sms/send.
+//
+// Idempotente: se o token mudar (reinstall), atualiza.
+func (r *Repository) SetPortalApplicationToken(ctx context.Context, domain, token string) error {
+	if domain == "" || token == "" {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx,
+		`UPDATE bitrix_portals SET application_token = $1, updated_at = NOW() WHERE domain = $2`,
+		token, domain)
+	return err
 }
 
 // UpdateBitrixPortalDomain atualiza o domain de um portal identificado pelo member_id.
@@ -1246,13 +1269,15 @@ func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string)
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
 		       COALESCE(default_sms_session_jid, ''),
-		       COALESCE(sms_risk_acknowledged, FALSE)
+		       COALESCE(sms_risk_acknowledged, FALSE),
+		       COALESCE(application_token, '')
 		FROM bitrix_portals WHERE domain = $1`, domain)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged)
+		&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged,
+		&p.ApplicationToken)
 	if err != nil {
 		return nil, err
 	}
@@ -1353,7 +1378,8 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
 		       COALESCE(default_sms_session_jid, ''),
-		       COALESCE(sms_risk_acknowledged, FALSE)
+		       COALESCE(sms_risk_acknowledged, FALSE),
+		       COALESCE(application_token, '')
 		FROM bitrix_portals ORDER BY installed_at DESC`)
 	if err != nil {
 		return nil, err
@@ -1365,7 +1391,8 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		var p BitrixPortal
 		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
-			&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged); err != nil {
+			&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged,
+		&p.ApplicationToken); err != nil {
 			return nil, err
 		}
 		portals = append(portals, &p)

@@ -343,12 +343,14 @@ func (h *handlers) sessionOptionsForDomain(ctx context.Context, domain string, w
 func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 	domainRaw := c.FormValue("auth[domain]")
 	domain := normalizePortalDomain(domainRaw)
-	if domain == "" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth missing"})
-	}
-	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
-	if err != nil || portal == nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal not found"})
+	appToken := c.FormValue("auth[application_token]")
+	// SEGURANCA: valida application_token contra o que persistimos no install.
+	// Bloqueia atacante anonimo mandando POST com auth[domain] forjado.
+	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken)
+	if err != nil {
+		h.log.Warn("bp-robot: auth invalid",
+			zap.String("domain", domain), zap.Error(err))
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
 	if portal.DefaultSMSSessionJID == "" {
 		h.log.Warn("bp-robot: tenant has no default session — drop",

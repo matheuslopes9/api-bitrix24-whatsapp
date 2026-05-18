@@ -155,6 +155,11 @@ type BitrixPortal struct {
 	DefaultSMSSessionJID string `db:"default_sms_session_jid"`
 	// SMSRiskAcknowledged: master confirmou o aviso de risco de banimento.
 	SMSRiskAcknowledged bool `db:"sms_risk_acknowledged"`
+	// ApplicationToken: token que o Bitrix gera por install e envia em todos
+	// os POSTs server-to-server (handlers de event, BizProc activities, SMS
+	// sender callbacks). Usado pra validar autenticidade de chamadas em
+	// /bitrix/bp/send e /bitrix/sms/send com constant-time compare.
+	ApplicationToken string `db:"application_token"`
 }
 
 // BitrixSMSMessage representa um envio de SMS via Bitrix Marketing > Campanhas SMS

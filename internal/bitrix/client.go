@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,21 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
+
+// redactTokensRe encontra access_token/refresh_token/application_token em
+// JSON ou form-encoded e troca por "[redacted]". Usado antes de logar
+// payloads que podem conter credenciais OAuth.
+var redactTokensRe = regexp.MustCompile(`("?(?:access_token|refresh_token|application_token|AUTH_ID|REFRESH_ID)"?\s*[:=]\s*"?)[^",&\s}]+`)
+
+// RedactTokens substitui valores de campos sensiveis (access_token,
+// refresh_token, application_token, AUTH_ID, REFRESH_ID) por [redacted].
+// Aceita JSON e form-encoded. Exportado pra uso em outros pacotes que
+// loguem payloads Bitrix.
+func RedactTokens(s string) string {
+	return redactTokensRe.ReplaceAllString(s, `${1}[redacted]`)
+}
+
+func redactTokens(s string) string { return RedactTokens(s) }
 
 // TenantCreds contém as credenciais de uma conta Bitrix24 específica.
 // Passado por chamada para suportar multi-tenancy sem re-instanciar o client.
@@ -125,9 +141,13 @@ func (c *Client) refreshToken(ctx context.Context, creds TenantCreds, t *db.Bitr
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	c.log.Info("token refresh response", zap.Int("status", resp.StatusCode), zap.String("body", string(body)))
+	// SEGURANCA: nao logar o body cru — contem access_token/refresh_token.
+	// Em caso de erro, o status code ja' indica o problema; log de debug
+	// detalhado fica disponivel se DEBUG_LOG_RAW=1 (vide config).
+	c.log.Info("token refresh response", zap.Int("status", resp.StatusCode), zap.Int("body_len", len(body)))
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("token refresh failed: status %d body %s", resp.StatusCode, string(body))
+		// Body so em erro, redatado: tira access_token/refresh_token via regex.
+		return fmt.Errorf("token refresh failed: status %d body %s", resp.StatusCode, redactTokens(string(body)))
 	}
 	return c.saveTokenResponse(ctx, creds, bytes.NewReader(body))
 }

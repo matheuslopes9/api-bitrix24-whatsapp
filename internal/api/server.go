@@ -60,7 +60,11 @@ func New(
 	// ─── UI de conexão WhatsApp (sem auth — seguro pois usa proxy interno) ─
 	app.Get("/connect", h.connectPage)
 	app.Get("/dashboard", h.dashboardPage)
-	ui := app.Group("/ui")
+	// Grupo /ui/*: protegido por cookie tenant (setado em /bitrix/auth apos
+	// o iframe Bitrix validar com BX24.js) OU cookie admin (super-admin).
+	// SEM o middleware, qualquer um na internet podia ler/escrever dados
+	// de qualquer tenant via ?domain=cliente.bitrix24.com.
+	ui := app.Group("/ui", h.requireTenantOrAdmin)
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
 	ui.Get("/sessions", h.uiListSessions)
