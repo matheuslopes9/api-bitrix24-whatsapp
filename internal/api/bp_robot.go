@@ -141,6 +141,12 @@ func (h *handlers) triggerBPRobotRefresh(domain, reason string) {
 				zap.Error(err))
 			return
 		}
+		// Cleanup legacy robot (uctalk_send_whatsapp). Best-effort.
+		// Garante que qualquer refresh tambem limpa o robot antigo caso
+		// tenha sobrado de instalacao anterior — sem precisar reinstalar.
+		creds := h.portalToCreds(portal)
+		_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeLegacy)
+
 		if err := h.ReregisterBPRobotUnofficialForPortal(ctx, portal); err != nil {
 			h.log.Warn("bp-robot refresh: unofficial falhou",
 				zap.String("domain", domain), zap.String("reason", reason), zap.Error(err))
