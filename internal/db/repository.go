@@ -1837,6 +1837,21 @@ func (r *Repository) UpdateMessageTemplate(ctx context.Context, id uuid.UUID, do
 	return tag.RowsAffected() > 0, nil
 }
 
+// DeleteBrokenMetaImports apaga rows de meta-import com meta_template_name
+// vazio — bagunca deixada pelo bug da migration 023 (dropava colunas a cada
+// restart). Idempotente: chamada manual via endpoint /ui/templates/purge-broken.
+func (r *Repository) DeleteBrokenMetaImports(ctx context.Context, domain string) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM message_templates
+		WHERE domain = $1
+		  AND created_by = 'meta-import'
+		  AND (meta_template_name IS NULL OR meta_template_name = '')`, domain)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // DeleteMessageTemplate remove um template (validando domain).
 func (r *Repository) DeleteMessageTemplate(ctx context.Context, id uuid.UUID, domain string) (bool, error) {
 	tag, err := r.pool.Exec(ctx,

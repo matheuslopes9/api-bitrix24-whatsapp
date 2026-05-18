@@ -207,12 +207,18 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			CREATE INDEX IF NOT EXISTS idx_message_templates_domain ON message_templates (domain);
 		`},
 		{"023_template_meta_revert", `
-			-- Reverte 022_template_meta. Cliente preferiu manter SMS Campaigns
-			-- apenas no caminho nao oficial (texto livre / Multi-Device).
-			-- IF EXISTS evita erro em ambientes onde a 022 nem rodou.
-			ALTER TABLE message_templates DROP COLUMN IF EXISTS meta_template_name;
-			ALTER TABLE message_templates DROP COLUMN IF EXISTS meta_template_lang;
-			ALTER TABLE message_templates DROP COLUMN IF EXISTS meta_template_vars;
+			-- NO-OP DESDE 2026-05-18.
+			--
+			-- Esta migration ORIGINALMENTE droppava meta_template_name/lang/vars
+			-- (revertendo 022). Como o sistema NAO tem migration ledger, ela
+			-- rodava em TODO startup — e como migration 024 recria as colunas
+			-- com DEFAULT '', cada restart do container apagava os valores de
+			-- meta_template_* de TODOS os rows. Bug: templates importados da
+			-- Meta sumiam da aba Oficial apos o proximo restart.
+			--
+			-- Migration mantida (nao removida) pra preservar a ordem do slice
+			-- e a "historia" das migrations declaradas. So neutralizada.
+			SELECT 1;
 		`},
 		{"022_template_meta", `
 			-- (descontinuada) — campos adicionados aqui foram removidos pela 023.

@@ -298,6 +298,25 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 
 // ─── Templates de mensagem (quick replies) ─────────────────────────────────
 
+// POST /ui/templates/purge-broken — apaga rows com created_by="meta-import"
+// e meta_template_name vazio. Usado UMA vez pra limpar a bagunca causada
+// pela migration 023 que dropava as colunas a cada restart.
+// Seguranca: so toca rows do domain atual, so com prefix meta-import.
+func (h *handlers) uiTemplatesPurgeBroken(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain, err := h.resolveDashboardDomain(ctx, c)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+	deleted, err := h.repo.DeleteBrokenMetaImports(ctx, domain)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("templates: purged broken meta-import rows",
+		zap.String("domain", domain), zap.Int("deleted", deleted))
+	return c.JSON(fiber.Map{"ok": true, "deleted": deleted, "domain": domain})
+}
+
 // GET /ui/templates/debug — diagnostico: lista templates com flag oficial
 // computada server-side. Util pra confirmar se meta_template_name esta
 // preenchido no banco (vs filtro JS errado no front).

@@ -91,6 +91,8 @@ func New(
 	// ─── Templates de mensagem ──────────────────────────────────────────
 	ui.Get("/templates/list", h.uiTemplatesList)
 	ui.Get("/templates/debug", h.uiTemplatesDebug)
+	ui.Post("/templates/purge-broken", h.uiTemplatesPurgeBroken)
+	ui.Get("/templates/purge-broken", h.uiTemplatesPurgeBroken) // GET alias pra testar via browser
 	ui.Post("/templates/create", h.uiTemplatesCreate)
 	ui.Post("/templates/update", h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.uiTemplatesDelete)
