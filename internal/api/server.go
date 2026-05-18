@@ -72,8 +72,9 @@ func New(
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
 	ui.Post("/sessions/refresh-status", h.uiRefreshSessionsStatus)
 	ui.Get("/overview", h.uiOverview)
-	// ─── Sessões Cloud API (Meta Oficial) ────────────────────────────────
-	ui.Post("/sessions/cloud", h.uiCreateCloudSession)
+	ui.Get("/plan", h.uiTenantPlan)
+	// ─── Sessões Cloud API (Meta Oficial) — PRO ──────────────────────────
+	ui.Post("/sessions/cloud", h.requireProPlan, h.uiCreateCloudSession)
 	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)
 	// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────
 	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
@@ -92,18 +93,20 @@ func New(
 	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
 	ui.Post("/permissions/grant", h.uiPermissionsGrant)
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
-	// ─── Templates de mensagem ──────────────────────────────────────────
+	// ─── Templates de mensagem — PRO ────────────────────────────────────
+	// /list pode ficar publico (UI vazia no Basico, dashboard mostra
+	// upgrade). Os demais (CRUD + import Meta) exigem Pro.
 	ui.Get("/templates/list", h.uiTemplatesList)
 	ui.Get("/templates/debug", h.uiTemplatesDebug)
-	ui.Post("/templates/purge-broken", h.uiTemplatesPurgeBroken)
-	ui.Get("/templates/purge-broken", h.uiTemplatesPurgeBroken) // GET alias pra testar via browser
-	ui.Post("/bp-robots/refresh", h.uiBPRobotsRefresh)
-	ui.Get("/bp-robots/refresh", h.uiBPRobotsRefresh) // GET alias pra testar via browser
-	ui.Post("/templates/create", h.uiTemplatesCreate)
-	ui.Post("/templates/update", h.uiTemplatesUpdate)
-	ui.Post("/templates/delete", h.uiTemplatesDelete)
-	ui.Get("/templates/meta-list", h.uiTemplatesMetaList)
-	ui.Post("/templates/meta-import", h.uiTemplatesMetaImport)
+	ui.Post("/templates/purge-broken", h.requireProPlan, h.uiTemplatesPurgeBroken)
+	ui.Get("/templates/purge-broken", h.requireProPlan, h.uiTemplatesPurgeBroken)
+	ui.Post("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
+	ui.Get("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
+	ui.Post("/templates/create", h.requireProPlan, h.uiTemplatesCreate)
+	ui.Post("/templates/update", h.requireProPlan, h.uiTemplatesUpdate)
+	ui.Post("/templates/delete", h.requireProPlan, h.uiTemplatesDelete)
+	ui.Get("/templates/meta-list", h.requireProPlan, h.uiTemplatesMetaList)
+	ui.Post("/templates/meta-import", h.requireProPlan, h.uiTemplatesMetaImport)
 
 	ui.Get("/history/sessions", h.uiHistorySessions)
 	ui.Get("/history/conversations", h.uiHistoryConversations)
@@ -246,6 +249,10 @@ func New(
 	admin.Get("/api/tenant/bp-register", h.adminTenantBPRegister)
 	admin.Get("/api/tenant/bp-reregister", h.adminTenantBPReregister)
 	admin.Get("/api/tenant/sms-register", h.adminTenantSMSRegister)
+	// ─── Sistema de planos ──────────────────────────────────────────────
+	admin.Get("/api/tenant/plan", h.adminTenantGetPlan)         // ?domain=...
+	admin.Post("/api/tenant/plan", h.adminTenantSetPlan)        // body: {domain, plan, status, active_until, notes}
+	admin.Get("/api/tenant/plans", h.adminListTenantPlans)      // lista geral
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

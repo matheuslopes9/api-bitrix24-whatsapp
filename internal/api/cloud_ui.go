@@ -47,6 +47,18 @@ func (h *handlers) uiCreateCloudSession(c *fiber.Ctx) error {
 	if body.VerifyToken == "" {
 		body.VerifyToken = randomHex(16)
 	}
+	// Gate: verifica slot de sessao disponivel (basico=1, pro=10).
+	if domain, ok := c.Locals("tenant_domain").(string); ok && domain != "" {
+		if err := h.requireSessionSlot(c.Context(), domain); err != nil {
+			if fe, ok := err.(*fiber.Error); ok {
+				return c.Status(fe.Code).JSON(fiber.Map{
+					"error": fe.Message,
+					"code":  "session_limit_reached",
+				})
+			}
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
 
 	params := whatsapp.CloudSessionParams{
 		PhoneNumberID: body.PhoneNumberID,

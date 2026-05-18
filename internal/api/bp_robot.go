@@ -352,6 +352,16 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 			zap.String("domain", domain), zap.Error(err))
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
+	// PLAN GATE: BizProc robots sao feature Pro (envio automatizado em massa).
+	plan, _ := h.repo.GetTenantPlan(c.Context(), portal.Domain)
+	if plan == nil || !plan.HasProFeatures() {
+		h.log.Warn("bp-robot: plano Pro requerido",
+			zap.String("domain", portal.Domain))
+		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+			"error": "Robots BizProc sao feature do plano Pro. Faca upgrade pra usar.",
+			"code":  "plan_pro_required",
+		})
+	}
 	if portal.DefaultSMSSessionJID == "" {
 		h.log.Warn("bp-robot: tenant has no default session — drop",
 			zap.String("domain", domain))

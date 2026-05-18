@@ -89,6 +89,17 @@ func (h *handlers) smsProviderSend(c *fiber.Ctx) error {
 			zap.String("domain", domainRaw), zap.Error(err))
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
+	// PLAN GATE: SMS Campaigns e feature Pro. Tenant sem Pro recebe 402
+	// e o Bitrix marca a campanha como failed (cliente ve nos logs).
+	plan, _ := h.repo.GetTenantPlan(c.Context(), portal.Domain)
+	if plan == nil || !plan.HasProFeatures() {
+		h.log.Warn("sms-provider: plano Pro requerido",
+			zap.String("domain", portal.Domain))
+		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+			"error": "SMS Campaigns e feature do plano Pro. Faca upgrade pra usar.",
+			"code":  "plan_pro_required",
+		})
+	}
 
 	// Tenant precisa ter sessao default configurada. Sem isso, modulo
 	// esta desligado pra esse portal — recusamos com 200 e status 'failed'

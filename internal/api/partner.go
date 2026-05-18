@@ -304,6 +304,13 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		SameSite: "None", // iframe cross-site precisa
 	})
 
+	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
+	// existe row em tenant_plans, nao faz nada (caso de re-install).
+	if err := h.repo.EnsureTenantTrial(c.Context(), normalizePortalDomain(domain)); err != nil {
+		h.log.Warn("partner auth: ensure trial failed",
+			zap.String("domain", domain), zap.Error(err))
+	}
+
 	h.log.Info("partner auth: token updated", zap.String("domain", domain))
 	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "sessions": len(activeSessions)})
 }
@@ -457,6 +464,9 @@ func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken 
 				zap.String("domain", portal.Domain), zap.Error(err))
 		}
 		portal.ApplicationToken = appToken
+		// Best-effort: clientes que ja existiam antes do sistema de planos
+		// nao tem row em tenant_plans. Cria trial agora pra nao bloquear.
+		_ = h.repo.EnsureTenantTrial(ctx, portal.Domain)
 		return portal, nil
 	}
 	if subtle.ConstantTimeCompare([]byte(appToken), []byte(portal.ApplicationToken)) != 1 {

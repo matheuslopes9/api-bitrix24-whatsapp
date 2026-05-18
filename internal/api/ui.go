@@ -22,6 +22,19 @@ func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil || body.Phone == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "phone required"})
 	}
+	// Gate: verifica slot de sessao disponivel pro plano atual.
+	// Basico = 1 sessao, Pro = 10.
+	if domain, ok := c.Locals("tenant_domain").(string); ok && domain != "" {
+		if err := h.requireSessionSlot(c.Context(), domain); err != nil {
+			if fe, ok := err.(*fiber.Error); ok {
+				return c.Status(fe.Code).JSON(fiber.Map{
+					"error": fe.Message,
+					"code":  "session_limit_reached",
+				})
+			}
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
 	if err := h.waManager.AddSession(c.Context(), body.Phone); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

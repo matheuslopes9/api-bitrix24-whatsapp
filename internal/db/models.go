@@ -135,6 +135,45 @@ type BitrixAccount struct {
 // BitrixPortal representa um portal Bitrix24 que instalou o app via Marketplace.
 // Preenchido automaticamente pelo installation handler (POST /bitrix/install).
 // Independente de BitrixAccount — não requer configuração manual pelo admin.
+// TenantPlan representa o plano/billing de um tenant (domain Bitrix).
+// Default no install: plan=basic, status=trial, trial_ends_at=NOW+7d.
+type TenantPlan struct {
+	Domain       string     `db:"domain"`
+	Plan         string     `db:"plan"`           // 'basic' | 'pro'
+	Status       string     `db:"status"`         // 'trial' | 'active' | 'expired' | 'suspended'
+	TrialEndsAt  *time.Time `db:"trial_ends_at"`  // NULL = sem trial (Pro pago)
+	ActiveUntil  *time.Time `db:"active_until"`   // NULL = vitalicio
+	CreatedAt    time.Time  `db:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at"`
+	Notes        string     `db:"notes"`
+}
+
+// IsAccessAllowed retorna true se o tenant tem acesso a usar o app.
+// false = expirou trial sem upgrade, ou suspended manual.
+func (p *TenantPlan) IsAccessAllowed() bool {
+	if p == nil {
+		return false
+	}
+	now := time.Now()
+	switch p.Status {
+	case "active":
+		return p.ActiveUntil == nil || p.ActiveUntil.After(now)
+	case "trial":
+		return p.TrialEndsAt != nil && p.TrialEndsAt.After(now)
+	}
+	return false
+}
+
+// HasProFeatures retorna true se o plano libera features avancadas
+// (Cloud API, templates HSM, SMS Campaigns, multi-sessao, relatorios).
+// Trial = basico (config do cliente), so 'active'+'pro' tem Pro.
+func (p *TenantPlan) HasProFeatures() bool {
+	if p == nil {
+		return false
+	}
+	return p.Plan == "pro" && p.IsAccessAllowed()
+}
+
 type BitrixPortal struct {
 	ID           uuid.UUID `db:"id"`
 	Domain       string    `db:"domain"`       // ex: "empresa.bitrix24.com.br"

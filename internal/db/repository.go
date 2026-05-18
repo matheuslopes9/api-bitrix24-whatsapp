@@ -2005,3 +2005,99 @@ func (r *Repository) AckSMSRisk(ctx context.Context, domain string) error {
 		domain)
 	return err
 }
+
+// ─── Tenant Plans (Trial / Basic / Pro) ────────────────────────────────────
+
+// GetTenantPlan retorna o plano do dominio. Se nao existe, devolve nil
+// (caller pode criar trial via EnsureTenantTrial). Usado nos gates de
+// feature pra decidir 200 vs 402.
+func (r *Repository) GetTenantPlan(ctx context.Context, domain string) (*TenantPlan, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT domain, plan, status, trial_ends_at, active_until,
+		       created_at, updated_at, notes
+		FROM tenant_plans WHERE domain = $1`, domain)
+	var p TenantPlan
+	err := row.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
+		&p.CreatedAt, &p.UpdatedAt, &p.Notes)
+	if err != nil {
+		// pgx.ErrNoRows nao importado aqui — comparacao por mensagem evita
+		// import circular.
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// EnsureTenantTrial cria um plano trial de 7 dias se o dominio nao tem
+// plano ainda. Idempotente — se ja existe, nao faz nada.
+// Chamado no /bitrix/auth (apos validar oauth do install) pra garantir
+// que TODO tenant tenha um plano associado.
+func (r *Repository) EnsureTenantTrial(ctx context.Context, domain string) error {
+	if domain == "" {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at)
+		VALUES ($1, 'basic', 'trial', NOW() + INTERVAL '7 days')
+		ON CONFLICT (domain) DO NOTHING`, domain)
+	return err
+}
+
+// SetTenantPlan atualiza o plano de um tenant. Usado pelo super-admin pra
+// converter trial -> pro pago, ou suspender. Idempotente. Se o tenant
+// ainda nao tem row, cria.
+//
+// plan: 'basic' | 'pro'
+// status: 'trial' | 'active' | 'expired' | 'suspended'
+// activeUntil: NULL pra vitalicio (Pro com pagamento manual sem cobranca recorrente)
+func (r *Repository) SetTenantPlan(ctx context.Context, domain, plan, status string,
+	activeUntil *time.Time, notes string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO tenant_plans (domain, plan, status, active_until, notes)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (domain) DO UPDATE SET
+			plan         = EXCLUDED.plan,
+			status       = EXCLUDED.status,
+			active_until = EXCLUDED.active_until,
+			notes        = EXCLUDED.notes,
+			updated_at   = NOW()`,
+		domain, plan, status, activeUntil, notes)
+	return err
+}
+
+// ListTenantPlans pra UI super-admin (/admin/api/tenants).
+func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT domain, plan, status, trial_ends_at, active_until,
+		       created_at, updated_at, notes
+		FROM tenant_plans
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*TenantPlan
+	for rows.Next() {
+		var p TenantPlan
+		if err := rows.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
+			&p.CreatedAt, &p.UpdatedAt, &p.Notes); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// CountActiveSessionsByDomain conta sessoes (QR + Cloud) ativas vinculadas
+// ao domain. Usado pra enforce do limite de 10 sessoes do plano Pro.
+func (r *Repository) CountActiveSessionsByDomain(ctx context.Context, domain string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM whatsapp_sessions ws
+		WHERE ws.status = 'active'
+		  AND ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)`,
+		domain).Scan(&n)
+	return n, err
+}

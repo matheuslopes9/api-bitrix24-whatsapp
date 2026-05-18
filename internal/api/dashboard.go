@@ -444,6 +444,19 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div style="font-size:11.5px;color:#334155;" id="sb-sessoes">-- sessão(ões) ativa(s)</div>
   </div>
 
+  <!-- Plano / Trial -->
+  <div class="card-flat" id="plan-card" style="padding:13px;margin-top:8px;display:none;">
+    <div style="font-size:10.5px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Plano</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+      <div class="dot" id="plan-dot" style="background:#fbbf24;"></div>
+      <span style="font-size:13px;color:#e2e8f0;font-weight:600;" id="plan-label">--</span>
+    </div>
+    <div style="font-size:11.5px;color:#334155;line-height:1.4;" id="plan-detail">--</div>
+    <div id="plan-upgrade" style="display:none;margin-top:8px;">
+      <a href="https://uctechnology.com.br/contato" target="_blank" style="display:inline-block;padding:6px 12px;background:linear-gradient(90deg,#fbbf24,#f59e0b);color:#1a1a1a;border-radius:6px;font-size:11.5px;font-weight:700;text-decoration:none;">Fazer Upgrade →</a>
+    </div>
+  </div>
+
   <!-- Toggle tema -->
   <button id="btn-tema" onclick="toggleTema()" style="margin-top:10px;width:100%;display:flex;align-items:center;justify-content:center;gap:9px;padding:10px 13px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:500;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:#64748b;transition:background .15s,color .15s;" onmouseover="this.style.background='rgba(255,255,255,.08)';this.style.color='#cbd5e1'" onmouseout="this.style.background='rgba(255,255,255,.04)';this.style.color='#64748b'">
     <span id="tema-icone" style="width:16px;height:16px;display:flex;align-items:center;justify-content:center;">
@@ -1658,6 +1671,9 @@ function carregarVisaoGeral() {
     setText('sb-sessoes', d.active_sessions + ' sessão(ões) ativa(s)');
     setText('cfg-sess-count', d.active_sessions + ' sessão(ões) ativa(s)');
 
+    // Plano: chamada paralela pro card lateral
+    atualizarPlano();
+
     // Dispositivos no painel
     renderizarDispositivos(d.sessions || []);
 
@@ -1677,6 +1693,71 @@ function atualizarStatus(online) {
   });
   var hs = document.getElementById('hdr-status');
   if (hs) { hs.textContent = texto; hs.style.color = cor; }
+}
+
+// Carrega plano do tenant e atualiza card lateral. Esconde features Pro
+// se o plano for Basico/trial. Chamada a cada poll de /ui/overview.
+function atualizarPlano() {
+  fetch(apiUrl('/ui/plan'))
+    .then(function(r){ return r.json(); })
+    .then(function(p){
+      if (!p || p.error) return;
+      var card = document.getElementById('plan-card');
+      if (card) card.style.display = 'block';
+
+      var label = (p.plan || 'basic').toUpperCase();
+      var labelEl = document.getElementById('plan-label');
+      var dot = document.getElementById('plan-dot');
+      var detail = document.getElementById('plan-detail');
+      var upgrade = document.getElementById('plan-upgrade');
+
+      var isPro = p.has_pro_features === true;
+      var isTrial = p.status === 'trial';
+      var isExpired = !p.is_access_allowed;
+
+      // Cor do dot/badge segue o plano + status
+      if (isExpired) {
+        dot.style.background = '#f87171';
+        if (labelEl) labelEl.textContent = 'EXPIRADO';
+        if (detail) detail.innerHTML = 'Acesso bloqueado.<br>Entre em contato comercial pra reativar.';
+        if (upgrade) upgrade.style.display = 'block';
+      } else if (isTrial) {
+        dot.style.background = '#fbbf24';
+        if (labelEl) labelEl.textContent = 'TRIAL';
+        var days = (typeof p.trial_days_remaining === 'number') ? p.trial_days_remaining : '?';
+        if (detail) detail.innerHTML = days + ' dia(s) restantes<br>Plano ' + label + ' • ' +
+                     (p.sessions_used||0) + '/' + (p.sessions_limit||1) + ' sessão(ões)';
+        if (upgrade) upgrade.style.display = 'block';
+      } else if (isPro) {
+        dot.style.background = '#25D366';
+        if (labelEl) labelEl.textContent = 'PRO';
+        if (detail) detail.innerHTML = 'Ativo • Todas as features liberadas<br>' +
+                     (p.sessions_used||0) + '/' + (p.sessions_limit||10) + ' sessão(ões)';
+        if (upgrade) upgrade.style.display = 'none';
+      } else {
+        // Basic ativo pago (raro — clientes Basico vem por trial)
+        dot.style.background = '#60a5fa';
+        if (labelEl) labelEl.textContent = 'BASIC';
+        if (detail) detail.innerHTML = 'Conexão básica<br>' +
+                     (p.sessions_used||0) + '/' + (p.sessions_limit||1) + ' sessão(ões)';
+        if (upgrade) upgrade.style.display = 'block';
+      }
+
+      // Esconde abas Pro pra plano basico/trial. Templates/SMS/etc somem.
+      var proFeatureSelectors = [
+        '[data-nav="templates"]',
+        '[data-nav="sms"]',
+        '[data-nav="relatorios"]',
+        '[data-nav="historico"]'
+      ];
+      proFeatureSelectors.forEach(function(sel){
+        var els = document.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) {
+          els[i].style.display = isPro ? '' : 'none';
+        }
+      });
+    })
+    .catch(function(){ /* silencioso */ });
 }
 
 function renderizarDispositivos(sessoes) {
