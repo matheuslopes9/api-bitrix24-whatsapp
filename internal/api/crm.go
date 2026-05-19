@@ -2813,36 +2813,66 @@ function showDenied(msg) {
 </body>
 </html>`
 
-// RegisterPlacementsForPortal registra placement.bind para os 3 tipos de entidade CRM
-// e tambem para o menu lateral esquerdo. Chamado após instalar ou ativar o connector.
+// RegisterPlacementsForPortal registra placement.bind para os 3 tipos de
+// entidade CRM e para o menu lateral esquerdo. IDEMPOTENTE: lista placements
+// ja' existentes e faz unbind dos duplicados (mesma PLACEMENT + HANDLER)
+// antes de bindar de novo. Sem isso, multipla chamada (install + ONAPPINSTALL
+// callback) cria N duplicatas de "UC Talk" no menu lateral.
+//
+// Chamado após instalar ou ativar o connector.
 func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain string, creds bitrix.TenantCreds) {
 	base := h.cfg.App.BaseURL()
 	tabURL := base + "/bitrix/crm/tab"
 	appURL := base + "/bitrix-app"
 
-	// CRM tabs (abas dentro de contato/lead/deal)
-	crmPlacements := []string{
-		"CRM_CONTACT_DETAIL_TAB",
-		"CRM_LEAD_DETAIL_TAB",
-		"CRM_DEAL_DETAIL_TAB",
+	type pl struct {
+		Name    string
+		Handler string
 	}
-	for _, p := range crmPlacements {
-		if err := h.bitrixClient.BindPlacement(ctx, creds, p, tabURL, "UC Talk"); err != nil {
-			h.log.Warn("placement.bind failed",
-				zap.String("placement", p),
-				zap.String("domain", domain),
-				zap.Error(err))
-		} else {
-			h.log.Info("placement.bind ok", zap.String("placement", p), zap.String("domain", domain))
+	wanted := []pl{
+		{"CRM_CONTACT_DETAIL_TAB", tabURL},
+		{"CRM_LEAD_DETAIL_TAB", tabURL},
+		{"CRM_DEAL_DETAIL_TAB", tabURL},
+		{"LEFT_MENU", appURL},
+	}
+
+	// Lista placements ja registrados. Se a chamada falhar (token expirado,
+	// app reinstalado, etc), seguimos pro bind direto — bitrix vai falhar
+	// com ALREADY_INSTALLED ou aceitar criando duplicata. Best-effort.
+	existing, listErr := h.bitrixClient.ListPlacements(ctx, creds)
+	if listErr != nil {
+		h.log.Warn("placement.list falhou; bind sem dedup",
+			zap.String("domain", domain), zap.Error(listErr))
+	}
+
+	// Unbind tudo que ja existe pros placements/handlers que queremos.
+	// Idempotente: dedup de duplicatas legadas antes de rebindar limpo.
+	for _, w := range wanted {
+		for _, e := range existing {
+			eName, _ := e["placement"].(string)
+			eHandler, _ := e["handler"].(string)
+			if eName == w.Name && eHandler == w.Handler {
+				if err := h.bitrixClient.UnbindPlacement(ctx, creds, eName, eHandler); err != nil {
+					h.log.Warn("placement.unbind (dedup) falhou",
+						zap.String("placement", eName),
+						zap.String("domain", domain),
+						zap.Error(err))
+				}
+			}
 		}
 	}
 
-	// Menu lateral esquerdo — item "UC Talk" para usuarios liberados acessarem
-	// a interface fora do contexto de contato/lead/deal.
-	if err := h.bitrixClient.BindPlacement(ctx, creds, "LEFT_MENU", appURL, "UC Talk"); err != nil {
-		h.log.Warn("placement.bind LEFT_MENU failed",
-			zap.String("domain", domain), zap.Error(err))
-	} else {
-		h.log.Info("placement.bind LEFT_MENU ok", zap.String("domain", domain))
+	// Bind limpo — agora so' 1 placement por nome+handler.
+	for _, w := range wanted {
+		if err := h.bitrixClient.BindPlacement(ctx, creds, w.Name, w.Handler, "UC Talk"); err != nil {
+			h.log.Warn("placement.bind falhou",
+				zap.String("placement", w.Name),
+				zap.String("domain", domain),
+				zap.Error(err))
+		} else {
+			h.log.Info("placement.bind ok",
+				zap.String("placement", w.Name),
+				zap.String("domain", domain))
+		}
 	}
 }
