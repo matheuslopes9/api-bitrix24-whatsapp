@@ -1129,6 +1129,82 @@ func (h *handlers) adminTenantPlacementsCleanup(c *fiber.Ctx) error {
 	})
 }
 
+// GET /admin/api/tenant/portal-debug?domain=...
+// Dump do que temos pra esse portal no banco. Diagnostico pra
+// APPLICATION_NOT_FOUND — verifica se token e' do install atual ou de
+// um zombie antigo.
+func (h *handlers) adminTenantPortalDebug(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{
+			"error":  "portal nao encontrado no banco",
+			"domain": domain,
+			"hint":   "Cliente nao instalou o app OU instalou e ainda nao chegou no POST /bitrix/auth.",
+		})
+	}
+	// Mascara tokens, mostra so prefixo pra diagnostico.
+	mask := func(s string) string {
+		if len(s) <= 8 {
+			return "(empty)"
+		}
+		return s[:8] + "..." + s[len(s)-4:]
+	}
+	return c.JSON(fiber.Map{
+		"domain":              portal.Domain,
+		"member_id":           portal.MemberID,
+		"access_token_prefix": mask(portal.AccessToken),
+		"refresh_token_prefix": mask(portal.RefreshToken),
+		"app_token_prefix":    mask(portal.ApplicationToken),
+		"expires_at":          portal.ExpiresAt,
+		"connector_id":        portal.ConnectorID,
+		"installed_at":        portal.InstalledAt,
+		"updated_at":          portal.UpdatedAt,
+		"current_client_id":   h.cfg.Bitrix.ClientID,
+		"hint":                "Se updated_at e' antigo, o cliente nunca refez handshake. Pede pra ele abrir o app no Bitrix.",
+	})
+}
+
+// POST /admin/api/tenant/portal-purge?domain=...
+// REMOVE completamente o portal do nosso banco (bitrix_portals + tokens
+// + accounts). Forca o proximo install a tratar como portal totalmente
+// novo. Usar so quando temos APPLICATION_NOT_FOUND persistente.
+//
+// CUIDADO: apaga tambem sessions vinculadas via bitrix_accounts, mas
+// nao remove rows em whatsapp_sessions (preserva historico de mensagens).
+// Apenas desliga o vinculo portal -> sessao.
+func (h *handlers) adminTenantPortalPurge(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	confirm := strings.TrimSpace(c.Query("confirm"))
+	if confirm != "yes" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "confirmacao obrigatoria",
+			"hint":  "Adicione &confirm=yes pra confirmar. Vai apagar bitrix_portals + bitrix_accounts + bitrix_tokens do dominio.",
+		})
+	}
+	ctx := c.Context()
+	deleted, err := h.repo.PurgePortalCompletely(ctx, normalizeDomainKey(domain))
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Warn("admin: portal PURGED",
+		zap.String("domain", domain),
+		zap.Any("deleted", deleted))
+	return c.JSON(fiber.Map{
+		"ok":      true,
+		"domain":  domain,
+		"deleted": deleted,
+		"hint":    "Cliente deve agora REINSTALAR o app pelo Marketplace. Proximo /bitrix/auth vai criar portal limpo.",
+	})
+}
+
 // GET|POST /admin/api/tenant/placements/force-unbind?domain=...
 // Endpoint NUCLEAR pra placements verdadeiramente orfaos: tenta unbind
 // direto pra cada placement conhecido, sem listar antes. Tenta multiplas

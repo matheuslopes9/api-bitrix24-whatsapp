@@ -2121,3 +2121,49 @@ func (r *Repository) CountActiveSessionsByDomain(ctx context.Context, domain str
 		domain).Scan(&n)
 	return n, err
 }
+
+// PurgePortalCompletely apaga TODOS os registros vinculados a um domain
+// Bitrix24: portal, accounts, tokens, plan, permissoes. Preserva o que
+// referencia historico (whatsapp_sessions/messages) — so' desvincula.
+//
+// Usado UNICAMENTE como recurso de emergencia quando temos estado fantasma
+// (APPLICATION_NOT_FOUND persistente apos reinstall). Forca o proximo
+// install a criar tudo do zero. Cliente vai ver tela de welcome de novo.
+//
+// Retorna map com contagem de rows apagados por tabela pra auditoria.
+func (r *Repository) PurgePortalCompletely(ctx context.Context, domain string) (map[string]int, error) {
+	out := map[string]int{}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Ordem importa: tabelas dependentes primeiro pra evitar FK violation.
+	purges := []struct {
+		name string
+		sql  string
+	}{
+		{"crm_user_permissions", `DELETE FROM crm_user_permissions WHERE domain = $1`},
+		{"bitrix_sms_messages", `DELETE FROM bitrix_sms_messages WHERE domain = $1`},
+		{"message_templates", `DELETE FROM message_templates WHERE domain = $1`},
+		{"bitrix_accounts", `DELETE FROM bitrix_accounts WHERE domain = $1`},
+		{"bitrix_tokens", `DELETE FROM bitrix_tokens WHERE domain = $1`},
+		{"tenant_plans", `DELETE FROM tenant_plans WHERE domain = $1`},
+		{"bitrix_portals", `DELETE FROM bitrix_portals WHERE domain = $1`},
+	}
+	for _, p := range purges {
+		tag, err := tx.Exec(ctx, p.sql, domain)
+		if err != nil {
+			// Best-effort em tabelas opcionais (talvez nao existam em todos
+			// os schemas). Log via map mas nao aborta.
+			out[p.name+"_error"] = 1
+			continue
+		}
+		out[p.name] = int(tag.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return out, err
+	}
+	return out, nil
+}

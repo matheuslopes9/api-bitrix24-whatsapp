@@ -267,6 +267,10 @@ func New(
 	// verdadeiramente orfaos onde list retorna APPLICATION_NOT_FOUND.
 	admin.Post("/api/tenant/placements/force-unbind", h.adminTenantPlacementsForceUnbind)
 	admin.Get("/api/tenant/placements/force-unbind", h.adminTenantPlacementsForceUnbind)
+	// Debug + purge nuclear pra portais fantasma (APPLICATION_NOT_FOUND).
+	admin.Get("/api/tenant/portal-debug", h.adminTenantPortalDebug)
+	admin.Post("/api/tenant/portal-purge", h.adminTenantPortalPurge)
+	admin.Get("/api/tenant/portal-purge", h.adminTenantPortalPurge) // GET alias
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)
