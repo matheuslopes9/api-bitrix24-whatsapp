@@ -50,15 +50,23 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	return c.SendString(dashboardHTML)
 }
 
-// dashboardCallerAllowed: caller e' super-admin (cookie) OU vem do iframe
-// do Bitrix (que carrega via "src=https://uctalk.../dashboard?portal=...").
+// dashboardCallerAllowed: caller e' super-admin (cookie) OU tenant
+// autenticado (cookie tenant valido — significa que ja' passou pelo
+// /bitrix/auth do iframe Bitrix) OU vem do iframe do Bitrix.
 //
-// Detecta iframe pelo Sec-Fetch-Dest (browsers modernos enviam "iframe"
-// nesse caso). Fallback: Referer contendo ".bitrix24." (cobre quando
-// Sec-Fetch-* nao chega — Safari antigo, alguns embeds).
+// Ordem de checagem (do mais seguro pro mais permissivo):
+//   1. Cookie admin (super-admin UC Technology)
+//   2. Cookie tenant assinado HMAC (tenant ja' autenticado via Bitrix)
+//   3. Sec-Fetch-Dest=iframe (iframe Bitrix de primeira abertura)
+//   4. Referer com .bitrix24. (fallback browsers sem Sec-Fetch-*)
 func dashboardCallerAllowed(c *fiber.Ctx, secret string) bool {
-	cookie := c.Cookies(adminCookieName)
-	if verifyAdminCookie(secret, cookie) {
+	if verifyAdminCookie(secret, c.Cookies(adminCookieName)) {
+		return true
+	}
+	// Cookie tenant valido = ja' passou pelo handshake do iframe Bitrix.
+	// Cobre navegacao top-level dentro do iframe (window.location.href)
+	// em browsers que perdem Sec-Fetch-Dest/Referer nesse caso.
+	if _, ok := verifyTenantCookie(secret, c.Cookies(tenantCookieName)); ok {
 		return true
 	}
 	if c.Get("Sec-Fetch-Dest") == "iframe" {

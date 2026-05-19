@@ -69,6 +69,11 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		domain = c.FormValue("auth[domain]")
 		memberID = c.FormValue("auth[member_id]")
 	}
+	// application_token tambem pode vir em auth[application_token] no formato
+	// app local — tenta esse fallback se o Marketplace nao mandou em CAPS.
+	if applicationToken == "" {
+		applicationToken = c.FormValue("auth[application_token]")
+	}
 	// Fallback JSON
 	if accessToken == "" {
 		var body struct {
@@ -100,7 +105,9 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 	if domain == "" {
 		domain = h.cfg.Bitrix.Domain
 	}
-	_ = applicationToken // guardado nos logs; poderá ser usado para validação futura
+	// applicationToken chega aqui no fluxo Marketplace e e usado pra validar
+	// POSTs server-to-server futuros (/bitrix/bp/send, /bitrix/sms/send).
+	// Persiste apos UpsertBitrixPortal abaixo.
 
 	h.log.Info("partner install parsed",
 		zap.String("event", event),
@@ -142,6 +149,16 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 	if err := h.repo.UpsertBitrixPortal(c.Context(), portal); err != nil {
 		h.log.Error("partner install: upsert portal failed", zap.String("domain", domain), zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Persiste application_token assim que recebido. Sem isso, endpoints
+	// publicos /bitrix/bp/send e /bitrix/sms/send caem no "first-touch"
+	// (qualquer POST com auth[domain] valido aceita o primeiro token).
+	if applicationToken != "" && domain != "" {
+		if err := h.repo.SetPortalApplicationToken(c.Context(), domain, applicationToken); err != nil {
+			h.log.Warn("partner install: app_token save failed",
+				zap.String("domain", domain), zap.Error(err))
+		}
 	}
 
 	// Registra e ativa o imconnector em background — não bloqueia o retorno ao Bitrix
@@ -628,15 +645,55 @@ function salvarERedirecionarAdmin(auth, isInstall) {
 
   // Pega user_id de quem rodou o install pra auto-vincular como master.
   // BX24.callMethod 'profile' devolve { ID, NAME, ... } do user atual.
-  // Fallback: continua sem user_id (backend so' nao auto-vincula).
+  //
+  // Robustez: 1 retry em caso de falha + timeout de 4s. Sem user_id,
+  // master nao e auto-setado e user precisa configurar via /dashboard
+  // depois (degradacao graciosa, nao quebra install).
   function withUserID(cb) {
-    if (typeof BX24 === 'undefined' || !BX24.callMethod) { cb(''); return; }
-    try {
-      BX24.callMethod('profile', {}, function(res){
-        var u = (res && res.data) ? res.data() : null;
-        cb(u ? String(u.ID || '') : '');
-      });
-    } catch(e) { cb(''); }
+    if (typeof BX24 === 'undefined' || !BX24.callMethod) {
+      console.warn('UC Talk: BX24 indisponivel — auto-master pulado');
+      cb(''); return;
+    }
+    var done = false;
+    var attempt = 0;
+    function finish(uid) {
+      if (done) return;
+      done = true;
+      cb(uid);
+    }
+    function tryProfile() {
+      attempt++;
+      try {
+        BX24.callMethod('profile', {}, function(res){
+          if (done) return;
+          try {
+            var u = (res && res.data) ? res.data() : null;
+            var uid = u ? String(u.ID || '') : '';
+            if (uid) { finish(uid); return; }
+            // Resposta veio mas sem ID — tenta 1x mais
+            if (attempt < 2) { tryProfile(); return; }
+            console.warn('UC Talk: BX24.profile sem ID apos 2 tentativas');
+            finish('');
+          } catch(e) {
+            console.warn('UC Talk: profile parse error', e);
+            if (attempt < 2) { tryProfile(); return; }
+            finish('');
+          }
+        });
+      } catch(e) {
+        console.warn('UC Talk: profile call threw', e);
+        if (attempt < 2) { setTimeout(tryProfile, 200); return; }
+        finish('');
+      }
+    }
+    // Timeout absoluto de 4s — install nao trava se Bitrix demorar.
+    setTimeout(function(){
+      if (!done) {
+        console.warn('UC Talk: BX24.profile timeout 4s — seguindo sem user_id');
+        finish('');
+      }
+    }, 4000);
+    tryProfile();
   }
 
   withUserID(function(userID){
