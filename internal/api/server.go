@@ -60,6 +60,11 @@ func New(
 	// ─── UI de conexão WhatsApp (sem auth — seguro pois usa proxy interno) ─
 	app.Get("/connect", h.connectPage)
 	app.Get("/dashboard", h.dashboardPage)
+	// Welcome screen e pagina de planos publicos (acesso via iframe Bitrix).
+	app.Get("/welcome", h.welcomePage)
+	app.Post("/welcome", h.welcomePage)
+	app.Get("/planos", h.planosPage)
+	app.Post("/planos", h.planosPage)
 	// Grupo /ui/*: protegido por cookie tenant (setado em /bitrix/auth apos
 	// o iframe Bitrix validar com BX24.js) OU cookie admin (super-admin).
 	// SEM o middleware, qualquer um na internet podia ler/escrever dados
@@ -73,6 +78,7 @@ func New(
 	ui.Post("/sessions/refresh-status", h.uiRefreshSessionsStatus)
 	ui.Get("/overview", h.uiOverview)
 	ui.Get("/plan", h.uiTenantPlan)
+	ui.Post("/welcome/dismiss", h.uiWelcomeDismiss)
 	// ─── Sessões Cloud API (Meta Oficial) — PRO ──────────────────────────
 	ui.Post("/sessions/cloud", h.requireProPlan, h.uiCreateCloudSession)
 	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)

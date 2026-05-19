@@ -138,14 +138,16 @@ type BitrixAccount struct {
 // TenantPlan representa o plano/billing de um tenant (domain Bitrix).
 // Default no install: plan=basic, status=trial, trial_ends_at=NOW+7d.
 type TenantPlan struct {
-	Domain       string     `db:"domain"`
-	Plan         string     `db:"plan"`           // 'basic' | 'pro'
-	Status       string     `db:"status"`         // 'trial' | 'active' | 'expired' | 'suspended'
-	TrialEndsAt  *time.Time `db:"trial_ends_at"`  // NULL = sem trial (Pro pago)
-	ActiveUntil  *time.Time `db:"active_until"`   // NULL = vitalicio
-	CreatedAt    time.Time  `db:"created_at"`
-	UpdatedAt    time.Time  `db:"updated_at"`
-	Notes        string     `db:"notes"`
+	Domain          string     `db:"domain"`
+	Plan            string     `db:"plan"`           // 'basic' | 'pro'
+	Status          string     `db:"status"`         // 'trial' | 'active' | 'expired' | 'suspended'
+	TrialEndsAt     *time.Time `db:"trial_ends_at"`  // NULL = sem trial (Pro pago)
+	ActiveUntil     *time.Time `db:"active_until"`   // NULL = vitalicio
+	CreatedAt       time.Time  `db:"created_at"`
+	UpdatedAt       time.Time  `db:"updated_at"`
+	Notes           string     `db:"notes"`
+	WelcomeShown    bool       `db:"welcome_shown"`         // TRUE = ja' viu boas-vindas
+	MasterAutoSetAt *time.Time `db:"master_auto_set_at"`    // quando backend auto-setou master
 }
 
 // IsAccessAllowed retorna true se o tenant tem acesso a usar o app.

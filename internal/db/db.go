@@ -371,6 +371,19 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_tenant_plans_status ON tenant_plans (status);
 		`},
+		{"027_tenant_plans_onboarding", `
+			-- Onboarding state pra controlar se mostramos welcome screen e
+			-- quando o master foi auto-setado.
+			--
+			-- welcome_shown: TRUE = user ja' viu a tela de boas-vindas e
+			-- clicou 'Continuar pro App'. Dashboard skip o /welcome.
+			-- master_auto_set_at: timestamp em que o backend setou o master
+			-- automaticamente no install (NULL = setado manual ou ainda nao).
+			ALTER TABLE tenant_plans
+				ADD COLUMN IF NOT EXISTS welcome_shown BOOLEAN NOT NULL DEFAULT FALSE;
+			ALTER TABLE tenant_plans
+				ADD COLUMN IF NOT EXISTS master_auto_set_at TIMESTAMPTZ;
+		`},
 	}
 
 	for _, m := range migrations {

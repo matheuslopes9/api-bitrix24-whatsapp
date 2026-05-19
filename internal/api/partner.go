@@ -194,6 +194,11 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		MemberID     string `json:"member_id"`
+		// UserID: id do user Bitrix logado que abriu o app (BX24.callMethod
+		// 'profile'). Backend tenta seta-lo como master automaticamente se
+		// o portal ainda nao tem master. Validacao + idempotencia ja' fica
+		// no SetMasterUser do repository.
+		UserID string `json:"user_id"`
 	}
 	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.AccessToken == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e access_token são obrigatórios"})
@@ -306,13 +311,82 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 
 	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
 	// existe row em tenant_plans, nao faz nada (caso de re-install).
-	if err := h.repo.EnsureTenantTrial(c.Context(), normalizePortalDomain(domain)); err != nil {
+	domainNorm := normalizePortalDomain(domain)
+	if err := h.repo.EnsureTenantTrial(c.Context(), domainNorm); err != nil {
 		h.log.Warn("partner auth: ensure trial failed",
 			zap.String("domain", domain), zap.Error(err))
 	}
 
-	h.log.Info("partner auth: token updated", zap.String("domain", domain))
-	return c.JSON(fiber.Map{"status": "ok", "domain": domain, "sessions": len(activeSessions)})
+	// Auto-set master: se user_id veio no payload (BX24.profile do iframe)
+	// e o portal ainda nao tem master, seta automaticamente. Best-effort —
+	// erro nao quebra o handshake. Operador pode trocar depois via /dashboard.
+	autoMasterResult := ""
+	if strings.TrimSpace(body.UserID) != "" {
+		autoMasterResult = h.tryAutoSetMaster(c.Context(), existing, body.UserID)
+	}
+
+	h.log.Info("partner auth: token updated",
+		zap.String("domain", domain),
+		zap.String("auto_master", autoMasterResult))
+	return c.JSON(fiber.Map{
+		"status":      "ok",
+		"domain":      domain,
+		"sessions":    len(activeSessions),
+		"auto_master": autoMasterResult, // "set" | "already_set" | "skipped" | "failed:..."
+	})
+}
+
+// tryAutoSetMaster: se o portal nao tem master ainda, busca o nome do
+// user via Bitrix REST e seta como master. Idempotente — chamado em
+// todo POST /bitrix/auth mas so atua quando legacy_admin_user_id esta
+// vazio. Devolve uma label curta pra log/telemetry, sem err.
+func (h *handlers) tryAutoSetMaster(ctx context.Context, portal *db.BitrixPortal, userID string) string {
+	if portal == nil || strings.TrimSpace(userID) == "" {
+		return "skipped:no_data"
+	}
+	if strings.TrimSpace(portal.LegacyAdminUserID) != "" {
+		return "already_set"
+	}
+	// Busca nome + flags do user pra gravar uma label decente e validar.
+	creds := h.portalToCreds(portal)
+	users, err := h.bitrixClient.GetUserByIDs(ctx, creds, []string{userID})
+	userName := "User #" + userID
+	if err == nil && len(users) > 0 {
+		u := users[0]
+		// Defesa: nao auto-promover bots/extranet/inativos.
+		if u.Bot || u.Extranet || !u.Active {
+			h.log.Warn("auto-master: usuario nao elegivel",
+				zap.String("domain", portal.Domain),
+				zap.String("user_id", userID),
+				zap.Bool("active", u.Active),
+				zap.Bool("bot", u.Bot),
+				zap.Bool("extranet", u.Extranet))
+			return "skipped:ineligible"
+		}
+		// Label: NAME LAST_NAME, fallback EMAIL, fallback id.
+		nm := strings.TrimSpace(u.Name + " " + u.LastName)
+		if nm == "" {
+			nm = strings.TrimSpace(u.Email)
+		}
+		if nm != "" {
+			userName = nm
+		}
+	}
+	// callerUserID == newMasterUserID porque ainda nao tem master
+	// (politica do SetMasterUser permite onboarding inicial assim).
+	if err := h.repo.SetMasterUser(ctx, portal.Domain, userID, userID, userName); err != nil {
+		h.log.Warn("auto-master: set falhou",
+			zap.String("domain", portal.Domain),
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return "failed:" + err.Error()
+	}
+	_ = h.repo.MarkMasterAutoSet(ctx, portal.Domain)
+	h.log.Info("auto-master: configurado",
+		zap.String("domain", portal.Domain),
+		zap.String("user_id", userID),
+		zap.String("user_name", userName))
+	return "set"
 }
 
 // ─── POST /bitrix/partner/link ───────────────────────────────────────────────
@@ -552,26 +626,43 @@ function salvarERedirecionarAdmin(auth, isInstall) {
 
   document.getElementById('msg').textContent = 'Autenticando portal ' + domain + '...';
 
-  fetch('/bitrix/auth', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({domain:domain, access_token:accessToken,
-                          refresh_token:refreshToken, expires_in:expiresIn, member_id:memberID})
-  })
-  .then(function(r){return r.json();})
-  .then(function(){
-    // Se é fluxo de instalação, chama installFinish para marcar INSTALLED:true
-    // Isso libera event.bind e demais funcionalidades do app no Bitrix.
-    if (isInstall && typeof BX24 !== 'undefined' && BX24.installFinish) {
-      document.getElementById('msg').textContent = 'Finalizando instalação...';
-      BX24.installFinish();
-    } else {
-      document.getElementById('msg').textContent = 'Abrindo painel...';
+  // Pega user_id de quem rodou o install pra auto-vincular como master.
+  // BX24.callMethod 'profile' devolve { ID, NAME, ... } do user atual.
+  // Fallback: continua sem user_id (backend so' nao auto-vincula).
+  function withUserID(cb) {
+    if (typeof BX24 === 'undefined' || !BX24.callMethod) { cb(''); return; }
+    try {
+      BX24.callMethod('profile', {}, function(res){
+        var u = (res && res.data) ? res.data() : null;
+        cb(u ? String(u.ID || '') : '');
+      });
+    } catch(e) { cb(''); }
+  }
+
+  withUserID(function(userID){
+    fetch('/bitrix/auth', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'include',
+      body: JSON.stringify({domain:domain, access_token:accessToken,
+                            refresh_token:refreshToken, expires_in:expiresIn,
+                            member_id:memberID, user_id:userID})
+    })
+    .then(function(r){return r.json();})
+    .then(function(){
+      // Se é fluxo de instalação, chama installFinish para marcar INSTALLED:true
+      // Isso libera event.bind e demais funcionalidades do app no Bitrix.
+      if (isInstall && typeof BX24 !== 'undefined' && BX24.installFinish) {
+        document.getElementById('msg').textContent = 'Finalizando instalação...';
+        BX24.installFinish();
+      } else {
+        document.getElementById('msg').textContent = 'Abrindo painel...';
+        window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+      }
+    })
+    .catch(function(){
       window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
-    }
-  })
-  .catch(function(){
-    window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+    });
   });
 }
 

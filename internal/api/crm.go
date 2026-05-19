@@ -2756,7 +2756,8 @@ BX24.init(function() {
           access_token: auth.access_token,
           refresh_token: auth.refresh_token || '',
           expires_in: auth.expires_in || 3600,
-          member_id: auth.member_id || ''
+          member_id: auth.member_id || '',
+          user_id: userID  // pra auto-vincular master se ainda nao tem
         })
       }).then(function(r){ return r.json(); }).catch(function(){ return null; });
     } else {

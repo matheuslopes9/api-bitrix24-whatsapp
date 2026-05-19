@@ -20,6 +20,18 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	if !dashboardCallerAllowed(c, h.cfg.App.Secret) {
 		return c.Status(fiber.StatusNotFound).SendString("404 not found")
 	}
+	// Welcome gate: se o tenant tem cookie valido mas nunca viu o welcome,
+	// redireciona pra /welcome em vez de servir o dashboard. Idempotente:
+	// apos o user clicar "Continuar pro App" no /welcome, welcome_shown=TRUE
+	// e dashboard serve normal.
+	if cookie := c.Cookies(tenantCookieName); cookie != "" {
+		if domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookie); ok && domain != "" {
+			plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
+			if plan != nil && !plan.WelcomeShown {
+				return c.Redirect("/welcome", fiber.StatusFound)
+			}
+		}
+	}
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")

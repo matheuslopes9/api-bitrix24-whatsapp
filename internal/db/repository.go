@@ -2014,11 +2014,12 @@ func (r *Repository) AckSMSRisk(ctx context.Context, domain string) error {
 func (r *Repository) GetTenantPlan(ctx context.Context, domain string) (*TenantPlan, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT domain, plan, status, trial_ends_at, active_until,
-		       created_at, updated_at, notes
+		       created_at, updated_at, notes,
+		       COALESCE(welcome_shown, FALSE), master_auto_set_at
 		FROM tenant_plans WHERE domain = $1`, domain)
 	var p TenantPlan
 	err := row.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-		&p.CreatedAt, &p.UpdatedAt, &p.Notes)
+		&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt)
 	if err != nil {
 		// pgx.ErrNoRows nao importado aqui — comparacao por mensagem evita
 		// import circular.
@@ -2028,6 +2029,24 @@ func (r *Repository) GetTenantPlan(ctx context.Context, domain string) (*TenantP
 		return nil, err
 	}
 	return &p, nil
+}
+
+// SetWelcomeShown marca que o tenant ja' viu a tela de boas-vindas e
+// clicou "Continuar pro App". Idempotente — chamado pelo /ui/welcome/dismiss.
+func (r *Repository) SetWelcomeShown(ctx context.Context, domain string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE tenant_plans SET welcome_shown = TRUE, updated_at = NOW() WHERE domain = $1`,
+		domain)
+	return err
+}
+
+// MarkMasterAutoSet marca o timestamp em que o backend auto-setou o master.
+// Diagnostico: ajuda a distinguir master setado manualmente do automatico.
+func (r *Repository) MarkMasterAutoSet(ctx context.Context, domain string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE tenant_plans SET master_auto_set_at = NOW(), updated_at = NOW() WHERE domain = $1`,
+		domain)
+	return err
 }
 
 // EnsureTenantTrial cria um plano trial de 7 dias se o dominio nao tem
@@ -2071,7 +2090,8 @@ func (r *Repository) SetTenantPlan(ctx context.Context, domain, plan, status str
 func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT domain, plan, status, trial_ends_at, active_until,
-		       created_at, updated_at, notes
+		       created_at, updated_at, notes,
+		       COALESCE(welcome_shown, FALSE), master_auto_set_at
 		FROM tenant_plans
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -2082,7 +2102,7 @@ func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error)
 	for rows.Next() {
 		var p TenantPlan
 		if err := rows.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-			&p.CreatedAt, &p.UpdatedAt, &p.Notes); err != nil {
+			&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
