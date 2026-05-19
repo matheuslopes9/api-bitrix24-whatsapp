@@ -24,9 +24,20 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	// redireciona pra /welcome em vez de servir o dashboard. Idempotente:
 	// apos o user clicar "Continuar pro App" no /welcome, welcome_shown=TRUE
 	// e dashboard serve normal.
+	//
+	// SAFETY: se plan e' nil (race: /bitrix/auth falhou em chamar
+	// EnsureTenantTrial), cria trial agora e ainda assim redireciona pro
+	// welcome. Sem isso, race silencia o welcome e user pula direto pro
+	// dashboard sem nunca ver tela de boas-vindas.
 	if cookie := c.Cookies(tenantCookieName); cookie != "" {
 		if domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookie); ok && domain != "" {
-			plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
+			plan, err := h.repo.GetTenantPlan(c.Context(), domain)
+			if err == nil && plan == nil {
+				// Row faltando — cria trial retroativamente.
+				if e := h.repo.EnsureTenantTrial(c.Context(), domain); e == nil {
+					plan, _ = h.repo.GetTenantPlan(c.Context(), domain)
+				}
+			}
 			if plan != nil && !plan.WelcomeShown {
 				return c.Redirect("/welcome", fiber.StatusFound)
 			}

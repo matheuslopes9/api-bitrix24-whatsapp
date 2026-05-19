@@ -2813,14 +2813,39 @@ function showDenied(msg) {
 </body>
 </html>`
 
+// placementRegisterLocks: 1 mutex por domain pra serializar chamadas
+// concorrentes a RegisterPlacementsForPortal. Sem isso, duas goroutines
+// (partner.go install + handlers.go callback) podem listar placements
+// simultaneamente, ambas nao verem nada, e ambas bindar — gerando
+// duplicata no menu lateral.
+var placementRegisterLocks sync.Map // map[domain]*sync.Mutex
+
+func placementLockFor(domain string) *sync.Mutex {
+	if m, ok := placementRegisterLocks.Load(domain); ok {
+		return m.(*sync.Mutex)
+	}
+	m, _ := placementRegisterLocks.LoadOrStore(domain, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
 // RegisterPlacementsForPortal registra placement.bind para os 3 tipos de
 // entidade CRM e para o menu lateral esquerdo. IDEMPOTENTE: lista placements
 // ja' existentes e faz unbind dos duplicados (mesma PLACEMENT + HANDLER)
 // antes de bindar de novo. Sem isso, multipla chamada (install + ONAPPINSTALL
 // callback) cria N duplicatas de "UC Talk" no menu lateral.
 //
+// SAFE PARA RACES: usa mutex por domain pra serializar chamadas
+// concorrentes. Cenario: install + callback do Bitrix disparam em paralelo,
+// ambos chamavam RegisterPlacements ao mesmo tempo, ambos viam estado vazio
+// e bindavam, criando 2x "UC Talk" no menu. Mutex resolve.
+//
 // Chamado após instalar ou ativar o connector.
 func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain string, creds bitrix.TenantCreds) {
+	// Serializa chamadas concorrentes pro mesmo domain.
+	lock := placementLockFor(domain)
+	lock.Lock()
+	defer lock.Unlock()
+
 	base := h.cfg.App.BaseURL()
 	tabURL := base + "/bitrix/crm/tab"
 	appURL := base + "/bitrix-app"
