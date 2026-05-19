@@ -263,6 +263,10 @@ func New(
 	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
 	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)
 	admin.Get("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup) // GET alias pra teste rapido
+	// Force unbind: ignora placement.list, tenta unbind direto. Pra placements
+	// verdadeiramente orfaos onde list retorna APPLICATION_NOT_FOUND.
+	admin.Post("/api/tenant/placements/force-unbind", h.adminTenantPlacementsForceUnbind)
+	admin.Get("/api/tenant/placements/force-unbind", h.adminTenantPlacementsForceUnbind)
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

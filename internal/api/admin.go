@@ -1128,3 +1128,68 @@ func (h *handlers) adminTenantPlacementsCleanup(c *fiber.Ctx) error {
 		"hint":            "Reabra o app no Bitrix em 5s. Se ainda 'Application was not found', desinstale e reinstale pelo Marketplace.",
 	})
 }
+
+// GET|POST /admin/api/tenant/placements/force-unbind?domain=...
+// Endpoint NUCLEAR pra placements verdadeiramente orfaos: tenta unbind
+// direto pra cada placement conhecido, sem listar antes. Tenta multiplas
+// variacoes de HANDLER (atual + dominios antigos comuns) pra cobrir o
+// caso onde o placement orfao foi criado quando o app usava outra URL.
+//
+// Como sempre passamos so PLACEMENT (sem HANDLER especifico), Bitrix
+// remove TODOS os placements daquele tipo registrados pelo nosso app
+// — cobrindo o caso onde o portal tem 2+ apps zumbis do mesmo client_id.
+//
+// Depois rechama RegisterPlacementsForPortal pra deixar 1 limpo.
+func (h *handlers) adminTenantPlacementsForceUnbind(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizeDomainKey(domain))
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+	creds := h.portalToCreds(portal)
+
+	// Lista de placements que o nosso app potencialmente registrou em algum
+	// momento. Sem HANDLER -> Bitrix unbind todos do nosso app naquele slot.
+	allPlacements := []string{
+		"CRM_CONTACT_DETAIL_TAB",
+		"CRM_LEAD_DETAIL_TAB",
+		"CRM_DEAL_DETAIL_TAB",
+		"LEFT_MENU",
+		"DEFAULT", // catch-all caso o cliente tenha placements muito antigos
+	}
+
+	results := []map[string]interface{}{}
+	for _, p := range allPlacements {
+		err := h.bitrixClient.UnbindPlacement(ctx, creds, p, "") // sem HANDLER
+		r := map[string]interface{}{"placement": p}
+		if err != nil {
+			// Erros tipo "placement not found" sao normais aqui — significam que
+			// nao havia nada pra apagar nesse slot. Reportamos mas nao bloqueia.
+			r["status"] = "noop_or_failed"
+			r["error"] = err.Error()
+		} else {
+			r["status"] = "unbound"
+		}
+		results = append(results, r)
+	}
+
+	// Tenta re-registrar limpo. Se isso falha tambem com APPLICATION_NOT_FOUND,
+	// o portal ta' realmente quebrado e cliente precisa reinstalar.
+	h.RegisterPlacementsForPortal(ctx, portal.Domain, creds)
+
+	h.log.Info("admin: placements FORCE unbound",
+		zap.String("domain", portal.Domain),
+		zap.Int("attempts", len(results)))
+
+	return c.JSON(fiber.Map{
+		"ok":           true,
+		"domain":       portal.Domain,
+		"attempts":     results,
+		"reregistered": []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "LEFT_MENU"},
+		"hint":         "Recarregue o Bitrix em 5-10s (Ctrl+F5). Se duplicata persistir, o placement orfao esta vinculado a OUTRO client_id (app deletado em vendors.bitrix24.com) e so o suporte Bitrix consegue apagar.",
+	})
+}
