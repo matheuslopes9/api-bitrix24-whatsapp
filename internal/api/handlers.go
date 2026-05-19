@@ -159,6 +159,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 	refreshToken := c.FormValue("auth[refresh_token]")
 	domain := c.FormValue("auth[domain]")
 	expiresIn := c.FormValue("auth[expires_in]")
+	appTokenCallback := c.FormValue("auth[application_token]")
 
 	// ── Detecta fluxo Partner App (Marketplace) ──────────────────────────────
 	// Envia: AUTH_ID, REFRESH_ID, AUTH_EXPIRES, member_id — sem domain.
@@ -199,6 +200,16 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		if err := h.repo.UpsertBitrixPortal(c.Context(), portal); err != nil {
 			h.log.Warn("partner install via callback: upsert portal failed", zap.Error(err))
 			// Não retorna erro — não pode bloquear o install do Bitrix
+		}
+		// Persiste application_token se veio (chega em auth[application_token]
+		// no ONAPPINSTALL real do server-to-server, NAO no JS BX24.getAuth).
+		// Sem isso, validateBitrixAppToken nunca confirma e endpoints
+		// publicos /bitrix/bp/send e /bitrix/sms/send rejeitam.
+		if appTokenCallback != "" && portal.Domain != "" {
+			if err := h.repo.SetPortalApplicationToken(c.Context(), portal.Domain, appTokenCallback); err != nil {
+				h.log.Warn("partner install: app_token save failed",
+					zap.String("domain", portal.Domain), zap.Error(err))
+			}
 		}
 		// Redireciona para /bitrix-connect — o Bitrix exibe essa página ao cliente após o install
 		return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect", fiber.StatusFound)

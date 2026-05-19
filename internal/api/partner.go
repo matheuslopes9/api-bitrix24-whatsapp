@@ -652,9 +652,18 @@ function salvarERedirecionarAdmin(auth, isInstall) {
     .then(function(){
       // Se é fluxo de instalação, chama installFinish para marcar INSTALLED:true
       // Isso libera event.bind e demais funcionalidades do app no Bitrix.
+      // BUG ANTIGO: chamava installFinish e nunca redirecionava — iframe ficava
+      // travado em "Finalizando instalacao..." e user fechava antes do Bitrix
+      // completar o install, deixando o app em limbo (APPLICATION_NOT_FOUND).
+      // FIX: apos installFinish, aguarda 1.2s pro Bitrix processar e ai
+      // redireciona pro /welcome (fluxo onboarding completo).
       if (isInstall && typeof BX24 !== 'undefined' && BX24.installFinish) {
         document.getElementById('msg').textContent = 'Finalizando instalação...';
-        BX24.installFinish();
+        try { BX24.installFinish(); } catch(e) {}
+        setTimeout(function(){
+          document.getElementById('msg').textContent = 'Abrindo aplicativo...';
+          window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
+        }, 1200);
       } else {
         document.getElementById('msg').textContent = 'Abrindo painel...';
         window.location.href = '/dashboard?portal=' + encodeURIComponent(domain);
