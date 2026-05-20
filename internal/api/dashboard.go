@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
 )
 
 // GET /dashboard
@@ -29,8 +30,10 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	// EnsureTenantTrial), cria trial agora e ainda assim redireciona pro
 	// welcome. Sem isso, race silencia o welcome e user pula direto pro
 	// dashboard sem nunca ver tela de boas-vindas.
-	if cookie := c.Cookies(tenantCookieName); cookie != "" {
-		if domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookie); ok && domain != "" {
+	cookieRaw := c.Cookies(tenantCookieName)
+	if cookieRaw != "" {
+		domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookieRaw)
+		if ok && domain != "" {
 			plan, err := h.repo.GetTenantPlan(c.Context(), domain)
 			if err == nil && plan == nil {
 				// Row faltando — cria trial retroativamente.
@@ -38,10 +41,25 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 					plan, _ = h.repo.GetTenantPlan(c.Context(), domain)
 				}
 			}
+			welcomeShown := false
+			if plan != nil {
+				welcomeShown = plan.WelcomeShown
+			}
+			h.log.Info("dashboard: welcome gate check",
+				zap.String("domain", domain),
+				zap.Bool("plan_found", plan != nil),
+				zap.Bool("welcome_shown", welcomeShown))
 			if plan != nil && !plan.WelcomeShown {
 				return c.Redirect("/welcome", fiber.StatusFound)
 			}
+		} else {
+			h.log.Warn("dashboard: tenant cookie present but invalid",
+				zap.String("cookie_prefix", safePrefix(cookieRaw, 16)))
 		}
+	} else {
+		// Sem cookie tenant — usuario veio sem ter passado pelo /bitrix/auth.
+		// Pode ser super-admin via /admin/login, ou acesso direto sem auth.
+		h.log.Info("dashboard: no tenant cookie — skipping welcome gate")
 	}
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")

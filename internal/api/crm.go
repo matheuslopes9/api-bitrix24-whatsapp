@@ -2848,7 +2848,26 @@ func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain strin
 
 	base := h.cfg.App.BaseURL()
 	tabURL := base + "/bitrix/crm/tab"
-	appURL := base + "/bitrix-app"
+	// NOTA IMPORTANTE — NAO REGISTRAR LEFT_MENU via placement.bind.
+	//
+	// O Bitrix24 ja' renderiza AUTOMATICAMENTE um item no menu lateral
+	// baseado na "Main Application URL" configurada em vendors.bitrix24.com.
+	// Esse item nao e' visivel via placement.list nem removivel via
+	// placement.unbind — e' gerenciado por outro subsistema do Bitrix.
+	//
+	// Se chamarmos placement.bind LEFT_MENU em paralelo, o Bitrix CRIA UM
+	// SEGUNDO ITEM no menu lateral, resultando em 2 "UC Talk" duplicados
+	// que NAO ha como limpar via REST (placement.list nao mostra o do
+	// Bitrix automatico, placement.unbind nao remove ele).
+	//
+	// Fonte oficial: apidocs.bitrix24.com/api-reference/widgets/left-menu.html
+	// > "unlike the integration of the slider with the main URL of the
+	// > application in the left menu, all other widgets are integrated
+	// > differently — using the placement.bind method"
+	//
+	// Conclusao: o LEFT_MENU e' a UNICA excecao — vem do app card, NAO
+	// de placement.bind. Removemos esse bind. CRM tabs (Contact/Lead/Deal)
+	// continuam via placement.bind normal.
 
 	type pl struct {
 		Name    string
@@ -2858,7 +2877,6 @@ func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain strin
 		{"CRM_CONTACT_DETAIL_TAB", tabURL},
 		{"CRM_LEAD_DETAIL_TAB", tabURL},
 		{"CRM_DEAL_DETAIL_TAB", tabURL},
-		{"LEFT_MENU", appURL},
 	}
 
 	// Lista placements ja registrados. Se a chamada falhar (token expirado,
