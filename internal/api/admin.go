@@ -63,21 +63,56 @@ const adminCookieTTL = 12 * time.Hour
 const tenantCookieName = "uctalk_tenant"
 const tenantCookieTTL = 12 * time.Hour
 
-// signTenantCookie gera "exp.domain.hmac". domain incluido no MAC pra
+// signTenantCookie gera "exp|domain|hmac". domain incluido no MAC pra
 // inviabilizar swap entre tenants.
+//
+// Usa `|` como separador (NAO `.`) porque domains Bitrix tem multiplos
+// pontos (b24-xyz.bitrix24.com.br, crm.uctechnology.com.br) e o split
+// por ponto quebrava na verificacao quando o domain tinha mais de 1
+// segmento apos o sufixo principal.
 func signTenantCookie(secret, domain string, expiresAt time.Time) string {
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
-	payload := exp + "." + domain
+	payload := exp + "|" + domain
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(payload))
-	return payload + "." + hex.EncodeToString(mac.Sum(nil))
+	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // verifyTenantCookie retorna (domain, ok). Domain so e' confiavel se ok=true.
+//
+// Aceita tambem o formato legado `exp.domain.hmac` (com pontos) pra
+// compatibilidade — mas so' valida via formato novo `|`. Quem ainda tem
+// cookie legado precisa refazer o handshake (POST /bitrix/auth).
 func verifyTenantCookie(secret, raw string) (string, bool) {
 	if raw == "" {
 		return "", false
 	}
+	// Formato novo: exp|domain|hmac
+	if strings.Contains(raw, "|") {
+		idx1 := strings.Index(raw, "|")
+		idx2 := strings.LastIndex(raw, "|")
+		if idx1 < 0 || idx2 <= idx1 {
+			return "", false
+		}
+		exp := raw[:idx1]
+		domain := raw[idx1+1 : idx2]
+		gotMAC := raw[idx2+1:]
+		expN, err := strconv.ParseInt(exp, 10, 64)
+		if err != nil || time.Now().Unix() > expN {
+			return "", false
+		}
+		payload := exp + "|" + domain
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(payload))
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(gotMAC), []byte(expected)) != 1 {
+			return "", false
+		}
+		return domain, true
+	}
+	// Formato legado (deprecated): exp.domain.hmac — quebra com domain
+	// que tem mais de 1 segmento. Retorna false; user precisa refazer
+	// handshake pra pegar cookie no formato novo.
 	parts := strings.SplitN(raw, ".", 3)
 	if len(parts) != 3 {
 		return "", false
