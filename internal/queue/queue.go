@@ -33,6 +33,14 @@ type InboundJob struct {
 	MediaMime   string    `json:"media_mime,omitempty"`
 	MediaData   []byte    `json:"media_data,omitempty"`  // bytes da mídia já baixada
 	MediaName   string    `json:"media_name,omitempty"` // nome do arquivo para exibição
+	// Grupo: se a msg veio de grupo, GroupJID e' o JID do grupo (XXX@g.us)
+	// e GroupName e' o nome do grupo. Quando preenchido, o chat e' aberto
+	// no Bitrix como 1 chat unico do grupo (em vez de 1 chat por participante),
+	// e Text recebe prefixo "*Nome do remetente:* texto" pra atendente
+	// distinguir quem mandou.
+	IsGroup     bool      `json:"is_group,omitempty"`
+	GroupJID    string    `json:"group_jid,omitempty"`
+	GroupName   string    `json:"group_name,omitempty"`
 	RetryCount  int       `json:"retry_count"`
 	CreatedAt   time.Time `json:"created_at"`
 }

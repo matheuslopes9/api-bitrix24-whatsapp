@@ -547,6 +547,23 @@ func buildMessageHandler(
 			jobFromPhone = evt.Info.SenderAlt.User
 		}
 
+		// Grupos WhatsApp: o chat no Open Channel deve ser unico por GRUPO,
+		// nao por participante. Detecta IsGroup e captura JID + nome do grupo
+		// pro processor.go usar como chave de chat.
+		isGroup := evt.Info.IsGroup
+		var groupJID, groupName string
+		if isGroup {
+			groupJID = stripDeviceSuffix(evt.Info.Chat.String())
+			// Tenta resolver nome do grupo via group.metadata (best-effort).
+			// Cacheia no banco pra nao chamar toda vez (TODO futuro).
+			if gi, err := waManager.GroupInfo(ctx, sessionJID, evt.Info.Chat); err == nil && gi != nil {
+				groupName = gi.Name
+			}
+			if groupName == "" {
+				groupName = "Grupo " + groupJID
+			}
+		}
+
 		job := &queue.InboundJob{
 			SessionID:   sessionID,
 			SessionJID:  sessionJID,
@@ -559,6 +576,9 @@ func buildMessageHandler(
 			MediaData:   mediaData,
 			MediaName:   mediaName,
 			MediaMime:   mediaMime,
+			IsGroup:     isGroup,
+			GroupJID:    groupJID,
+			GroupName:   groupName,
 		}
 
 		// Mídias grandes (> 30MB) estouram o disk.storage.uploadfile (que faz

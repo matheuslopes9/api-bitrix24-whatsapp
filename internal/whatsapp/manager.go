@@ -439,6 +439,21 @@ func (m *Manager) resolveSession(sessionJID string) (*Session, bool) {
 	return nil, false
 }
 
+// GroupInfo busca metadados do grupo (nome, participantes, etc) pelo JID.
+// Usado pra resolver "nome do grupo" quando mensagem chega de grupo
+// WhatsApp e queremos mostrar como chat no Bitrix Open Channel.
+//
+// Best-effort: se nao conseguir resolver, retorna (nil, err) e o caller
+// usa fallback ("Grupo <jid>"). Nao cacheia — whatsmeow ja cacheia
+// internamente em sessao.
+func (m *Manager) GroupInfo(ctx context.Context, sessionJID string, groupJID types.JID) (*types.GroupInfo, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok || sess.Client == nil {
+		return nil, fmt.Errorf("session not found: %s", sessionJID)
+	}
+	return sess.Client.GetGroupInfo(ctx, groupJID)
+}
+
 // SendTyping envia o indicador de "digitando..." para o contato e para automaticamente
 // quando a mensagem for enviada. Deve ser chamado logo antes de SendMessage/SendDocument/SendAudio.
 func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, duration time.Duration) {
