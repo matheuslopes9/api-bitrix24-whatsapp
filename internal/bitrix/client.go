@@ -1064,31 +1064,52 @@ func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement
 }
 
 // ListPlacements retorna a lista de placements registrados no portal pelo
-// nosso app. Cada item tem { id, placement, handler, title, ... }.
+// nosso app. Cada item normalizado pra { "placement": "...", "handler": "..." }.
 //
-// Usado pra diagnosticar placements orfaos (app reinstalado, IDs novos
-// no marketplace mas placement antigo ainda vinculado).
+// Bitrix24 tem 2 formatos historicos pra esse endpoint:
+//   1. Array de objetos: [{ placement, handler, title, ... }] (antigo)
+//   2. Array de strings: ["PLACEMENT_NAME_1", "PLACEMENT_NAME_2", ...] (novo)
 //
-// O método call() ja' faz unwrap do "result" automaticamente e devolve
-// raw JSON. O resultado de placement.list e' um array JSON.
+// Quando vem como array de strings, o Bitrix retorna so' OS NOMES dos
+// placements DISPONIVEIS no portal (nao os ja' registrados pelo nosso
+// app). Nesse caso, devolvemos array vazio — sem info de handler, o
+// dedup nao tem como funcionar; melhor pular e deixar o Bitrix lidar
+// com duplicatas (que so' acontecem em LEFT_MENU, que ja' removemos).
 func (c *Client) ListPlacements(ctx context.Context, creds TenantCreds) ([]map[string]interface{}, error) {
 	raw, err := c.call(ctx, creds, "placement.list", map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
-	// placement.list devolve array de objetos direto em "result".
-	var arr []map[string]interface{}
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		// Fallback: pode vir embrulhado { result: [...] }
-		var wrap struct {
-			Result []map[string]interface{} `json:"result"`
-		}
-		if err2 := json.Unmarshal(raw, &wrap); err2 != nil {
-			return nil, fmt.Errorf("parse placement.list: %w (raw: %s)", err, string(raw))
-		}
-		return wrap.Result, nil
+
+	// Tenta formato 1: array de objetos.
+	var arrObjects []map[string]interface{}
+	if err := json.Unmarshal(raw, &arrObjects); err == nil {
+		return arrObjects, nil
 	}
-	return arr, nil
+
+	// Tenta formato 2: array de strings — versao nova do Bitrix retorna
+	// so' os nomes (catalogo de placements disponiveis). Nao da' pra
+	// fazer dedup com isso, mas tambem nao e' erro. Devolve vazio.
+	var arrStrings []string
+	if err := json.Unmarshal(raw, &arrStrings); err == nil {
+		return []map[string]interface{}{}, nil
+	}
+
+	// Tenta formato 3: { "result": [...] }.
+	var wrapObjects struct {
+		Result []map[string]interface{} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &wrapObjects); err == nil && wrapObjects.Result != nil {
+		return wrapObjects.Result, nil
+	}
+	var wrapStrings struct {
+		Result []string `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &wrapStrings); err == nil && wrapStrings.Result != nil {
+		return []map[string]interface{}{}, nil
+	}
+
+	return nil, fmt.Errorf("parse placement.list: formato desconhecido (raw: %s)", string(raw))
 }
 
 // UnbindPlacement remove o registro de um placement pelo identificador.

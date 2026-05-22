@@ -17,6 +17,33 @@ import (
 	"go.uber.org/zap"
 )
 
+// setPartitionedCookie seta cookie via header Set-Cookie cru pra incluir
+// atributo `Partitioned` — necessario pra cookies em iframe cross-site
+// funcionarem em Chrome 120+ e Safari modernos (CHIPS — Cookies Having
+// Independent Partitioned State).
+//
+// Sem `Partitioned`, browsers modernos bloqueiam o cookie como
+// "third-party tracking", mesmo com SameSite=None; Secure. Resultado:
+// cookie e' setado pelo backend mas o browser NAO envia em requests
+// subsequentes do iframe.
+//
+// Fiber 2.x nao suporta o atributo nativamente, entao montamos o header
+// na mao. fasthttp Append pra nao sobrescrever outros cookies.
+func setPartitionedCookie(c *fiber.Ctx, name, value string, expires time.Time, secure bool) {
+	parts := []string{
+		name + "=" + value,
+		"Path=/",
+		"Expires=" + expires.UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"),
+		"HttpOnly",
+		"SameSite=None",
+	}
+	if secure {
+		parts = append(parts, "Secure")
+	}
+	parts = append(parts, "Partitioned")
+	c.Response().Header.Add("Set-Cookie", strings.Join(parts, "; "))
+}
+
 // safePrefix devolve os primeiros n chars de s, ou s inteiro se menor.
 // Usado pra logar tokens parcialmente (debug) sem vazar o valor completo.
 func safePrefix(s string, n int) string {

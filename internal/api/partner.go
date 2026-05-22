@@ -316,15 +316,13 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	// subsequentes do iframe. Sem isso, dependiamos de ?domain= query —
 	// que e' atacavel por qualquer um na internet.
 	tenantExpires := time.Now().Add(tenantCookieTTL)
-	c.Cookie(&fiber.Cookie{
-		Name:     tenantCookieName,
-		Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domain), tenantExpires),
-		Path:     "/",
-		Expires:  tenantExpires,
-		HTTPOnly: true,
-		Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
-		SameSite: "None", // iframe cross-site precisa
-	})
+	// Usa setPartitionedCookie pra incluir atributo `Partitioned` (CHIPS).
+	// Sem isso, Chrome 120+ e Safari bloqueiam o cookie como third-party
+	// e nada de /ui/* funciona dentro do iframe Bitrix.
+	setPartitionedCookie(c, tenantCookieName,
+		signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domain), tenantExpires),
+		tenantExpires,
+		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
 
 	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
 	// existe row em tenant_plans, nao faz nada (caso de re-install).

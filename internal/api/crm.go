@@ -2696,15 +2696,11 @@ func (h *handlers) maybeSetTenantCookieFromBitrixPost(c *fiber.Ctx) {
 		return
 	}
 	tenantExpires := time.Now().Add(tenantCookieTTL)
-	c.Cookie(&fiber.Cookie{
-		Name:     tenantCookieName,
-		Value:    signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
-		Path:     "/",
-		Expires:  tenantExpires,
-		HTTPOnly: true,
-		Secure:   strings.HasPrefix(h.cfg.App.PublicURL, "https://"),
-		SameSite: "None",
-	})
+	// CHIPS partitioned cookie pra funcionar em iframe cross-site (Bitrix).
+	setPartitionedCookie(c, tenantCookieName,
+		signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
+		tenantExpires,
+		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
 }
 
 // HTML simples que carrega BX24, valida o user_id contra check-access e
