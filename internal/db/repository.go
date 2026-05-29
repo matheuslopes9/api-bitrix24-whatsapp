@@ -2086,6 +2086,31 @@ func (r *Repository) SetTenantPlan(ctx context.Context, domain, plan, status str
 	return err
 }
 
+// SetTenantTrialEndsAt extende ou redefine o trial do tenant pra terminar
+// em `newEnd`. Forca status='trial' e plan='basic' (idempotente). Limpa
+// active_until (trial nao tem expiracao de Pro). Cria row se ainda nao
+// existe — caller passa newEnd ja' calculado (NOW + N dias).
+//
+// Usado pelos atalhos do /admin (extend-trial, reactivate). Trail de
+// auditoria em logs com timestamp da chamada.
+func (r *Repository) SetTenantTrialEndsAt(ctx context.Context, domain string, newEnd time.Time, notes string) error {
+	if domain == "" {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at, active_until, notes)
+		VALUES ($1, 'basic', 'trial', $2, NULL, $3)
+		ON CONFLICT (domain) DO UPDATE SET
+			plan          = 'basic',
+			status        = 'trial',
+			trial_ends_at = EXCLUDED.trial_ends_at,
+			active_until  = NULL,
+			notes         = EXCLUDED.notes,
+			updated_at    = NOW()`,
+		domain, newEnd, notes)
+	return err
+}
+
 // ListTenantPlans pra UI super-admin (/admin/api/tenants).
 func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error) {
 	rows, err := r.pool.Query(ctx, `

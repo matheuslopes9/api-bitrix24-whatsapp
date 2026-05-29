@@ -152,3 +152,175 @@ func (h *handlers) uiTenantPlan(c *fiber.Ctx) error {
 	}
 	return c.JSON(summary)
 }
+
+// ─── Atalhos pra UI admin ──────────────────────────────────────────────────
+//
+// Cada endpoint chama SetTenantPlan com os parametros certos, evitando que
+// o front tenha que reconstruir o body inteiro. Idempotentes — chamar
+// 2x produz o mesmo estado final.
+
+// POST /admin/api/tenant/plan/extend-trial
+// Body: {"domain":"x.bitrix24.com","days":7}
+// Adiciona N dias ao trial atual (ou recria trial se ja' expirou).
+// status='trial', plan='basic'. Limpa active_until.
+func (h *handlers) adminTenantExtendTrial(c *fiber.Ctx) error {
+	var req struct {
+		Domain string `json:"domain"`
+		Days   int    `json:"days"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	domain := normalizePortalDomain(strings.TrimSpace(req.Domain))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	if req.Days <= 0 || req.Days > 365 {
+		return c.Status(400).JSON(fiber.Map{"error": "days deve ser 1..365"})
+	}
+	// Pega plano atual pra calcular novo trial_ends_at.
+	cur, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	base := time.Now()
+	if cur != nil && cur.TrialEndsAt != nil && cur.TrialEndsAt.After(base) {
+		// Trial ainda valido — soma os dias ao fim atual.
+		base = *cur.TrialEndsAt
+	}
+	newEnd := base.Add(time.Duration(req.Days) * 24 * time.Hour)
+	notes := ""
+	if cur != nil {
+		notes = cur.Notes
+	}
+	// SetTenantPlan nao mexe em trial_ends_at — usamos query direta.
+	if err := h.repo.SetTenantTrialEndsAt(c.Context(), domain, newEnd, notes); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: trial extended",
+		zap.String("domain", domain),
+		zap.Int("days_added", req.Days),
+		zap.Time("new_end", newEnd))
+	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	return c.JSON(fiber.Map{
+		"ok":            true,
+		"domain":        domain,
+		"days_added":    req.Days,
+		"trial_ends_at": newEnd.Format(time.RFC3339),
+		"plan":          planSummary(plan),
+	})
+}
+
+// POST /admin/api/tenant/plan/activate-pro
+// Body: {"domain":"x.bitrix24.com","active_until":"2027-12-31T23:59:59Z","notes":"..."}
+// Se active_until vazio, ativa Pro vitalicio (NULL = sem expiracao).
+func (h *handlers) adminTenantActivatePro(c *fiber.Ctx) error {
+	var req struct {
+		Domain      string `json:"domain"`
+		ActiveUntil string `json:"active_until"`
+		Notes       string `json:"notes"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	domain := normalizePortalDomain(strings.TrimSpace(req.Domain))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	var activeUntil *time.Time
+	if s := strings.TrimSpace(req.ActiveUntil); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			// Tenta formato simples YYYY-MM-DD (data-picker do navegador)
+			t, err = time.Parse("2006-01-02", s)
+			if err != nil {
+				return c.Status(400).JSON(fiber.Map{"error": "active_until invalido (use YYYY-MM-DD ou ISO 8601)"})
+			}
+			// Vai ate o fim do dia escolhido.
+			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
+		}
+		activeUntil = &t
+	}
+	if err := h.repo.SetTenantPlan(c.Context(), domain, "pro", "active",
+		activeUntil, strings.TrimSpace(req.Notes)); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	label := "vitalicio"
+	if activeUntil != nil {
+		label = activeUntil.Format("2006-01-02")
+	}
+	h.log.Info("admin: Pro ativado",
+		zap.String("domain", domain),
+		zap.String("until", label))
+	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	return c.JSON(fiber.Map{
+		"ok":     true,
+		"domain": domain,
+		"plan":   planSummary(plan),
+	})
+}
+
+// POST /admin/api/tenant/plan/suspend
+// Body: {"domain":"x.bitrix24.com","notes":"motivo"}
+// Suspende a conta — cliente ve "plano suspenso" e tudo /ui/* retorna 402.
+func (h *handlers) adminTenantSuspend(c *fiber.Ctx) error {
+	var req struct {
+		Domain string `json:"domain"`
+		Notes  string `json:"notes"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	domain := normalizePortalDomain(strings.TrimSpace(req.Domain))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	// Preserva plan atual (basic|pro) mas muda status pra suspended.
+	cur, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	plan := "basic"
+	if cur != nil && cur.Plan != "" {
+		plan = cur.Plan
+	}
+	if err := h.repo.SetTenantPlan(c.Context(), domain, plan, "suspended",
+		nil, strings.TrimSpace(req.Notes)); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.log.Info("admin: tenant suspenso", zap.String("domain", domain))
+	plan2, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	return c.JSON(fiber.Map{"ok": true, "domain": domain, "plan": planSummary(plan2)})
+}
+
+// POST /admin/api/tenant/plan/reactivate
+// Body: {"domain":"x.bitrix24.com"}
+// Tira de suspended. Volta pro plan atual com status='active' (Pro) ou
+// recria trial 7d (Basico/sem plano).
+func (h *handlers) adminTenantReactivate(c *fiber.Ctx) error {
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	domain := normalizePortalDomain(strings.TrimSpace(req.Domain))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	cur, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	if cur != nil && cur.Plan == "pro" {
+		// Reativa Pro mantendo active_until original.
+		if err := h.repo.SetTenantPlan(c.Context(), domain, "pro", "active",
+			cur.ActiveUntil, cur.Notes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+	} else {
+		// Sem plano ou basic — recria trial 7d.
+		newEnd := time.Now().Add(7 * 24 * time.Hour)
+		notes := ""
+		if cur != nil {
+			notes = cur.Notes
+		}
+		if err := h.repo.SetTenantTrialEndsAt(c.Context(), domain, newEnd, notes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
+	h.log.Info("admin: tenant reativado", zap.String("domain", domain))
+	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
+	return c.JSON(fiber.Map{"ok": true, "domain": domain, "plan": planSummary(plan)})
+}

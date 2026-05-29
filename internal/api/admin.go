@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -302,6 +303,12 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		h.log.Error("admin: AllDomainTokenExpiry failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": "token expiry: " + err.Error()})
 	}
+	// Planos por dominio: 1 query agregada pra evitar N+1 no loop.
+	allPlans, _ := h.repo.ListTenantPlans(ctx)
+	plansByDomain := map[string]*db.TenantPlan{}
+	for _, pl := range allPlans {
+		plansByDomain[normalizeDomainKey(pl.Domain)] = pl
+	}
 
 	type tenantCard struct {
 		ID           string    `json:"id"`
@@ -318,6 +325,15 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		Msgs1h       int       `json:"msgs_1h"`
 		MsgsInbound  int       `json:"msgs_inbound_24h"`
 		MsgsOutbound int       `json:"msgs_outbound_24h"`
+		// Plano (basic|pro) / status (trial|active|expired|suspended)
+		Plan              string     `json:"plan"`
+		PlanStatus        string     `json:"plan_status"`
+		TrialEndsAt       *time.Time `json:"trial_ends_at,omitempty"`
+		ActiveUntil       *time.Time `json:"active_until,omitempty"`
+		TrialDaysRemain   int        `json:"trial_days_remaining"`
+		PlanIsAccessOK    bool       `json:"plan_access_allowed"`
+		PlanIsPro         bool       `json:"plan_has_pro_features"`
+		PlanNotes         string     `json:"plan_notes,omitempty"`
 	}
 
 	cards := make([]tenantCard, 0, len(portals))
@@ -375,6 +391,28 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		}
 		if m, ok := msgs1hByDomain[key]; ok {
 			card.Msgs1h = m.Inbound + m.Outbound
+		}
+		// Plano do tenant — pra UI mostrar status e botoes de acao.
+		if pl, ok := plansByDomain[key]; ok {
+			card.Plan = pl.Plan
+			card.PlanStatus = pl.Status
+			card.TrialEndsAt = pl.TrialEndsAt
+			card.ActiveUntil = pl.ActiveUntil
+			card.PlanIsAccessOK = pl.IsAccessAllowed()
+			card.PlanIsPro = pl.HasProFeatures()
+			card.PlanNotes = pl.Notes
+			if pl.TrialEndsAt != nil {
+				days := int(pl.TrialEndsAt.Sub(now).Hours() / 24)
+				if days < 0 {
+					days = 0
+				}
+				card.TrialDaysRemain = days
+			}
+		} else {
+			// Tenant sem plano cadastrado (legacy ou nao instalou via /bitrix/auth).
+			// Mostra como "no_plan" pra UI poder oferecer "Criar trial agora".
+			card.Plan = "none"
+			card.PlanStatus = "no_plan"
 		}
 		cards = append(cards, card)
 	}

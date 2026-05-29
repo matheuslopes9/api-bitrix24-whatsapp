@@ -116,6 +116,34 @@ const adminHomeHTML = `<!doctype html>
   .perm-row .grant-btn.rm:hover { background: #fee2e2; }
   .modal-footer { padding: 0.8em 1.4em; border-top: 1px solid #e2e8f0; font-size: 0.82em; color: #64748b; display: flex; justify-content: space-between; }
 
+  /* Badges de plano no card */
+  .plan-badge { display: inline-block; padding: 0.18em 0.55em; border-radius: 999px; font-size: 0.65em; font-weight: 700; letter-spacing: 0.04em; vertical-align: middle; margin-left: 0.4em; }
+  .plan-badge.pro { background: linear-gradient(90deg, #25D366, #10b981); color: white; }
+  .plan-badge.trial { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .plan-badge.suspended { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+  .plan-badge.expired { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+  .plan-badge.none { background: #f8fafc; color: #94a3b8; border: 1px dashed #cbd5e1; }
+
+  /* Modal gerenciar plano */
+  .plan-info { background: #f8fafc; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 1.2em; font-size: 0.9em; display: flex; flex-direction: column; gap: 0.35em; }
+  .plan-info .lbl { color: #64748b; margin-right: 0.4em; }
+  .plan-section { margin-bottom: 1.2em; padding-bottom: 1.2em; border-bottom: 1px solid #e2e8f0; }
+  .plan-section:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+  .plan-section h4 { margin: 0 0 0.6em; font-size: 0.95em; color: #1e293b; }
+  .plan-actions { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: center; }
+  .plan-actions button { padding: 0.55em 1em; border: 1px solid #cbd5e1; background: white; color: #1e293b; border-radius: 5px; cursor: pointer; font-size: 0.88em; font-weight: 600; font-family: inherit; }
+  .plan-actions button:hover { background: #f1f5f9; }
+  .plan-actions button.pro { background: linear-gradient(90deg, #25D366, #10b981); color: white; border-color: transparent; }
+  .plan-actions button.pro:hover { filter: brightness(1.05); }
+  .plan-actions button.danger { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+  .plan-actions button.danger:hover { background: #fecaca; }
+  .plan-actions button.success { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+  .plan-actions button.success:hover { background: #bbf7d0; }
+  .plan-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .plan-actions .date-row { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; width: 100%; }
+  .plan-actions .date-row label { display: flex; align-items: center; gap: 0.4em; font-size: 0.85em; color: #475569; }
+  .plan-actions .date-row input[type="date"] { padding: 0.45em 0.6em; border: 1px solid #cbd5e1; border-radius: 5px; font-family: inherit; font-size: 0.88em; }
+
   /* Abas */
   .tabs { display: flex; gap: 0.3em; margin-bottom: 1.5em; border-bottom: 1px solid #cbd5e1; }
   .tab { padding: 0.7em 1.4em; background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.95em; color: #64748b; font-family: inherit; font-weight: 500; }
@@ -339,16 +367,34 @@ function cardHTML(t) {
   const tokenLabel = t.token_status === 'valid' ? 'Token válido' : (t.token_status === 'expiring' ? 'Token expirando' : 'Token expirado');
 
   const domainAttr = encodeURIComponent(t.domain);
+
+  // Badge de plano — Pro verde, Trial amarelo c/ dias, Expired vermelho.
+  let planBadge = '';
+  if (t.plan === 'pro' && t.plan_status === 'active') {
+    const until = t.active_until ? (' até ' + new Date(t.active_until).toLocaleDateString('pt-BR')) : ' (vitalício)';
+    planBadge = '<span class="plan-badge pro" title="Plano Pro' + until + '">PRO' + (t.active_until ? '' : ' ∞') + '</span>';
+  } else if (t.plan_status === 'trial') {
+    const days = t.trial_days_remaining || 0;
+    planBadge = '<span class="plan-badge trial" title="Trial — ' + days + ' dias restantes">TRIAL ' + days + 'd</span>';
+  } else if (t.plan_status === 'suspended') {
+    planBadge = '<span class="plan-badge suspended" title="Suspenso pelo admin">SUSPENSO</span>';
+  } else if (t.plan_status === 'expired' || !t.plan_access_allowed) {
+    planBadge = '<span class="plan-badge expired" title="Plano expirado">EXPIRADO</span>';
+  } else if (t.plan_status === 'no_plan') {
+    planBadge = '<span class="plan-badge none" title="Sem plano cadastrado">SEM PLANO</span>';
+  }
+
   return '' +
     '<div class="card ' + cls + '" data-domain="' + escapeHTML(t.domain) + '">' +
       '<button class="card-menu-btn" onclick="toggleCardMenu(event, this)" title="Ações">&#8942;</button>' +
       '<div class="card-menu">' +
+        '<button onclick="openPlanModal(\'' + domainAttr + '\')">Gerenciar plano</button>' +
         '<button onclick="openPermissionsModal(\'' + domainAttr + '\')">Gerenciar permissões CRM</button>' +
         '<div class="divider"></div>' +
         '<button onclick="tenantAction(\'legacy-messages\',\'' + domainAttr + '\', this)">Limpar msgs legacy</button>' +
         '<button class="danger" onclick="tenantAction(\'session-files\',\'' + domainAttr + '\', this)">Limpar arquivos .db (QR)</button>' +
       '</div>' +
-      '<div class="domain">' + escapeHTML(t.domain) + '</div>' +
+      '<div class="domain">' + escapeHTML(t.domain) + ' ' + planBadge + '</div>' +
       '<div class="meta">Instalado em ' + installed + ' &middot; Open Line ' + (t.open_line_id || '—') + '</div>' +
       '<div class="conns">' + conns.join('') + '</div>' +
       '<div class="stats">' +
@@ -359,6 +405,129 @@ function cardHTML(t) {
       '</div>' +
       '<span class="token ' + t.token_status + '">' + tokenLabel + '</span>' +
     '</div>';
+}
+
+// ─── Modal: Gerenciar plano do tenant ──────────────────────────────────────
+function openPlanModal(domainEnc) {
+  const domain = decodeURIComponent(domainEnc);
+  const tenant = (allTenants || []).find(t => t.domain === domain);
+  if (!tenant) { alert('Tenant não encontrado'); return; }
+
+  let statusLabel = '—';
+  if (tenant.plan === 'pro' && tenant.plan_status === 'active') {
+    statusLabel = 'Pro Ativo' + (tenant.active_until ? (' até ' + new Date(tenant.active_until).toLocaleDateString('pt-BR')) : ' (vitalício)');
+  } else if (tenant.plan_status === 'trial') {
+    statusLabel = 'Trial — ' + (tenant.trial_days_remaining || 0) + ' dias restantes';
+    if (tenant.trial_ends_at) statusLabel += ' (até ' + new Date(tenant.trial_ends_at).toLocaleDateString('pt-BR') + ')';
+  } else if (tenant.plan_status === 'suspended') {
+    statusLabel = 'Suspenso';
+  } else if (tenant.plan_status === 'expired') {
+    statusLabel = 'Expirado';
+  } else if (tenant.plan_status === 'no_plan') {
+    statusLabel = 'Sem plano cadastrado';
+  }
+
+  const isPro = tenant.plan === 'pro' && tenant.plan_status === 'active';
+  const isSuspended = tenant.plan_status === 'suspended';
+  const today = new Date();
+  const oneYear = new Date(today.getFullYear() + 1, today.getMonth(), today.getDate());
+  const defaultDate = oneYear.toISOString().slice(0, 10);
+
+  // Esconde a aba lateral porque modal cobre — fecha menu kebab.
+  document.querySelectorAll('.card-menu.open').forEach(m => m.classList.remove('open'));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay open plan-modal-overlay';
+  overlay.innerHTML =
+    '<div class="modal-box">' +
+      '<div class="modal-hdr">' +
+        '<h2>Gerenciar plano</h2>' +
+        '<button class="close" onclick="closePlanModal()">&times;</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div class="plan-info">' +
+          '<div><span class="lbl">Domínio:</span> <strong>' + escapeHTML(tenant.domain) + '</strong></div>' +
+          '<div><span class="lbl">Status atual:</span> ' + escapeHTML(statusLabel) + '</div>' +
+          (tenant.plan_notes ? '<div><span class="lbl">Notas:</span> ' + escapeHTML(tenant.plan_notes) + '</div>' : '') +
+        '</div>' +
+        '<div class="plan-section">' +
+          '<h4>Estender trial</h4>' +
+          '<div class="plan-actions">' +
+            '<button onclick="planAction(\'extend-trial\', {domain:\'' + domainAttrJS(tenant.domain) + '\', days:7}, this)">+7 dias</button>' +
+            '<button onclick="planAction(\'extend-trial\', {domain:\'' + domainAttrJS(tenant.domain) + '\', days:15}, this)">+15 dias</button>' +
+            '<button onclick="planAction(\'extend-trial\', {domain:\'' + domainAttrJS(tenant.domain) + '\', days:30}, this)">+30 dias</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="plan-section">' +
+          '<h4>Ativar Pro</h4>' +
+          '<div class="plan-actions">' +
+            '<div class="date-row">' +
+              '<label>Até: <input type="date" id="planActiveUntil" value="' + defaultDate + '" /></label>' +
+              '<button onclick="planActivatePro(\'' + domainAttrJS(tenant.domain) + '\', this, false)">Ativar Pro até a data</button>' +
+            '</div>' +
+            '<button class="pro" onclick="planActivatePro(\'' + domainAttrJS(tenant.domain) + '\', this, true)">Ativar Pro vitalício (sem expiração)</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="plan-section">' +
+          '<h4>Acesso</h4>' +
+          '<div class="plan-actions">' +
+            (isSuspended
+              ? '<button class="success" onclick="planAction(\'reactivate\', {domain:\'' + domainAttrJS(tenant.domain) + '\'}, this)">Reativar conta</button>'
+              : '<button class="danger" onclick="planSuspend(\'' + domainAttrJS(tenant.domain) + '\', this)">Suspender conta</button>') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closePlanModal();
+  });
+}
+
+function closePlanModal() {
+  document.querySelectorAll('.plan-modal-overlay').forEach(o => o.remove());
+}
+
+function domainAttrJS(d) {
+  // Escapa pra usar em onclick="...\'X\'..."
+  return String(d).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function planAction(action, body, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch('/admin/api/tenant/plan/' + action, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (r.status === 401) { window.location = '/admin/login'; return; }
+    const data = await r.json();
+    if (!r.ok) { alert('Erro: ' + (data.error || r.status)); return; }
+    closePlanModal();
+    load();
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function planActivatePro(domain, btn, lifetime) {
+  const body = {domain: domain};
+  if (!lifetime) {
+    const dt = document.getElementById('planActiveUntil').value;
+    if (!dt) { alert('Escolha uma data'); return; }
+    body.active_until = dt;
+  }
+  await planAction('activate-pro', body, btn);
+}
+
+async function planSuspend(domain, btn) {
+  const reason = prompt('Motivo da suspensão (opcional):', '');
+  if (reason === null) return; // cancelou
+  await planAction('suspend', {domain: domain, notes: reason || ''}, btn);
 }
 
 function toggleCardMenu(ev, btn) {

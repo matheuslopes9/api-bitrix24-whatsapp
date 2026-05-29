@@ -259,6 +259,11 @@ func New(
 	admin.Get("/api/tenant/plan", h.adminTenantGetPlan)         // ?domain=...
 	admin.Post("/api/tenant/plan", h.adminTenantSetPlan)        // body: {domain, plan, status, active_until, notes}
 	admin.Get("/api/tenant/plans", h.adminListTenantPlans)      // lista geral
+	// Atalhos pra UI admin (modal "Gerenciar plano" no card de tenant)
+	admin.Post("/api/tenant/plan/extend-trial", h.adminTenantExtendTrial)
+	admin.Post("/api/tenant/plan/activate-pro", h.adminTenantActivatePro)
+	admin.Post("/api/tenant/plan/suspend", h.adminTenantSuspend)
+	admin.Post("/api/tenant/plan/reactivate", h.adminTenantReactivate)
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────
 	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
 	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)
