@@ -769,11 +769,41 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 			m.log.Info("session reconnected", zap.String("jid", sess.JID))
 			_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionActive)
 		case *events.LoggedOut:
-			m.log.Warn("session logged out", zap.String("jid", sess.JID))
-			_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionBanned)
+			// LoggedOut e' disparado pelo whatsmeow em varios cenarios, nao
+			// apenas banimento real do WhatsApp:
+			//   - User removeu o device manualmente em Dispositivos Vinculados
+			//   - WhatsApp expirou a sessao por inatividade
+			//   - Reconexao apos restart com Noise handshake corrompido
+			//   - Conta foi banida (raro)
+			//
+			// Marcar como Banned (estado terminal, ignorado pelo watchdog) e'
+			// agressivo demais — perdiamos sessoes que poderiam ser
+			// resgatadas via QR rescan. Em vez disso, marcamos Disconnected
+			// e removemos o store SQLite pra forcar reauth limpo no proximo
+			// AddSession/Reconnect. Watchdog tenta ressuscitar; se falhar
+			// repetidamente, fica em Disconnected ate o user reescanear QR
+			// pelo /dashboard.
+			m.log.Warn("session logged out by WhatsApp — marking disconnected (will need QR rescan)",
+				zap.String("jid", sess.JID))
+			_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionDisconnected)
 			m.mu.Lock()
 			delete(m.sessions, sess.JID)
 			m.mu.Unlock()
+			// Remove store SQLite corrompido pra evitar loop de reconexao
+			// com state ruim. Se o user reescanear QR, AddSession recria.
+			if sess.Phone != "" {
+				dbPath := filepath.Join(m.cfg.SessionsDir, sess.Phone+".db")
+				if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+					m.log.Warn("failed to remove stale session file",
+						zap.String("path", dbPath), zap.Error(err))
+				} else {
+					// Tambem remove -shm e -wal do SQLite (WAL mode files)
+					_ = os.Remove(dbPath + "-shm")
+					_ = os.Remove(dbPath + "-wal")
+					m.log.Info("removed stale session file after LoggedOut",
+						zap.String("path", dbPath))
+				}
+			}
 		}
 	}
 }
