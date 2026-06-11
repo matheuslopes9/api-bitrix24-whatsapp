@@ -524,12 +524,26 @@ func buildMessageHandler(
 		} else if sticker := waMsg.GetStickerMessage(); sticker != nil {
 			msgType = db.MsgTypeImage
 			mediaMime = sticker.GetMimetype()
+			if mediaMime == "" {
+				mediaMime = "image/webp"
+			}
 			mediaName = "sticker.webp"
-			if data, err := waManager.DownloadMedia(sessionJID, sticker); err == nil {
+			// Usa DownloadMediaFromMessage (com fallback DownloadAny) em vez
+			// do Download simples — stickers animados/novos as vezes tem
+			// mediaKey que o Download direto nao resolve, mas o DownloadAny
+			// pega varrendo a mensagem completa. waMsg ja' desempacotado.
+			if data, err := waManager.DownloadMediaFromMessage(sessionJID, waMsg, sticker); err == nil {
 				mediaData = data
+				log.Info("sticker baixado ok",
+					zap.Int("bytes", len(data)),
+					zap.String("mime", mediaMime),
+					zap.Bool("animated", sticker.GetIsAnimated()))
 			} else {
-				log.Warn("download sticker failed", zap.Error(err))
-				text = "[Sticker]"
+				log.Warn("download sticker failed",
+					zap.Error(err),
+					zap.String("direct_path", sticker.GetDirectPath()),
+					zap.Bool("animated", sticker.GetIsAnimated()))
+				text = "[Figurinha]"
 			}
 		} else if reaction := waMsg.GetReactionMessage(); reaction != nil {
 			// Reaction WhatsApp (curtidas/emojis em msg anterior). Bitrix
