@@ -404,28 +404,6 @@ func buildMessageHandler(
 			return
 		}
 
-		// Dedupe por msg_id: WhatsApp pode disparar 2 eventos *events.Message
-		// pra mesma mensagem em cenarios multi-device/sync. O primeiro vem
-		// com payload incompleto (so metadados) e cai no fallback de texto;
-		// o segundo vem completo com a midia. Sem dedupe, o cliente ve no
-		// Bitrix uma msg de texto vazia + a foto duplicadas.
-		//
-		// Janela de 5 minutos cobre qualquer sync atrasado, e o TTL evita
-		// crescer Redis infinito. Key namespace "waInbound" pra nao colidir
-		// com dedup do connector event.
-		if evt.Info.ID != "" {
-			first, dedupErr := q.MarkProcessed(ctx, "waInbound:"+sessionJID+":"+evt.Info.ID, 5*time.Minute)
-			if dedupErr != nil {
-				log.Warn("inbound dedup check failed, processing anyway",
-					zap.String("msg_id", evt.Info.ID), zap.Error(dedupErr))
-			} else if !first {
-				log.Info("onMsg: ignored duplicate WhatsApp event",
-					zap.String("msg_id", evt.Info.ID),
-					zap.String("session_jid", sessionJID))
-				return
-			}
-		}
-
 		text := ""
 		msgType := db.MsgTypeText
 		var mediaData []byte
@@ -566,6 +544,42 @@ func buildMessageHandler(
 				text = "[removeu reação]"
 			} else {
 				text = "[reagiu " + emoji + "]"
+			}
+		}
+
+		// Descarta eventos VAZIOS: sem texto, sem midia, sem nada util.
+		// WhatsApp dispara eventos "fantasma" em sync/multi-device — so'
+		// metadados, sem payload real. Antes esses viravam msg de texto
+		// vazia no Bitrix (cliente via "*Sender:* [text]" sem conteudo).
+		//
+		// Importante: esse filtro roda DEPOIS de decodificar, entao o
+		// evento COMPLETO (que vem logo depois com a midia) passa normal.
+		hasContent := strings.TrimSpace(text) != "" || len(mediaData) > 0
+		if !hasContent {
+			log.Info("onMsg: evento vazio (sem texto/midia) — ignorado",
+				zap.String("msg_id", evt.Info.ID),
+				zap.String("session_jid", sessionJID))
+			return
+		}
+
+		// Dedupe POR CONTEUDO: agora que sabemos que tem conteudo, marca
+		// como processado. Se o WhatsApp mandar 2 eventos COMPLETOS pra mesma
+		// msg (raro mas acontece em sync), o segundo e' ignorado. Como o
+		// evento vazio ja' foi descartado acima sem marcar dedup, o evento
+		// completo sempre consegue passar primeiro.
+		//
+		// TTL 5min cobre sync atrasado. Namespace waInbound nao colide com
+		// dedup do connector event.
+		if evt.Info.ID != "" {
+			first, dedupErr := q.MarkProcessed(ctx, "waInbound:"+sessionJID+":"+evt.Info.ID, 5*time.Minute)
+			if dedupErr != nil {
+				log.Warn("inbound dedup check failed, processing anyway",
+					zap.String("msg_id", evt.Info.ID), zap.Error(dedupErr))
+			} else if !first {
+				log.Info("onMsg: ignored duplicate WhatsApp event (content already processed)",
+					zap.String("msg_id", evt.Info.ID),
+					zap.String("session_jid", sessionJID))
+				return
 			}
 		}
 

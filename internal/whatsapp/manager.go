@@ -191,9 +191,12 @@ func (m *Manager) CleanupOrphanSessionFiles(ctx context.Context) (removed []stri
 // DownloadMedia baixa bytes de mídia de uma mensagem WhatsApp.
 // msg deve implementar whatsmeow.DownloadableMessage.
 func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMessage) ([]byte, error) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
+	// resolveSession faz match por telefone (ignora device suffix ":NN" que
+	// muda a cada reconexao). Lookup direto m.sessions[sessionJID] falhava
+	// quando o suffix do JID do evento divergia do suffix usado como chave
+	// no map — resultando em "session not found" e download falhando
+	// (foto/sticker viravam fallback de texto).
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return nil, fmt.Errorf("session not found: %s", sessionJID)
 	}
@@ -204,9 +207,8 @@ func (m *Manager) DownloadMedia(sessionJID string, msg whatsmeow.DownloadableMes
 // Para áudio com HMAC inválido, tenta também com MediaDocument como fallback
 // (chave HKDF diferente — às vezes resolve quando a MediaKey está incorreta para audio).
 func (m *Manager) DownloadMediaFromMessage(sessionJID string, fullMsg *waProto.Message, primary whatsmeow.DownloadableMessage) ([]byte, error) {
-	m.mu.RLock()
-	sess, ok := m.sessions[sessionJID]
-	m.mu.RUnlock()
+	// resolveSession por telefone — ver comentario em DownloadMedia.
+	sess, ok := m.resolveSession(sessionJID)
 	if !ok {
 		return nil, fmt.Errorf("session not found: %s", sessionJID)
 	}
