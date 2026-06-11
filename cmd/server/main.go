@@ -404,6 +404,28 @@ func buildMessageHandler(
 			return
 		}
 
+		// Dedupe por msg_id: WhatsApp pode disparar 2 eventos *events.Message
+		// pra mesma mensagem em cenarios multi-device/sync. O primeiro vem
+		// com payload incompleto (so metadados) e cai no fallback de texto;
+		// o segundo vem completo com a midia. Sem dedupe, o cliente ve no
+		// Bitrix uma msg de texto vazia + a foto duplicadas.
+		//
+		// Janela de 5 minutos cobre qualquer sync atrasado, e o TTL evita
+		// crescer Redis infinito. Key namespace "waInbound" pra nao colidir
+		// com dedup do connector event.
+		if evt.Info.ID != "" {
+			first, dedupErr := q.MarkProcessed(ctx, "waInbound:"+sessionJID+":"+evt.Info.ID, 5*time.Minute)
+			if dedupErr != nil {
+				log.Warn("inbound dedup check failed, processing anyway",
+					zap.String("msg_id", evt.Info.ID), zap.Error(dedupErr))
+			} else if !first {
+				log.Info("onMsg: ignored duplicate WhatsApp event",
+					zap.String("msg_id", evt.Info.ID),
+					zap.String("session_jid", sessionJID))
+				return
+			}
+		}
+
 		text := ""
 		msgType := db.MsgTypeText
 		var mediaData []byte
