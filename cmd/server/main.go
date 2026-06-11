@@ -553,6 +553,20 @@ func buildMessageHandler(
 				log.Warn("download sticker failed", zap.Error(err))
 				text = "[Sticker]"
 			}
+		} else if reaction := waMsg.GetReactionMessage(); reaction != nil {
+			// Reaction WhatsApp (curtidas/emojis em msg anterior). Bitrix
+			// Open Channel nao tem conceito nativo de reaction — mandamos
+			// como texto pra atendente saber.
+			//
+			// Quando o user remove uma reaction, Text vem vazio. Nesse caso
+			// mostramos "removeu reacao" pra atendente entender o contexto.
+			msgType = db.MsgTypeText
+			emoji := reaction.GetText()
+			if emoji == "" {
+				text = "[removeu reação]"
+			} else {
+				text = "[reagiu " + emoji + "]"
+			}
 		}
 
 		// Salva mensagem no banco com status "received"
