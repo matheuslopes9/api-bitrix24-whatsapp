@@ -409,11 +409,46 @@ func buildMessageHandler(
 		var mediaData []byte
 		var mediaName, mediaMime string
 
-		if evt.Message.GetConversation() != "" {
-			text = evt.Message.GetConversation()
-		} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
+		// Desempacota wrappers do WhatsApp pra chegar na mensagem real:
+		//   - EphemeralMessage: msg temporaria (24h/7d/90d)
+		//   - ViewOnceMessage / ViewOnceMessageV2 / V2Extension: "Ver uma vez"
+		//   - DeviceSentMessage: msg enviada de outro device do mesmo numero
+		// Sem isso, fotos enviadas em grupo com privacidade habilitada
+		// vinham como nil em GetImageMessage() e caiam no fallback de texto.
+		// Fonte: whatsmeow proto.Message struct.
+		waMsg := evt.Message
+		for i := 0; i < 4 && waMsg != nil; i++ { // teto de 4 niveis de unwrap
+			if e := waMsg.GetEphemeralMessage(); e != nil && e.GetMessage() != nil {
+				waMsg = e.GetMessage()
+				continue
+			}
+			if v := waMsg.GetViewOnceMessage(); v != nil && v.GetMessage() != nil {
+				waMsg = v.GetMessage()
+				continue
+			}
+			if v2 := waMsg.GetViewOnceMessageV2(); v2 != nil && v2.GetMessage() != nil {
+				waMsg = v2.GetMessage()
+				continue
+			}
+			if v2e := waMsg.GetViewOnceMessageV2Extension(); v2e != nil && v2e.GetMessage() != nil {
+				waMsg = v2e.GetMessage()
+				continue
+			}
+			if ds := waMsg.GetDeviceSentMessage(); ds != nil && ds.GetMessage() != nil {
+				waMsg = ds.GetMessage()
+				continue
+			}
+			break
+		}
+		if waMsg == nil {
+			waMsg = evt.Message // safety: nunca opera em nil
+		}
+
+		if waMsg.GetConversation() != "" {
+			text = waMsg.GetConversation()
+		} else if ext := waMsg.GetExtendedTextMessage(); ext != nil {
 			text = ext.GetText()
-		} else if img := evt.Message.GetImageMessage(); img != nil {
+		} else if img := waMsg.GetImageMessage(); img != nil {
 			msgType = db.MsgTypeImage
 			text = img.GetCaption()
 			mediaMime = img.GetMimetype()
@@ -423,20 +458,20 @@ func buildMessageHandler(
 			} else {
 				log.Warn("download image failed", zap.Error(err))
 			}
-		} else if aud := evt.Message.GetAudioMessage(); aud != nil {
+		} else if aud := waMsg.GetAudioMessage(); aud != nil {
 			msgType = db.MsgTypeAudio
 			mediaMime = aud.GetMimetype()
 			mediaName = "audio.ogg"
 			if aud.GetPTT() {
 				mediaName = "voice.ogg"
 			}
-			if data, err := waManager.DownloadMediaFromMessage(sessionJID, evt.Message, aud); err == nil {
+			if data, err := waManager.DownloadMediaFromMessage(sessionJID, waMsg, aud); err == nil {
 				mediaData = data
 			} else {
 				log.Warn("download audio failed", zap.Error(err))
 				text = "[Áudio]"
 			}
-		} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
+		} else if doc := waMsg.GetDocumentMessage(); doc != nil {
 			msgType = db.MsgTypeDocument
 			text = doc.GetFileName()
 			mediaMime = doc.GetMimetype()
@@ -463,7 +498,7 @@ func buildMessageHandler(
 			} else {
 				log.Warn("download document failed", zap.Error(err))
 			}
-		} else if vid := evt.Message.GetVideoMessage(); vid != nil {
+		} else if vid := waMsg.GetVideoMessage(); vid != nil {
 			msgType = db.MsgTypeVideo
 			text = vid.GetCaption()
 			mediaMime = vid.GetMimetype()
@@ -473,7 +508,7 @@ func buildMessageHandler(
 			} else {
 				log.Warn("download video failed", zap.Error(err))
 			}
-		} else if contact := evt.Message.GetContactMessage(); contact != nil {
+		} else if contact := waMsg.GetContactMessage(); contact != nil {
 			msgType = db.MsgTypeDocument
 			mediaName = contact.GetDisplayName() + ".vcf"
 			if mediaName == ".vcf" {
@@ -486,7 +521,7 @@ func buildMessageHandler(
 			} else {
 				text = "[Contato: " + contact.GetDisplayName() + "]"
 			}
-		} else if sticker := evt.Message.GetStickerMessage(); sticker != nil {
+		} else if sticker := waMsg.GetStickerMessage(); sticker != nil {
 			msgType = db.MsgTypeImage
 			mediaMime = sticker.GetMimetype()
 			mediaName = "sticker.webp"
