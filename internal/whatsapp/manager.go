@@ -573,6 +573,83 @@ func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, da
 	return resp.ID, nil
 }
 
+// SendImage envia uma imagem inline (aparece como foto no WhatsApp, nao
+// como anexo de arquivo) com legenda opcional. Usado quando o atendente
+// anexa imagem pelo Bitrix — SendDocument mandava como arquivo e perdia
+// a legenda.
+func (m *Manager) SendImage(ctx context.Context, sessionJID, toJID string, data []byte, mime, caption string) (string, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", sessionJID)
+	}
+
+	recipient, err := types.ParseJID(toJID)
+	if err != nil {
+		return "", fmt.Errorf("invalid jid: %w", err)
+	}
+
+	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return "", fmt.Errorf("upload image: %w", err)
+	}
+
+	imgMsg := &waProto.ImageMessage{
+		Mimetype:      &mime,
+		URL:           &uploaded.URL,
+		DirectPath:    &uploaded.DirectPath,
+		MediaKey:      uploaded.MediaKey,
+		FileEncSHA256: uploaded.FileEncSHA256,
+		FileSHA256:    uploaded.FileSHA256,
+		FileLength:    &uploaded.FileLength,
+	}
+	if caption != "" {
+		imgMsg.Caption = &caption
+	}
+
+	resp, err := sess.Client.SendMessage(ctx, recipient, &waProto.Message{ImageMessage: imgMsg})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+// SendVideo envia video inline com legenda opcional. Espelha SendImage.
+func (m *Manager) SendVideo(ctx context.Context, sessionJID, toJID string, data []byte, mime, caption string) (string, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", sessionJID)
+	}
+
+	recipient, err := types.ParseJID(toJID)
+	if err != nil {
+		return "", fmt.Errorf("invalid jid: %w", err)
+	}
+
+	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaVideo)
+	if err != nil {
+		return "", fmt.Errorf("upload video: %w", err)
+	}
+
+	vidMsg := &waProto.VideoMessage{
+		Mimetype:      &mime,
+		URL:           &uploaded.URL,
+		DirectPath:    &uploaded.DirectPath,
+		MediaKey:      uploaded.MediaKey,
+		FileEncSHA256: uploaded.FileEncSHA256,
+		FileSHA256:    uploaded.FileSHA256,
+		FileLength:    &uploaded.FileLength,
+	}
+	if caption != "" {
+		vidMsg.Caption = &caption
+	}
+
+	resp, err := sess.Client.SendMessage(ctx, recipient, &waProto.Message{VideoMessage: vidMsg})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 // Disconnect faz logout completo: revoga o dispositivo no WhatsApp,
 // remove TODAS as rows de whatsapp_sessions com o mesmo phone (independente
 // do device suffix) e apaga TODOS os arquivos .db/.db-shm/.db-wal daquele

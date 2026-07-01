@@ -189,15 +189,42 @@ func main() {
 						fileName, sizeGB))
 				return nil
 			}
-			log.Info("outbound file", zap.String("name", fileName), zap.String("mime", fileMime))
-			if fileMime == "audio/mpeg" {
-				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, fileMime, false)
+			log.Info("outbound file", zap.String("name", fileName), zap.String("mime", fileMime),
+				zap.Int("caption_len", len(job.Text)))
+			// Roteia por tipo de midia pra enviar inline (imagem/video como
+			// foto/video no WhatsApp, nao como anexo) e preservar a legenda
+			// (job.Text). Antes tudo virava SendDocument e a legenda sumia.
+			switch {
+			case strings.HasPrefix(fileMime, "image/"):
+				waID, err = waManager.SendImage(c, job.SessionJID, job.ToJID, fileData, fileMime, job.Text)
 				if err != nil {
-					log.Warn("SendAudio (mp3) failed, falling back to SendDocument", zap.Error(err))
+					log.Warn("SendImage failed, falling back to SendDocument", zap.Error(err))
 					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
 				}
-			} else {
+			case strings.HasPrefix(fileMime, "video/"):
+				waID, err = waManager.SendVideo(c, job.SessionJID, job.ToJID, fileData, fileMime, job.Text)
+				if err != nil {
+					log.Warn("SendVideo failed, falling back to SendDocument", zap.Error(err))
+					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
+				}
+			case fileMime == "audio/mpeg" || strings.HasPrefix(fileMime, "audio/"):
+				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, fileMime, false)
+				if err != nil {
+					log.Warn("SendAudio failed, falling back to SendDocument", zap.Error(err))
+					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
+				}
+			default:
 				waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
+			}
+			// Legenda em imagem/video ja' vai embutida. Pra documento/audio,
+			// se houver texto separado, manda numa 2a mensagem (WhatsApp nao
+			// suporta caption em documento via este fluxo).
+			if err == nil && job.Text != "" &&
+				!strings.HasPrefix(fileMime, "image/") &&
+				!strings.HasPrefix(fileMime, "video/") {
+				if _, txtErr := waManager.Send(c, job.SessionJID, job.ToJID, job.Text); txtErr != nil {
+					log.Warn("outbound: falha ao enviar legenda separada", zap.Error(txtErr))
+				}
 			}
 		} else {
 			waID, err = waManager.Send(c, job.SessionJID, job.ToJID, job.Text)
