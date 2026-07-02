@@ -475,6 +475,58 @@ func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, dura
 	_ = sess.Client.SendChatPresence(ctx, recipient, types.ChatPresencePaused, types.ChatPresenceMediaText)
 }
 
+// resolveRecipient converte um toJID em types.JID pronto pra envio,
+// resolvendo o JID CANONICO quando for numero de telefone (@s.whatsapp.net).
+//
+// Motivacao: numeros BR antigos sem o "9" do celular (ex: 559691459459)
+// existem no WhatsApp mas com um JID interno que pode divergir do numero
+// digitado. Mandar direto pra "559691459459@s.whatsapp.net" as vezes
+// retorna erro 400 porque o WhatsApp espera o JID canonico registrado.
+//
+// IsOnWhatsApp pergunta ao servidor qual e' o JID real do numero. Se o
+// numero existe, usa o JID retornado. Se nao existe/falha a consulta,
+// cai no JID original (best-effort — nao bloqueia envio se a consulta
+// de verificacao falhar por rede).
+//
+// Grupos (@g.us) e LID (@lid) passam direto — nao precisam resolucao.
+func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID string) (types.JID, error) {
+	jid, err := types.ParseJID(toJID)
+	if err != nil {
+		return types.JID{}, fmt.Errorf("invalid jid: %w", err)
+	}
+	// So' resolve numeros de telefone. Grupos e LID passam direto.
+	if jid.Server != types.DefaultUserServer {
+		return jid, nil
+	}
+
+	// Otimizacao: so' consulta IsOnWhatsApp (chamada de rede) pra numeros
+	// que PODEM ter o problema do "9" — numeros BR (55) com 12 digitos
+	// (DDD 2 + 8 do celular antigo, sem o 9). Numeros normais (13 digitos
+	// BR, ou qualquer outro pais) passam direto sem custo de rede.
+	needsResolve := len(jid.User) == 12 && strings.HasPrefix(jid.User, "55")
+	if !needsResolve {
+		return jid, nil
+	}
+
+	phone := "+" + jid.User
+	results, qErr := sess.Client.IsOnWhatsApp(ctx, []string{phone})
+	if qErr != nil || len(results) == 0 {
+		m.log.Warn("resolveRecipient: IsOnWhatsApp falhou, usando JID original",
+			zap.String("phone", phone), zap.Error(qErr))
+		return jid, nil
+	}
+	r := results[0]
+	if !r.IsIn {
+		return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp", phone)
+	}
+	if !r.JID.IsEmpty() {
+		m.log.Info("resolveRecipient: JID canonico resolvido",
+			zap.String("input", jid.User), zap.String("canonical", r.JID.User))
+		return r.JID, nil
+	}
+	return jid, nil
+}
+
 // Send envia uma mensagem de texto.
 func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (string, error) {
 	sess, ok := m.resolveSession(sessionJID)
@@ -482,9 +534,9 @@ func (m *Manager) Send(ctx context.Context, sessionJID, toJID, text string) (str
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
-	recipient, err := types.ParseJID(toJID)
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
 	if err != nil {
-		return "", fmt.Errorf("invalid jid: %w", err)
+		return "", err
 	}
 
 	resp, err := sess.Client.SendMessage(ctx, recipient, &waProto.Message{
@@ -504,9 +556,9 @@ func (m *Manager) SendAudio(ctx context.Context, sessionJID, toJID string, data 
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
-	recipient, err := types.ParseJID(toJID)
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
 	if err != nil {
-		return "", fmt.Errorf("invalid jid: %w", err)
+		return "", err
 	}
 
 	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaAudio)
@@ -543,9 +595,9 @@ func (m *Manager) SendDocument(ctx context.Context, sessionJID, toJID string, da
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
-	recipient, err := types.ParseJID(toJID)
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
 	if err != nil {
-		return "", fmt.Errorf("invalid jid: %w", err)
+		return "", err
 	}
 
 	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaDocument)
@@ -583,9 +635,9 @@ func (m *Manager) SendImage(ctx context.Context, sessionJID, toJID string, data 
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
-	recipient, err := types.ParseJID(toJID)
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
 	if err != nil {
-		return "", fmt.Errorf("invalid jid: %w", err)
+		return "", err
 	}
 
 	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaImage)
@@ -620,9 +672,9 @@ func (m *Manager) SendVideo(ctx context.Context, sessionJID, toJID string, data 
 		return "", fmt.Errorf("session not found: %s", sessionJID)
 	}
 
-	recipient, err := types.ParseJID(toJID)
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
 	if err != nil {
-		return "", fmt.Errorf("invalid jid: %w", err)
+		return "", err
 	}
 
 	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaVideo)
