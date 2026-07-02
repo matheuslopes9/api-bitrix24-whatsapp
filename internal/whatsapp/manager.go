@@ -229,9 +229,9 @@ func (m *Manager) DownloadMediaFromMessage(sessionJID string, fullMsg *waProto.M
 			aud.GetFileEncSHA256(),
 			aud.GetFileSHA256(),
 			aud.GetMediaKey(),
-			-1,
-			whatsmeow.MediaDocument,
-			"",
+			whatsmeow.MediaDocument, // mediaType (assinatura nova whatsmeow jun/2026)
+			"",                      // mmsType (vazio = deriva do mediaType)
+			false,                   // allowNoHash
 		)
 		if err3 == nil {
 			return data3, nil
@@ -519,12 +519,27 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	if !r.IsIn {
 		return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp", phone)
 	}
+	target := jid
 	if !r.JID.IsEmpty() {
+		target = r.JID
 		m.log.Info("resolveRecipient: JID canonico resolvido",
 			zap.String("input", jid.User), zap.String("canonical", r.JID.User))
-		return r.JID, nil
 	}
-	return jid, nil
+
+	// Aquece o mapeamento PN->LID + prekeys do destinatario. Numeros BR
+	// antigos sem o 9 costumam falhar com erro 400 no envio quando o
+	// whatsmeow nao tem os devices/LID resolvidos ainda. GetUserDevices
+	// forca essa resolucao e popula o store. Best-effort: erro aqui nao
+	// bloqueia (o envio ainda tenta com o JID que temos).
+	if devices, devErr := sess.Client.GetUserDevices(ctx, []types.JID{target}); devErr != nil {
+		m.log.Warn("resolveRecipient: GetUserDevices falhou (segue mesmo assim)",
+			zap.String("jid", target.String()), zap.Error(devErr))
+	} else {
+		m.log.Info("resolveRecipient: devices resolvidos",
+			zap.String("jid", target.String()), zap.Int("device_count", len(devices)))
+	}
+
+	return target, nil
 }
 
 // Send envia uma mensagem de texto.
