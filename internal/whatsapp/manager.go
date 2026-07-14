@@ -251,10 +251,40 @@ func (m *Manager) GetQR(phone string) string {
 // Pula sessões Cloud API — essas são gerenciadas pelo CloudManager (HTTPS stateless,
 // não precisam de WebSocket whatsmeow nem session file SQLite).
 func (m *Manager) LoadAll(ctx context.Context) error {
+	// DIAGNOSTICO DE VOLUME: conta arquivos .db no diretorio de sessoes.
+	// Se o diretorio existe mas esta VAZIO enquanto o banco tem sessoes QR,
+	// e' sinal forte de que o volume /app/sessions NAO esta persistindo
+	// entre deploys (config faltando no EasyPanel). O cliente perde a
+	// conexao e precisa reescanear o QR toda vez.
+	dbFileCount := 0
+	if entries, derr := os.ReadDir(m.cfg.SessionsDir); derr == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".db") {
+				dbFileCount++
+			}
+		}
+	}
+	m.log.Info("session store diagnostico",
+		zap.String("dir", m.cfg.SessionsDir),
+		zap.Int("db_files_encontrados", dbFileCount))
+
 	sessions, err := m.repo.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
 	}
+
+	// Conta sessoes QR esperadas no banco.
+	qrExpected := 0
+	for _, s := range sessions {
+		if s.Type != db.SessionTypeCloudAPI {
+			qrExpected++
+		}
+	}
+	if qrExpected > 0 && dbFileCount == 0 {
+		m.log.Warn("VOLUME NAO PERSISTENTE? banco tem sessoes QR mas /app/sessions esta vazio — arquivos .db foram perdidos no deploy. Configure volume persistente no EasyPanel pra /app/sessions",
+			zap.Int("sessoes_qr_no_banco", qrExpected))
+	}
+
 	connected := 0
 	for _, s := range sessions {
 		// Skip Cloud — não tem session file e não usa whatsmeow.

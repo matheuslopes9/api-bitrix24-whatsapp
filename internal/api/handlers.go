@@ -1646,7 +1646,23 @@ func stripBBCode(s string) string {
 			result.WriteRune(ch)
 		}
 	}
-	return strings.TrimSpace(result.String())
+	out := result.String()
+
+	// Normaliza markdown de negrito/italico que o Bitrix as vezes manda
+	// em formato Markdown padrao (**texto** / __texto__) em vez de BBCode.
+	// WhatsApp usa 1 asterisco pra negrito — 2 asteriscos aparecem literais
+	// no cliente ("**texto**" fica feio). Colapsa ** -> * e __ -> _.
+	//
+	// Faz em loop pra pegar sequencias tipo *** ou **** que sobram de
+	// conversao dupla (BBCode ja' virou * e o Bitrix mandou mais um *).
+	for strings.Contains(out, "**") {
+		out = strings.ReplaceAll(out, "**", "*")
+	}
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+
+	return strings.TrimSpace(out)
 }
 
 // POST /bitrix/webhook — recebe mensagens do operador via Bitrix

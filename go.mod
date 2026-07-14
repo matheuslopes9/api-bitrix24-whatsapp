@@ -13,7 +13,7 @@ require (
 	github.com/spf13/viper v1.18.2
 	github.com/valyala/fasthttp v1.51.0
 	github.com/xuri/excelize/v2 v2.10.1
-	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
+	go.mau.fi/whatsmeow v0.0.0-20260713112832-d8960d9575d2
 	go.uber.org/zap v1.27.0
 )
 
