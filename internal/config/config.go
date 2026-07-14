@@ -101,8 +101,13 @@ func Load() (*Config, error) {
 			DB:       viper.GetInt("REDIS_DB"),
 		},
 		WhatsApp: WhatsAppConfig{
-			SessionsDir: getEnvWithDefault("WA_SESSIONS_DIR", "./sessions"),
-			MediaDir:    getEnvWithDefault("WA_MEDIA_DIR", "./media"),
+			// Path ABSOLUTO por default pra bater com o volume persistente do
+			// EasyPanel montado em /app/sessions. Path relativo "./sessions"
+			// depende do working directory do processo — se divergir de /app,
+			// os arquivos .db do whatsmeow (chaves de cripto) vao pra outro
+			// lugar que NAO e' o volume, e o QR cai a cada deploy.
+			SessionsDir: getEnvWithDefault("WA_SESSIONS_DIR", "/app/sessions"),
+			MediaDir:    getEnvWithDefault("WA_MEDIA_DIR", "/app/media"),
 			LogLevel:    getEnvWithDefault("WA_LOG_LEVEL", "INFO"),
 		},
 		Bitrix: BitrixConfig{
