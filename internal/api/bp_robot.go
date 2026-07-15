@@ -160,6 +160,37 @@ func (h *handlers) triggerBPRobotRefresh(domain, reason string) {
 	}()
 }
 
+// OnSessionConnect e' o callback injetado no whatsapp.Manager
+// (SetSessionConnectHandler). Disparado quando uma sessao QR fica ativa
+// (pareamento via QR novo ou reconexao). Resolve o dominio Bitrix da
+// sessao pelo JID e dispara o refresh dos robots BizProc — assim o
+// dropdown de "WhatsApp session" no robot passa a listar o numero recem
+// conectado SEM o cliente precisar rodar refresh manual.
+//
+// LACUNA QUE ISSO FECHA: antes, o refresh so' era disparado por CRUD de
+// template. Conectar um QR novo nao re-registrava o robot, entao o
+// dropdown de sessao ficava vazio ate o cliente mexer num template ou
+// clicar refresh manual. Agora conectar a sessao ja' popula o dropdown.
+//
+// Best-effort e assincrono (ja' vem em goroutine do fireSessionConnect):
+// falha no lookup ou refresh nao afeta a conexao WhatsApp.
+func (h *handlers) OnSessionConnect(phone, jid string) {
+	if jid == "" {
+		return
+	}
+	ctx := context.Background()
+	acct, err := h.repo.GetBitrixAccountByJID(ctx, jid)
+	if err != nil || acct == nil || acct.Domain == "" {
+		// Sessao ainda nao vinculada a um portal Bitrix (ex: acabou de
+		// parear e o vinculo e' criado depois). Sem dominio, nao ha robot
+		// pra refresh — no-op silencioso (Debug, nao Warn: e' esperado).
+		h.log.Debug("bp-robot: OnSessionConnect sem dominio vinculado ainda",
+			zap.String("phone", phone), zap.String("jid", jid))
+		return
+	}
+	h.triggerBPRobotRefresh(acct.Domain, "session_connected")
+}
+
 // ReregisterBPRobotUnofficialForPortal atualiza so o robot Nao Oficial.
 // Chamado quando CRUD de templates Nao Oficiais ou conexao QR muda. Idempotente.
 func (h *handlers) ReregisterBPRobotUnofficialForPortal(ctx context.Context, portal *db.BitrixPortal) error {

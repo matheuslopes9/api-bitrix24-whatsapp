@@ -43,6 +43,14 @@ func New(
 
 	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
 
+	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
+	// Quando um numero pareia/reconecta, re-registra os robots pra popular o
+	// dropdown de "WhatsApp session" no Bitrix (sem refresh manual). No-op se
+	// waManager for nil (ex: testes que nao sobem o manager).
+	if waManager != nil {
+		waManager.SetSessionConnectHandler(h.OnSessionConnect)
+	}
+
 	// ─── Assets estáticos ────────────────────────────────────────────────
 	app.Get("/assets/chart.js", h.serveChartJS)
 	app.Get("/assets/logo.png", h.serveLogo)

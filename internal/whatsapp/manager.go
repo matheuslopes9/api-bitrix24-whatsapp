@@ -26,15 +26,24 @@ import (
 // MessageHandler é a função chamada para cada mensagem recebida.
 type MessageHandler func(sessionID uuid.UUID, jid string, evt *events.Message)
 
+// SessionConnectHandler é chamada quando uma sessão QR fica ATIVA (parear
+// via QR novo ou reconectar). Usada pra disparar efeitos colaterais que
+// dependem de uma sessão ativa — ex: re-registrar os robots BizProc pra
+// popular o dropdown de "WhatsApp session" no Bitrix. O manager (pacote
+// whatsapp) nao conhece o pacote api, entao o callback e' injetado.
+// Recebe o phone da sessao — o callsite resolve dominio/portal.
+type SessionConnectHandler func(phone, jid string)
+
 // Manager gerencia múltiplas sessões WhatsApp simultaneamente.
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	qrCodes  map[string]string // phone -> QR code atual
-	cfg      *config.WhatsAppConfig
-	repo     *db.Repository
-	log      *zap.Logger
-	onMsg    MessageHandler
+	mu               sync.RWMutex
+	sessions         map[string]*Session
+	qrCodes          map[string]string // phone -> QR code atual
+	cfg              *config.WhatsAppConfig
+	repo             *db.Repository
+	log              *zap.Logger
+	onMsg            MessageHandler
+	onSessionConnect SessionConnectHandler
 }
 
 func NewManager(cfg *config.WhatsAppConfig, repo *db.Repository, log *zap.Logger, onMsg MessageHandler) *Manager {
@@ -51,6 +60,21 @@ func NewManager(cfg *config.WhatsAppConfig, repo *db.Repository, log *zap.Logger
 // SetMessageHandler define o handler de mensagens após a criação do Manager.
 func (m *Manager) SetMessageHandler(h MessageHandler) {
 	m.onMsg = h
+}
+
+// SetSessionConnectHandler define o callback disparado quando uma sessão
+// QR fica ativa (pareamento ou reconexão). Opcional — se nil, nada acontece.
+func (m *Manager) SetSessionConnectHandler(h SessionConnectHandler) {
+	m.onSessionConnect = h
+}
+
+// fireSessionConnect dispara o callback de conexão em goroutine (nunca
+// bloqueia o event loop do whatsmeow). No-op se nao houver handler.
+func (m *Manager) fireSessionConnect(phone, jid string) {
+	if m.onSessionConnect == nil || phone == "" {
+		return
+	}
+	go m.onSessionConnect(phone, jid)
 }
 
 // SessionsDir retorna o diretório de session files (uso de diagnostico).
@@ -360,6 +384,8 @@ func (m *Manager) initSession(phone, dbPath string) {
 		Status: db.SessionActive, SessionFile: dbPath,
 	})
 	m.log.Info("session reconnected", zap.String("jid", jid))
+	// Sessao ativa — refresh dos robots BizProc (popula dropdown de sessao).
+	m.fireSessionConnect(phone, jid)
 }
 
 // connectWithQR estabelece conexão nova com geração de QR via event handler.
@@ -393,6 +419,9 @@ func (m *Manager) connectWithQR(ctx context.Context, phone, dbPath string, clien
 				Status: db.SessionActive, SessionFile: dbPath,
 			})
 			m.log.Info("session paired via qr", zap.String("jid", jid), zap.String("phone", phone))
+			// Sessao nova ficou ativa — dispara refresh dos robots BizProc pra
+			// popular o dropdown de "WhatsApp session" no Bitrix.
+			m.fireSessionConnect(phone, jid)
 			// AddEventHandler fora do handler atual para evitar deadlock no whatsmeow
 			go client.AddEventHandler(m.buildEventHandler(sess))
 		case *events.Connected:
@@ -921,6 +950,11 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 			zap.String("new_jid", realJID),
 			zap.String("phone", s.Phone))
 	}
+
+	// Sessao reconectou e esta ativa — dispara refresh dos robots BizProc.
+	// Cobre o caso de sessao que estava Disconnected (dropdown ficou vazio)
+	// e voltou: re-registra pra popular o dropdown com o JID atual.
+	m.fireSessionConnect(s.Phone, realJID)
 
 	return nil
 }
