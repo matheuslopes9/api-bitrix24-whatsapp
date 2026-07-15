@@ -945,28 +945,60 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 			m.log.Info("session reconnected", zap.String("jid", sess.JID))
 			_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionActive)
 		case *events.LoggedOut:
-			// LoggedOut e' disparado pelo whatsmeow em varios cenarios, nao
-			// apenas banimento real do WhatsApp:
-			//   - User removeu o device manualmente em Dispositivos Vinculados
-			//   - WhatsApp expirou a sessao por inatividade
-			//   - Reconexao apos restart com Noise handshake corrompido
-			//   - Conta foi banida (raro)
+			// LoggedOut e' disparado pelo whatsmeow em DOIS grupos de cenarios:
 			//
-			// Marcar como Banned (estado terminal, ignorado pelo watchdog) e'
-			// agressivo demais — perdiamos sessoes que poderiam ser
-			// resgatadas via QR rescan. Em vez disso, marcamos Disconnected
-			// e removemos o store SQLite pra forcar reauth limpo no proximo
-			// AddSession/Reconnect. Watchdog tenta ressuscitar; se falhar
-			// repetidamente, fica em Disconnected ate o user reescanear QR
-			// pelo /dashboard.
-			m.log.Warn("session logged out by WhatsApp — marking disconnected (will need QR rescan)",
-				zap.String("jid", sess.JID))
+			//  (1) LOGOUT REAL (permanente) — a sessao morreu de verdade e o
+			//      arquivo .db so' serve pra reauth via QR:
+			//        - User removeu o device em "Dispositivos Vinculados"
+			//        - Conta banida
+			//        - Primary device deslogado
+			//      whatsmeow sinaliza isso via Reason.IsLoggedOut() == true
+			//      (codigos 401 LoggedOut, 403 MainDeviceGone, 406 UnknownLogout).
+			//
+			//  (2) FALHA TRANSIENTE DE CONEXAO — o WhatsApp recusou a conexao
+			//      TEMPORARIAMENTE, mas a sessao continua VALIDA:
+			//        - Reconexao apos restart/deploy (handshake momentaneo)
+			//        - 500 InternalServerError, 503 ServiceUnavailable
+			//        - 400 Generic, timeouts de rede
+			//      Nesses casos, OnConnect==true mas Reason.IsLoggedOut()==false.
+			//
+			// BUG HISTORICO: apagavamos o .db em TODO LoggedOut, inclusive nas
+			// falhas transientes. Resultado: a cada deploy, um handshake ruim
+			// derrubava a conexao E DESTRUIA o arquivo valido — cliente tinha
+			// que reescanear o QR toda vez. O volume /app/sessions persistia
+			// certo; eramos NOS que apagavamos o arquivo.
+			//
+			// FIX: so' apagar o .db quando for logout REAL. Falha transiente
+			// -> marca Disconnected e deixa o watchdog reconectar com o mesmo
+			// arquivo (sem reescanear QR).
+			realLogout := true // stream:error (OnConnect==false) trata como logout real
+			if evt.OnConnect {
+				realLogout = evt.Reason.IsLoggedOut()
+			}
+
+			if !realLogout {
+				// Transiente: mantem o arquivo, so' marca Disconnected.
+				// Watchdog vai tentar reconectar com o mesmo device store.
+				m.log.Warn("session connect failure (transiente) — mantendo .db, watchdog vai reconectar (SEM reescanear QR)",
+					zap.String("jid", sess.JID),
+					zap.Bool("on_connect", evt.OnConnect),
+					zap.Int("reason", int(evt.Reason)),
+					zap.String("reason_desc", evt.Reason.String()))
+				_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionDisconnected)
+				return
+			}
+
+			// Logout REAL: marca Disconnected e remove o store SQLite pra
+			// forcar reauth limpo via QR. Watchdog nao consegue ressuscitar
+			// sem o usuario reescanear.
+			m.log.Warn("session logged out by WhatsApp (REAL) — removendo .db, precisa reescanear QR",
+				zap.String("jid", sess.JID),
+				zap.Bool("on_connect", evt.OnConnect),
+				zap.Int("reason", int(evt.Reason)))
 			_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionDisconnected)
 			m.mu.Lock()
 			delete(m.sessions, sess.JID)
 			m.mu.Unlock()
-			// Remove store SQLite corrompido pra evitar loop de reconexao
-			// com state ruim. Se o user reescanear QR, AddSession recria.
 			if sess.Phone != "" {
 				dbPath := filepath.Join(m.cfg.SessionsDir, sess.Phone+".db")
 				if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
@@ -976,7 +1008,7 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 					// Tambem remove -shm e -wal do SQLite (WAL mode files)
 					_ = os.Remove(dbPath + "-shm")
 					_ = os.Remove(dbPath + "-wal")
-					m.log.Info("removed stale session file after LoggedOut",
+					m.log.Info("removed stale session file after LoggedOut REAL",
 						zap.String("path", dbPath))
 				}
 			}
