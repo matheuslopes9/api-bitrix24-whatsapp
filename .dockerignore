@@ -1,0 +1,24 @@
+# NUNCA copiar o .env de desenvolvimento pro build da imagem.
+#
+# O Dockerfile faz `COPY . .` — sem este .dockerignore, o .env LOCAL
+# (com WA_SESSIONS_DIR=./sessions apontando pra um path efemero) ia pra
+# dentro da imagem. O viper le esse .env no boot e SOBRESCREVE o default
+# /app/sessions do codigo, gravando as chaves do whatsmeow em ./sessions
+# (efemero) em vez do volume persistente /app/sessions. Resultado: o QR
+# cai a cada deploy. Em producao, as variaveis vem do painel do EasyPanel,
+# NAO de um .env commitado.
+.env
+.env.*
+!.env.example
+
+# Artefatos de build/local que nao pertencem a imagem.
+*.exe
+*.bak
+*.log
+.git
+.gitignore
+.claude/
+sessions/
+media/
+*_test.go
+README.md
