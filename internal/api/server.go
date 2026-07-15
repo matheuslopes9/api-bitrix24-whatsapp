@@ -263,6 +263,9 @@ func New(
 	admin.Get("/api/tenant/bp-register", h.adminTenantBPRegister)
 	admin.Get("/api/tenant/bp-reregister", h.adminTenantBPReregister)
 	admin.Get("/api/tenant/sms-register", h.adminTenantSMSRegister)
+	// Seed de templates Nao Oficiais de exemplo (pra testar automacoes).
+	admin.Post("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
+	admin.Get("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
 	// ─── Sistema de planos ──────────────────────────────────────────────
 	admin.Get("/api/tenant/plan", h.adminTenantGetPlan)         // ?domain=...
 	admin.Post("/api/tenant/plan", h.adminTenantSetPlan)        // body: {domain, plan, status, active_until, notes}

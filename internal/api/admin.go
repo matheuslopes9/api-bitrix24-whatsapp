@@ -1135,6 +1135,101 @@ func (h *handlers) adminTenantBPReregister(c *fiber.Ctx) error {
 	})
 }
 
+// GET|POST /admin/api/tenant/seed-templates?domain=...
+// Cadastra um conjunto de templates NAO OFICIAIS de exemplo pra testar as
+// automacoes BizProc (o dropdown "Message template" do robot precisa de ao
+// menos 1 template pra sair de "nao ajustado"). Idempotente por titulo: se
+// um template com o mesmo titulo ja' existe no dominio, pula (nao duplica).
+// Dispara o refresh dos robots ao final pra popular o dropdown.
+//
+// As variaveis usam a sintaxe do CRM Bitrix ({{Contato}}, {{Nome}}, etc.)
+// — no envio real, o Bitrix substitui pelos campos da entidade. No robot,
+// o body do template e' enviado como texto livre (Nao Oficial via QR).
+func (h *handlers) adminTenantSeedTemplates(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	// Usa normalizePortalDomain (mesma normalizacao do fluxo de templates via
+	// resolveDashboardDomain) pra garantir que o domain key dos templates
+	// criados bate EXATAMENTE com o que o robot le em ListMessageTemplates.
+	domainKey := normalizePortalDomain(domain)
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, domainKey)
+	if err != nil || portal == nil {
+		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	}
+
+	// Conjunto de templates de teste. Titulo curto + body com variaveis CRM.
+	seeds := []struct {
+		Title string
+		Body  string
+	}{
+		{
+			"Boas-vindas",
+			"Ola *{{Nome}}*! 👋\n\nSeja bem-vindo(a) a UC Technology. Recebemos seu contato e em breve um de nossos especialistas vai falar com voce.\n\nQualquer duvida, e so responder por aqui.",
+		},
+		{
+			"Confirmacao de agendamento",
+			"Oi *{{Nome}}*, tudo bem?\n\nConfirmando seu agendamento com a UC Technology. Se precisar remarcar, e so avisar por aqui.\n\nAte breve! 📅",
+		},
+		{
+			"Primeiro contato (Lead)",
+			"Ola *{{Nome}}*! 😊\n\nAqui e da UC Technology. Vimos seu interesse e gostariamos de entender melhor como podemos te ajudar. Qual o melhor horario pra conversarmos?",
+		},
+		{
+			"Follow-up de proposta",
+			"Oi *{{Nome}}*!\n\nPassando pra saber se voce teve a chance de analisar a nossa proposta. Fico a disposicao pra esclarecer qualquer ponto. 📄",
+		},
+		{
+			"Agradecimento pos-venda",
+			"*{{Nome}}*, muito obrigado pela confianca! 🙏\n\nFoi um prazer atender voce. Qualquer necessidade futura, a UC Technology esta a disposicao.",
+		},
+	}
+
+	// Templates ja existentes no dominio (dedup por titulo, case-insensitive).
+	existing, _ := h.repo.ListMessageTemplates(ctx, domainKey)
+	existingTitles := map[string]bool{}
+	for _, t := range existing {
+		existingTitles[strings.ToLower(strings.TrimSpace(t.Title))] = true
+	}
+
+	created := []map[string]string{}
+	skipped := []string{}
+	for _, s := range seeds {
+		if existingTitles[strings.ToLower(s.Title)] {
+			skipped = append(skipped, s.Title)
+			continue
+		}
+		// Nao Oficial: meta_template_name vazio, sem lang/vars.
+		id, cerr := h.repo.CreateMessageTemplate(ctx, domainKey, s.Title, s.Body, "admin-seed", "", "", 0)
+		if cerr != nil {
+			h.log.Warn("seed-templates: create falhou",
+				zap.String("domain", domainKey), zap.String("title", s.Title), zap.Error(cerr))
+			continue
+		}
+		created = append(created, map[string]string{"id": id.String(), "title": s.Title})
+	}
+
+	// Popula o dropdown do robot com os templates recem criados.
+	if len(created) > 0 {
+		h.triggerBPRobotRefresh(domainKey, "seed_templates")
+	}
+
+	h.log.Info("admin: seed templates done",
+		zap.String("domain", domainKey),
+		zap.Int("created", len(created)),
+		zap.Int("skipped", len(skipped)))
+
+	return c.JSON(fiber.Map{
+		"ok":      true,
+		"domain":  domainKey,
+		"created": created,
+		"skipped": skipped,
+		"hint":    "Abra o robot no Bitrix (CRM > Automacoes) — o dropdown 'Message template' agora lista os templates. Se ainda vazio, rode /admin/api/tenant/bp-reregister?domain=...",
+	})
+}
+
 // GET /admin/api/tenant/placements?domain=...
 // Lista placements registrados no portal Bitrix24. Util pra diagnosticar
 // placements orfaos ("Application was not found" no menu) — quando o app
