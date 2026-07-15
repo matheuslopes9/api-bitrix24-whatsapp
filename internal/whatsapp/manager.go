@@ -870,14 +870,40 @@ func (m *Manager) Ping(jid string) bool {
 }
 
 // Reconnect tenta reconectar uma sessão que estava desconectada.
+//
+// BUG HISTORICO (deploy deixava sessao "Desconectada" pra sempre): a versao
+// antiga so' checava se o JID existia no mapa e, se sim, dava return nil —
+// "ja' esta la, nao mexe". Mas apos um deploy a entrada frequentemente fica
+// no mapa com o cliente DESCONECTADO (IsConnected()==false): o whatsmeow
+// perdeu o WebSocket mas nao removeu o *Session. Nesse estado:
+//   - Ping() retorna false (IsConnected false) -> watchdog chama Reconnect
+//   - Reconnect via exists==true dava return nil -> NUNCA reconectava
+//   - watchdog achava que "reconectou" (err nil) e a sessao ficava morta
+//
+// FIX: se a entrada existe MAS o cliente nao esta conectado, e' um zumbi.
+// Remove a entrada morta e reconecta de verdade via connectSession (que
+// reabre o .db preservado). So' retorna nil (no-op) se REALMENTE conectado.
 func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
-	// Se já está no mapa (mesmo que ainda conectando), não interfere
 	m.mu.RLock()
-	_, exists := m.sessions[s.JID]
+	existing, exists := m.sessions[s.JID]
 	m.mu.RUnlock()
+
 	if exists {
-		return nil
+		// Ja' conectado de verdade — nao interfere.
+		if existing.Client != nil && existing.Client.IsConnected() {
+			return nil
+		}
+		// Entrada zumbi (no mapa mas desconectada) — limpa antes de reconectar.
+		m.log.Warn("reconnect: entrada zumbi no mapa (desconectada) — limpando pra reconectar",
+			zap.String("jid", s.JID))
+		if existing.Client != nil {
+			existing.Client.Disconnect() // fecha qualquer socket meio-aberto
+		}
+		m.mu.Lock()
+		delete(m.sessions, s.JID)
+		m.mu.Unlock()
 	}
+
 	return m.connectSession(ctx, s)
 }
 

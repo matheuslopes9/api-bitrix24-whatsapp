@@ -32,6 +32,12 @@ func (w *Watchdog) loop(ctx context.Context) {
 	ticker := time.NewTicker(w.cfg.PingInterval())
 	defer ticker.Stop()
 
+	// Primeiro check IMEDIATO (o ticker so' dispara apos o intervalo). Assim,
+	// se a conexao inicial do LoadAll falhou por handshake transiente no boot
+	// pos-deploy, o watchdog ja' tenta reconectar em segundos — sem esperar
+	// o primeiro tick (ate 30s de sessao Desconectada a toa).
+	w.check(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
