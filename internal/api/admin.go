@@ -1224,7 +1224,7 @@ func (h *handlers) adminTenantPlacementsCleanup(c *fiber.Ctx) error {
 		"ok":              true,
 		"domain":          portal.Domain,
 		"unbound":         unbindResults,
-		"reregistered":    []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "LEFT_MENU"},
+		"reregistered":    []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB"},
 		"hint":            "Reabra o app no Bitrix em 5s. Se ainda 'Application was not found', desinstale e reinstale pelo Marketplace.",
 	})
 }
@@ -1365,7 +1365,7 @@ func (h *handlers) adminTenantPlacementsForceUnbind(c *fiber.Ctx) error {
 		"ok":           true,
 		"domain":       portal.Domain,
 		"attempts":     results,
-		"reregistered": []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB", "LEFT_MENU"},
+		"reregistered": []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB"},
 		"hint":         "Recarregue o Bitrix em 5-10s (Ctrl+F5). Se duplicata persistir, o placement orfao esta vinculado a OUTRO client_id (app deletado em vendors.bitrix24.com) e so o suporte Bitrix consegue apagar.",
 	})
 }

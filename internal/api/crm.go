@@ -2875,6 +2875,23 @@ func (h *handlers) RegisterPlacementsForPortal(ctx context.Context, domain strin
 		{"CRM_DEAL_DETAIL_TAB", tabURL},
 	}
 
+	// BLINDAGEM ANTI-MENU-DUPLICADO — unbind preventivo de LEFT_MENU.
+	//
+	// Versoes ANTIGAS do app registravam placement.bind LEFT_MENU (removido
+	// depois). Esse placement ficou GRAVADO no portal e nao sai com
+	// desinstalacao/reinstalacao — vira orfao que duplica o menu (1 do Bitrix
+	// automatico + 1 do placement orfao). Como HOJE nao registramos LEFT_MENU,
+	// qualquer LEFT_MENU presente e' lixo legado. Removemos incondicionalmente
+	// (handler vazio -> Bitrix apaga TODOS os LEFT_MENU do nosso app).
+	// Idempotente: se nao houver nenhum, o erro "not found" e' benigno.
+	if err := h.bitrixClient.UnbindPlacement(ctx, creds, "LEFT_MENU", ""); err != nil {
+		h.log.Debug("placement.unbind LEFT_MENU preventivo (benigno se nao existia)",
+			zap.String("domain", domain), zap.Error(err))
+	} else {
+		h.log.Info("placement.unbind LEFT_MENU orfao removido",
+			zap.String("domain", domain))
+	}
+
 	// Lista placements ja registrados. Se a chamada falhar (token expirado,
 	// app reinstalado, etc), seguimos pro bind direto — bitrix vai falhar
 	// com ALREADY_INSTALLED ou aceitar criando duplicata. Best-effort.
