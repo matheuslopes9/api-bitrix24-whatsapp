@@ -179,6 +179,19 @@ func (h *handlers) OnSessionConnect(phone, jid string) {
 		return
 	}
 	ctx := context.Background()
+
+	// Re-vincula bitrix_accounts.session_jid pro JID atual ANTES de qualquer
+	// lookup. O device suffix muda a cada rescan (:67 -> :72) e o vinculo
+	// defasado quebrava joins exatos (contagem de sessoes ativas do dominio,
+	// caminho primario do dropdown do robot). Best-effort.
+	if n, err := h.repo.RebindBitrixAccountJID(ctx, jid); err != nil {
+		h.log.Warn("bp-robot: rebind bitrix_accounts jid falhou",
+			zap.String("jid", jid), zap.Error(err))
+	} else if n > 0 {
+		h.log.Info("bp-robot: bitrix_accounts re-vinculado ao jid atual",
+			zap.String("jid", jid), zap.Int64("rows", n))
+	}
+
 	acct, err := h.repo.GetBitrixAccountByJID(ctx, jid)
 	if err != nil || acct == nil || acct.Domain == "" {
 		// Sessao ainda nao vinculada a um portal Bitrix (ex: acabou de
@@ -437,11 +450,13 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 			"code":  "plan_pro_required",
 		})
 	}
-	if portal.DefaultSMSSessionJID == "" {
-		h.log.Warn("bp-robot: tenant has no default session — drop",
-			zap.String("domain", domain))
-		return c.JSON(fiber.Map{"result": "no_session"})
-	}
+	// NOTA: NAO exigir portal.DefaultSMSSessionJID aqui. Esse campo e' do
+	// fluxo de SMS (sessao default que o master escolhe pra rotear SMS do
+	// Bitrix). Os robots BizProc carregam a PROPRIA sessao escolhida no
+	// dropdown (properties[session_jid]) — validada nos handlers abaixo.
+	// BUG HISTORICO: o check antigo respondia 200 {"result":"no_session"}
+	// quando o default de SMS nao estava configurado, dropando TODO disparo
+	// de automacao silenciosamente (Bitrix via 200 e achava que enviou).
 
 	code := strings.TrimSpace(c.FormValue("code"))
 	toPhone := normalizeWAPhone(c.FormValue("properties[to_phone]"))

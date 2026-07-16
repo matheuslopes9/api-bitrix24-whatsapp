@@ -1140,6 +1140,29 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 	return &a, nil
 }
 
+// RebindBitrixAccountJID atualiza bitrix_accounts.session_jid pro JID
+// atual da sessao QR. O whatsmeow troca o device suffix a cada rescan
+// (:67 -> :72), deixando o vinculo defasado — o que quebrava contagens
+// e joins exatos por session_jid (sidebar "0 sessoes ativas", dropdown
+// do robot via caminho primario, etc). Match pelo NUMERO BASE (antes do
+// ':'), so' em rows QR (cloud: fica intacto). Retorna rows atualizadas.
+func (r *Repository) RebindBitrixAccountJID(ctx context.Context, newJID string) (int64, error) {
+	if newJID == "" || strings.HasPrefix(newJID, "cloud:") {
+		return 0, nil
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bitrix_accounts
+		   SET session_jid = $1, updated_at = NOW()
+		 WHERE session_jid NOT LIKE 'cloud:%'
+		   AND session_jid <> $1
+		   AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1) =
+		       SPLIT_PART(SPLIT_PART($1, '@', 1), ':', 1)`, newJID)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ListBitrixAccountJIDsByDomain retorna os session_jid vinculados a um
 // dominio em bitrix_accounts. Usado pra diagnostico (comparar com o jid
 // atual em whatsapp_sessions e detectar descasamento de device suffix).
