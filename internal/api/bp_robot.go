@@ -240,15 +240,22 @@ func bpPropsUnofficial(sessionOptions map[string]string) map[string]interface{} 
 			"Required":    "Y",
 			"Multiple":    "N",
 		},
-		// Texto livre multi-linha. O tecnico escreve a mensagem direto na
-		// automacao e pode inserir variaveis do CRM Bitrix ({{Nome}},
-		// {{Contato}}, {{Lead.Name}}, etc.) — o Bitrix substitui pelos
-		// valores da entidade ANTES de enviar o POST pro nosso handler.
-		// Type "text" -> textarea multi-linha no editor de robot do Bitrix.
+		// Texto livre. O tecnico escreve a mensagem direto na automacao e pode
+		// inserir variaveis do CRM Bitrix ({{Nome}}, {{Contato}}, {{Lead.Name}},
+		// etc.) — o Bitrix substitui pelos valores da entidade ANTES de enviar
+		// o POST pro nosso handler.
+		//
+		// Type "string" — NAO usar "text"! A doc REST lista "text" como tipo
+		// valido e o bizproc.robot.add ACEITA o registro, mas o editor visual
+		// de robots do Bitrix (testado em jul/2026, portal on-premise/cloud
+		// pt-BR) NAO RENDERIZA campos type=text: o campo simplesmente nao
+		// aparece na tela de parametros da atividade. "string" renderiza
+		// certinho (mesmo tipo do to_phone, visivel na tela), aceita variaveis
+		// do CRM via botao "..." e preserva \n digitados no editor expandido.
 		"message_text": map[string]interface{}{
 			"Name":        map[string]string{"en": "Message", "pt-BR": "Mensagem"},
 			"Description": map[string]string{"pt-BR": "Texto da mensagem a enviar. Use variaveis do CRM como {{Nome}}, {{Contato}} ou {{Lead.Name}} — o Bitrix substitui pelos dados do registro. Negrito com *asterisco*, italico com _underline_."},
-			"Type":        "text",
+			"Type":        "string",
 			"Required":    "Y",
 			"Multiple":    "N",
 		},
