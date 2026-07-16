@@ -3,7 +3,9 @@
 //   [UC Talk] WhatsApp — Nao Oficial
 //      CODE: uctalk_wa_unofficial
 //      Modo: texto livre via Multi-Device (whatsmeow)
-//      Campos: to_phone, message (texto livre), template_id (opcional)
+//      Campos: session_jid, to_phone, message_text (texto livre multi-linha)
+//      O tecnico digita a mensagem direto na automacao e usa variaveis do
+//      CRM ({{Nome}}, {{Contato}}) que o Bitrix substitui antes de enviar.
 //      Risco: pode banir o numero se usado em massa pra contatos frios
 //
 //   [UC Talk] WhatsApp — Oficial (HSM)
@@ -27,7 +29,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
@@ -58,14 +59,14 @@ func (h *handlers) RegisterBPRobotForPortal(ctx context.Context, portal *db.Bitr
 
 	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
 
-	// 1) Robot Nao Oficial — dropdowns de sessao QR + template Nao Oficial.
+	// 1) Robot Nao Oficial — dropdown de sessao QR + campo de texto livre.
+	// (Nao usa mais template: o tecnico digita a mensagem direto na automacao.)
 	sessionsQR, _ := h.sessionOptionsForDomain(ctx, portal.Domain, false)
-	tplUnofficial, _ := h.unofficialTemplateOptions(ctx, portal.Domain)
 	if err := h.bitrixClient.RegisterBPRobot(ctx, creds,
 		BPRobotCodeUnofficial,
 		"UC Talk — WhatsApp (Nao Oficial)",
 		handlerURL,
-		bpPropsUnofficial(sessionsQR, tplUnofficial),
+		bpPropsUnofficial(sessionsQR),
 	); err != nil {
 		// "ja existe" e' OK — Bitrix gravou em algum register anterior.
 		if !strings.Contains(err.Error(), "ALREADY_INSTALLED") {
@@ -75,8 +76,7 @@ func (h *handlers) RegisterBPRobotForPortal(ctx context.Context, portal *db.Bitr
 	} else {
 		h.log.Info("bp-robot: unofficial registered",
 			zap.String("domain", portal.Domain),
-			zap.Int("sessions", len(sessionsQR)),
-			zap.Int("templates", len(tplUnofficial)))
+			zap.Int("sessions", len(sessionsQR)))
 	}
 
 	// 2) Robot Oficial — dropdowns de sessao Cloud + template HSM.
@@ -200,13 +200,12 @@ func (h *handlers) ReregisterBPRobotUnofficialForPortal(ctx context.Context, por
 	creds := h.portalToCreds(portal)
 	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeUnofficial)
 	sessionsQR, _ := h.sessionOptionsForDomain(ctx, portal.Domain, false)
-	tplOptions, _ := h.unofficialTemplateOptions(ctx, portal.Domain)
 	handlerURL := h.cfg.App.BaseURL() + bpRobotHandlerPath
 	return h.bitrixClient.RegisterBPRobot(ctx, creds,
 		BPRobotCodeUnofficial,
 		"UC Talk — WhatsApp (Nao Oficial)",
 		handlerURL,
-		bpPropsUnofficial(sessionsQR, tplOptions),
+		bpPropsUnofficial(sessionsQR),
 	)
 }
 
@@ -221,10 +220,11 @@ func (h *handlers) UnregisterBPRobotForPortal(ctx context.Context, portal *db.Bi
 	_ = h.bitrixClient.DeleteBPRobot(ctx, creds, BPRobotCodeLegacy)
 }
 
-// bpPropsUnofficial: campos do robot Nao Oficial. Recebe dropdown de
-// sessoes QR (Multi-Device) ativas e dropdown de templates Nao Oficiais
-// (manuais, sem meta_template_name).
-func bpPropsUnofficial(sessionOptions, tplOptions map[string]string) map[string]interface{} {
+// bpPropsUnofficial: campos do robot Nao Oficial. Recebe o dropdown de
+// sessoes QR (Multi-Device) ativas. Campos: session_jid (dropdown),
+// to_phone (string) e message_text (texto livre multi-linha). Nao usa mais
+// template — o tecnico digita a mensagem direto na automacao.
+func bpPropsUnofficial(sessionOptions map[string]string) map[string]interface{} {
 	return map[string]interface{}{
 		"session_jid": map[string]interface{}{
 			"Name":        map[string]string{"en": "WhatsApp session", "pt-BR": "Sessao WhatsApp (Multi-Device)"},
@@ -240,12 +240,17 @@ func bpPropsUnofficial(sessionOptions, tplOptions map[string]string) map[string]
 			"Required":    "Y",
 			"Multiple":    "N",
 		},
-		"template_id": map[string]interface{}{
-			"Name":        map[string]string{"en": "Message template", "pt-BR": "Template Nao Oficial"},
-			"Description": map[string]string{"pt-BR": "Escolha um template ja cadastrado em /dashboard > Templates > Nao Oficial. Variaveis CRM como {{Lead.Name}} no body do template sao substituidas automaticamente."},
-			"Type":        "select",
+		// Texto livre multi-linha. O tecnico escreve a mensagem direto na
+		// automacao e pode inserir variaveis do CRM Bitrix ({{Nome}},
+		// {{Contato}}, {{Lead.Name}}, etc.) — o Bitrix substitui pelos
+		// valores da entidade ANTES de enviar o POST pro nosso handler.
+		// Type "text" -> textarea multi-linha no editor de robot do Bitrix.
+		"message_text": map[string]interface{}{
+			"Name":        map[string]string{"en": "Message", "pt-BR": "Mensagem"},
+			"Description": map[string]string{"pt-BR": "Texto da mensagem a enviar. Use variaveis do CRM como {{Nome}}, {{Contato}} ou {{Lead.Name}} — o Bitrix substitui pelos dados do registro. Negrito com *asterisco*, italico com _underline_."},
+			"Type":        "text",
 			"Required":    "Y",
-			"Options":     tplOptions,
+			"Multiple":    "N",
 		},
 	}
 }
@@ -307,24 +312,6 @@ func (h *handlers) metaTemplateOptions(ctx context.Context, domain string) (map[
 			label += " (" + t.MetaTemplateLang + ")"
 		}
 		out[t.MetaTemplateName] = label
-	}
-	return out, nil
-}
-
-// unofficialTemplateOptions monta o map {uuid: titulo} dos templates Nao
-// Oficiais (manuais, sem meta_template_name). Key e' o UUID porque o robot
-// resolve por ID — title pode ter caractere especial e mudar com tempo.
-func (h *handlers) unofficialTemplateOptions(ctx context.Context, domain string) (map[string]string, error) {
-	tpls, err := h.repo.ListMessageTemplates(ctx, domain)
-	if err != nil {
-		return map[string]string{}, err
-	}
-	out := map[string]string{}
-	for _, t := range tpls {
-		if t.MetaTemplateName != "" {
-			continue // pula Oficial
-		}
-		out[t.ID.String()] = t.Title
 	}
 	return out, nil
 }
@@ -467,7 +454,6 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 
 func (h *handlers) bpHandleUnofficial(c *fiber.Ctx, portal *db.BitrixPortal, toPhone, domain string) error {
 	sessionJID := strings.TrimSpace(c.FormValue("properties[session_jid]"))
-	templateIDStr := strings.TrimSpace(c.FormValue("properties[template_id]"))
 
 	if sessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -480,31 +466,26 @@ func (h *handlers) bpHandleUnofficial(c *fiber.Ctx, portal *db.BitrixPortal, toP
 			"error": "sessao escolhida e' Cloud API — use o robot 'UC Talk — WhatsApp Oficial (HSM)' em vez deste",
 		})
 	}
-	if templateIDStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "template_id obrigatorio — escolha um template Nao Oficial no dropdown do robot",
-		})
-	}
 
-	tid, perr := uuid.Parse(templateIDStr)
-	if perr != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "template_id invalido"})
+	// Texto livre digitado na automacao. O Bitrix ja substituiu as variaveis
+	// do CRM ({{Nome}}, {{Contato}}, etc.) pelos valores do registro antes de
+	// mandar o POST — aqui chega o texto final pronto pra enviar.
+	//
+	// Compat: aceita tambem "message" (nome de campo em versoes antigas do
+	// robot que talvez tenham ficado gravadas no portal antes do re-register).
+	bodyText := strings.TrimSpace(c.FormValue("properties[message_text]"))
+	if bodyText == "" {
+		bodyText = strings.TrimSpace(c.FormValue("properties[message]"))
 	}
-	tpl, err := h.repo.GetMessageTemplateByID(c.Context(), tid, domain)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "template nao encontrado"})
-	}
-	// Defensive check: template Oficial selecionado por engano (cliente colou
-	// UUID errado via API direta). Recusa com mensagem clara.
-	if tpl.MetaTemplateName != "" {
+	if bodyText == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "template_id aponta pra um template Oficial Meta. Use o robot 'UC Talk — Oficial (HSM)'.",
+			"error": "mensagem vazia — preencha o campo 'Mensagem' no robot",
 		})
 	}
-	bodyText := tpl.Body
-	if strings.TrimSpace(bodyText) == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "template tem body vazio"})
-	}
+	// Normaliza formatacao: o editor do Bitrix pode gerar BBCode ([b]negrito[/b],
+	// [br], etc.) ou markdown duplo (**). stripBBCode converte pro markdown do
+	// WhatsApp (*negrito*, _italico_) — mesmo tratamento do fluxo do connector.
+	bodyText = stripBBCode(bodyText)
 
 	go h.processBPRobotSend(&bpSendJob{
 		domain:     domain,
@@ -513,7 +494,7 @@ func (h *handlers) bpHandleUnofficial(c *fiber.Ctx, portal *db.BitrixPortal, toP
 		mode:       "unofficial",
 		bodyText:   bodyText,
 	})
-	return c.JSON(fiber.Map{"result": "queued", "mode": "unofficial", "template_id": tpl.ID.String()})
+	return c.JSON(fiber.Map{"result": "queued", "mode": "unofficial"})
 }
 
 func (h *handlers) bpHandleOfficial(c *fiber.Ctx, portal *db.BitrixPortal, toPhone, domain string) error {
