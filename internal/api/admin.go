@@ -1141,13 +1141,30 @@ func (h *handlers) adminTenantBPDebugSessions(c *fiber.Ctx) error {
 	// JIDs vinculados em bitrix_accounts (pra ver descasamento de suffix).
 	acctJIDs, _ := h.repo.ListBitrixAccountJIDsByDomain(ctx, domainKey)
 
+	// TODAS as sessoes cruas de whatsapp_sessions (sem filtro de domain) —
+	// pra ver o jid/status REAL da sessao conectada e comparar com o vinculo
+	// em bitrix_accounts. Se aqui aparece a sessao mas sessions_raw (filtrada
+	// por domain) esta vazia, o problema e' o vinculo whatsapp_sessions x
+	// bitrix_accounts (jid divergente ou sessao nao vinculada ao domain).
+	allSess, _ := h.repo.ListAllSessions(ctx)
+	allRaw := []map[string]interface{}{}
+	for _, s := range allSess {
+		allRaw = append(allRaw, map[string]interface{}{
+			"jid":    s.JID,
+			"phone":  s.Phone,
+			"status": string(s.Status),
+			"type":   string(s.Type),
+		})
+	}
+
 	out := fiber.Map{
-		"domain":               domainKey,
-		"sessions_raw":         sessRaw,
-		"session_options_qr":   optsQR,
+		"domain":                domainKey,
+		"sessions_raw":          sessRaw,
+		"all_whatsapp_sessions": allRaw,
+		"session_options_qr":    optsQR,
 		"session_options_cloud": optsCloud,
-		"bitrix_accounts_jids": acctJIDs,
-		"hint":                 "Se sessions_raw tem a sessao mas session_options_qr vazio: ou status!=active, ou device suffix descasado (compare jid em sessions_raw vs bitrix_accounts_jids).",
+		"bitrix_accounts_jids":  acctJIDs,
+		"hint":                  "Compare all_whatsapp_sessions (jid+status reais) vs bitrix_accounts_jids. Se o jid/numero base bate mas sessions_raw vazio -> status banned ou gate de dominio. Se numero base difere -> sessao nao vinculada ao domain.",
 	}
 	if sErr != nil {
 		out["sessions_error"] = sErr.Error()
