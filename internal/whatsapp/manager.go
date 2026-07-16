@@ -918,6 +918,50 @@ func (m *Manager) ListSessions() []string {
 	return keys
 }
 
+// ConnectedSession representa uma sessao QR realmente conectada em memoria.
+type ConnectedSession struct {
+	JID   string // JID atual do device (com suffix corrente)
+	Phone string // numero base, estavel entre reconexoes
+}
+
+// ConnectedSessions retorna as sessoes QR que estao REALMENTE conectadas
+// agora (WebSocket vivo), lidas direto do estado em memoria do manager —
+// sem depender de whatsapp_sessions.status nem do vinculo bitrix_accounts.
+//
+// Usado como fonte confiavel pro dropdown de sessao do robot BizProc: o
+// status no banco pode estar defasado (Disconnected logo apos deploy) e o
+// vinculo bitrix_accounts pode ter device suffix divergente. O que importa
+// pro envio e' ter a sessao viva em memoria — e o Send resolve por numero
+// base (resolveSession), entao qualquer JID do numero conectado funciona.
+func (m *Manager) ConnectedSessions() []ConnectedSession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ConnectedSession, 0, len(m.sessions))
+	seen := map[string]bool{} // dedup por numero base
+	for jid, sess := range m.sessions {
+		if sess.Client == nil || !sess.Client.IsConnected() {
+			continue
+		}
+		phone := sess.Phone
+		if phone == "" {
+			// Deriva do JID: "5519...:68@s.whatsapp.net" -> "5519..."
+			phone = jid
+			if at := strings.Index(phone, "@"); at > 0 {
+				phone = phone[:at]
+			}
+			if colon := strings.Index(phone, ":"); colon > 0 {
+				phone = phone[:colon]
+			}
+		}
+		if phone == "" || seen[phone] {
+			continue
+		}
+		seen[phone] = true
+		out = append(out, ConnectedSession{JID: jid, Phone: phone})
+	}
+	return out
+}
+
 func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) error {
 	// Verifica se o arquivo SQLite existe antes de tentar conectar
 	if _, err := os.Stat(s.SessionFile); os.IsNotExist(err) {

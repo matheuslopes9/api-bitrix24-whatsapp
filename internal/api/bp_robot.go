@@ -332,6 +332,15 @@ func (h *handlers) unofficialTemplateOptions(ctx context.Context, domain string)
 // sessionOptionsForDomain monta o map {jid: label} das sessoes ativas do
 // dominio filtradas por tipo. Pra Oficial: prefixa "cloud:" no JID porque
 // e' assim que o cloudMgr identifica. Pra Nao Oficial: JID cru do QR.
+//
+// Fonte primaria: ListSessionsByDomain (vinculo bitrix_accounts + status).
+// FALLBACK (so' QR / wantCloud=false): se a fonte primaria nao achar
+// nenhuma sessao QR, usa as sessoes REALMENTE conectadas em memoria
+// (waManager.ConnectedSessions). Isso torna o dropdown robusto contra:
+//   - status no banco defasado (Disconnected logo apos deploy)
+//   - device suffix divergente entre whatsapp_sessions e bitrix_accounts
+// O envio tolera qualquer JID do numero (Send usa resolveSession por
+// numero base), entao listar o JID conectado atual sempre funciona.
 func (h *handlers) sessionOptionsForDomain(ctx context.Context, domain string, wantCloud bool) (map[string]string, error) {
 	sessions, err := h.repo.ListSessionsByDomain(ctx, domain)
 	if err != nil {
@@ -361,6 +370,47 @@ func (h *handlers) sessionOptionsForDomain(ctx context.Context, domain string, w
 			out[s.JID] = label
 		}
 	}
+
+	// Fallback so' pro dropdown QR (Nao Oficial). Cloud e' stateless e nao
+	// vive no waManager, entao nao ha o que consultar em memoria.
+	//
+	// SEGURANCA MULTI-TENANT: so' inclui sessoes em memoria cujo NUMERO BASE
+	// esteja vinculado a ESTE dominio em bitrix_accounts. Sem isso, num
+	// ambiente multi-tenant o dropdown de um cliente poderia listar o numero
+	// de outro. Comparamos por numero base (ignora device suffix).
+	if !wantCloud && len(out) == 0 && h.waManager != nil {
+		acctJIDs, _ := h.repo.ListBitrixAccountJIDsByDomain(ctx, domain)
+		domainPhones := map[string]bool{}
+		for _, j := range acctJIDs {
+			if strings.HasPrefix(j, "cloud:") {
+				continue
+			}
+			base := j
+			if at := strings.Index(base, "@"); at > 0 {
+				base = base[:at]
+			}
+			if colon := strings.Index(base, ":"); colon > 0 {
+				base = base[:colon]
+			}
+			if base != "" {
+				domainPhones[base] = true
+			}
+		}
+		for _, cs := range h.waManager.ConnectedSessions() {
+			if strings.HasPrefix(cs.JID, "cloud:") {
+				continue
+			}
+			if !domainPhones[cs.Phone] {
+				continue // numero nao vinculado a este dominio — nao vaza
+			}
+			out[cs.JID] = cs.Phone
+		}
+		if len(out) > 0 {
+			h.log.Info("bp-robot: dropdown de sessao via fallback (memoria) — banco/vinculo estava defasado",
+				zap.String("domain", domain), zap.Int("sessoes", len(out)))
+		}
+	}
+
 	return out, nil
 }
 
