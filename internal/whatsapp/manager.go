@@ -918,6 +918,18 @@ func (m *Manager) ListSessions() []string {
 	return keys
 }
 
+// ResolveSessionInfo resolve uma sessao pelo JID (tolerante a device
+// suffix, via resolveSession) e retorna o ID interno + JID real atual.
+// Uso: callers fora do pacote que precisam montar jobs de fila com o
+// SessionID correto (ex: robot BizProc espelhando a msg no Open Channel).
+func (m *Manager) ResolveSessionInfo(jid string) (uuid.UUID, string, bool) {
+	sess, ok := m.resolveSession(jid)
+	if !ok || sess == nil {
+		return uuid.Nil, "", false
+	}
+	return sess.ID, sess.JID, true
+}
+
 // ConnectedSession representa uma sessao QR realmente conectada em memoria.
 type ConnectedSession struct {
 	JID   string // JID atual do device (com suffix corrente)

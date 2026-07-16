@@ -30,6 +30,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"go.uber.org/zap"
 )
 
@@ -652,4 +653,40 @@ func (h *handlers) processBPRobotSend(j *bpSendJob) {
 		zap.String("to", j.toPhone),
 		zap.String("mode", j.mode),
 		zap.String("wa_message_id", waMsgID))
+
+	// ESPELHA a mensagem no Open Channel do Bitrix. O robot envia direto
+	// pelo whatsmeow — o Bitrix nao fica sabendo (o eco from_me e' dropado
+	// no onMsg). Sem isso, o operador abre o chat do cliente e NAO VE que
+	// a automacao ja falou com ele. Empurramos um InboundJob pro pipeline
+	// normal (cria o chat na linha se nao existir + posta a msg + delivery),
+	// com prefixo "🤖 Automacao:" pro operador saber que foi o robot.
+	//
+	// Limitacao conhecida da API imconnector: so' existe direcao
+	// cliente->openline, entao a msg aparece do lado do cliente no chat —
+	// o prefixo deixa claro que foi disparo automatico nosso.
+	// So' pro modo unofficial (QR): sessoes Cloud nao vivem no waManager.
+	if !isCloud {
+		if sessID, realJID, ok := h.waManager.ResolveSessionInfo(j.sessionJID); ok {
+			mirror := &queue.InboundJob{
+				ID:          waMsgID,
+				SessionJID:  realJID,
+				SessionID:   sessID,
+				FromJID:     j.toPhone + "@s.whatsapp.net",
+				FromPhone:   j.toPhone,
+				MessageID:   waMsgID,
+				MessageType: "text",
+				Text:        "🤖 *Automação:* " + j.bodyText,
+			}
+			if perr := h.q.PushInbound(ctx, mirror); perr != nil {
+				h.log.Warn("bp-robot: espelho no open channel falhou",
+					zap.String("domain", j.domain), zap.Error(perr))
+			} else {
+				h.log.Info("bp-robot: msg espelhada no open channel",
+					zap.String("domain", j.domain), zap.String("to", j.toPhone))
+			}
+		} else {
+			h.log.Warn("bp-robot: sessao nao resolvida pra espelhar no open channel",
+				zap.String("session", j.sessionJID))
+		}
+	}
 }
