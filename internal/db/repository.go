@@ -130,11 +130,26 @@ func (r *Repository) ListActiveSessions(ctx context.Context) ([]*WhatsAppSession
 // — antes ListSessions() do manager so devolvia whatsmeow, deixando tenants
 // Cloud sempre como "Desconectado".
 func (r *Repository) ListActiveSessionsByDomain(ctx context.Context, domain string) ([]*WhatsAppSession, error) {
+	// Match tolerante ao device suffix (:72 vs :73) — ver comentario em
+	// ListSessionsByDomain. O suffix muda a cada rescan e o vinculo
+	// bitrix_accounts pode ficar defasado; match exato fazia a sessao ativa
+	// "sumir" (sidebar 0 ativas, Permissoes vazia, seletor do CRM tab).
+	// QR: compara numero base (antes de ':' e '@'). Cloud: match exato.
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+sessionColumns+`
 		  FROM whatsapp_sessions ws
 		 WHERE ws.status = 'active'
-		   AND ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)
+		   AND (
+		     ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)
+		     OR (
+		       ws.jid NOT LIKE 'cloud:%'
+		       AND SPLIT_PART(SPLIT_PART(ws.jid, '@', 1), ':', 1) IN (
+		         SELECT SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		           FROM bitrix_accounts
+		          WHERE domain = $1 AND session_jid NOT LIKE 'cloud:%'
+		       )
+		     )
+		   )
 		 ORDER BY ws.last_seen DESC`, domain)
 	if err != nil {
 		return nil, err
@@ -214,8 +229,8 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 			     ws.jid IN (SELECT session_jid FROM domain_jids)
 			     OR (
 			       ws.jid NOT LIKE 'cloud:%'
-			       AND SPLIT_PART(ws.jid, ':', 1) IN (
-			         SELECT SPLIT_PART(session_jid, ':', 1)
+			       AND SPLIT_PART(SPLIT_PART(ws.jid, '@', 1), ':', 1) IN (
+			         SELECT SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
 			           FROM domain_jids
 			          WHERE session_jid NOT LIKE 'cloud:%'
 			       )
@@ -2201,11 +2216,24 @@ func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error)
 // CountActiveSessionsByDomain conta sessoes (QR + Cloud) ativas vinculadas
 // ao domain. Usado pra enforce do limite de 10 sessoes do plano Pro.
 func (r *Repository) CountActiveSessionsByDomain(ctx context.Context, domain string) (int, error) {
+	// Match tolerante ao device suffix — mesma logica de
+	// ListActiveSessionsByDomain. Match exato zerava a contagem da sidebar
+	// apos qualquer rescan do QR (suffix :72 -> :73 diverge do vinculo).
 	var n int
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM whatsapp_sessions ws
 		WHERE ws.status = 'active'
-		  AND ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)`,
+		  AND (
+		    ws.jid IN (SELECT session_jid FROM bitrix_accounts WHERE domain = $1)
+		    OR (
+		      ws.jid NOT LIKE 'cloud:%'
+		      AND SPLIT_PART(SPLIT_PART(ws.jid, '@', 1), ':', 1) IN (
+		        SELECT SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		          FROM bitrix_accounts
+		         WHERE domain = $1 AND session_jid NOT LIKE 'cloud:%'
+		      )
+		    )
+		  )`,
 		domain).Scan(&n)
 	return n, err
 }
