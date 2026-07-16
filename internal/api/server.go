@@ -258,6 +258,7 @@ func New(
 	admin.Post("/api/tenant/sms-register", h.adminTenantSMSRegister)
 	admin.Post("/api/tenant/bp-register", h.adminTenantBPRegister)
 	admin.Get("/api/tenant/bp-debug", h.adminTenantBPDebug)
+	admin.Get("/api/tenant/bp-debug-sessions", h.adminTenantBPDebugSessions)
 	admin.Post("/api/tenant/bp-reregister", h.adminTenantBPReregister)
 	// Aliases GET pra facilitar teste rapido via browser
 	admin.Get("/api/tenant/bp-register", h.adminTenantBPRegister)

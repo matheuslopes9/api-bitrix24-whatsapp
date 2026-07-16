@@ -198,10 +198,29 @@ func (r *Repository) ListSessionsByDomain(ctx context.Context, domain string) ([
 			SELECT session_jid FROM bitrix_accounts WHERE domain = $1
 		),
 		real AS (
+			-- Match TOLERANTE ao device suffix (:66 vs :68 etc). O jid do
+			-- whatsmeow ganha um novo device suffix a CADA reconexao/rescan,
+			-- entao whatsapp_sessions.jid (ex: 55..:68) frequentemente diverge
+			-- do bitrix_accounts.session_jid gravado no vinculo (ex: 55..:66).
+			-- Match exato (IN) fazia a sessao SUMIR do dropdown do robot BizProc
+			-- apos qualquer reconexao. Aqui comparamos o NUMERO BASE (parte antes
+			-- do ':', que e' estavel) — igual GetBitrixAccountByJID ja faz.
+			-- Cloud (cloud:...) continua match exato: SPLIT_PART daria "cloud"
+			-- pra todas e causaria colisao entre contas oficiais.
 			SELECT `+sessionColumns+`
 			  FROM whatsapp_sessions ws
 			 WHERE ws.status <> 'banned'
-			   AND ws.jid IN (SELECT session_jid FROM domain_jids)
+			   AND (
+			     ws.jid IN (SELECT session_jid FROM domain_jids)
+			     OR (
+			       ws.jid NOT LIKE 'cloud:%'
+			       AND SPLIT_PART(ws.jid, ':', 1) IN (
+			         SELECT SPLIT_PART(session_jid, ':', 1)
+			           FROM domain_jids
+			          WHERE session_jid NOT LIKE 'cloud:%'
+			       )
+			     )
+			   )
 		),
 		shadow_jids AS (
 			-- JIDs unicos em messages mas NAO em whatsapp_sessions, restrito
@@ -1119,6 +1138,27 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 		return nil, err
 	}
 	return &a, nil
+}
+
+// ListBitrixAccountJIDsByDomain retorna os session_jid vinculados a um
+// dominio em bitrix_accounts. Usado pra diagnostico (comparar com o jid
+// atual em whatsapp_sessions e detectar descasamento de device suffix).
+func (r *Repository) ListBitrixAccountJIDsByDomain(ctx context.Context, domain string) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT session_jid FROM bitrix_accounts WHERE domain = $1 ORDER BY updated_at DESC`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		out = append(out, jid)
+	}
+	return out, rows.Err()
 }
 
 // GetBitrixAccountByConnectorID localiza a sessão dona de um connector_id no Bitrix.

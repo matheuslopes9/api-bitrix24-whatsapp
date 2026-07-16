@@ -1103,6 +1103,58 @@ func (h *handlers) adminTenantBPDebug(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+// GET /admin/api/tenant/bp-debug-sessions?domain=...
+// Diagnostico do dropdown de SESSAO vazio no robot. Mostra:
+//   - sessions_raw: todas as sessoes que ListSessionsByDomain retorna
+//     (jid, phone, status, type) — o que o robot enxerga do banco
+//   - session_options_qr: o map final {jid:label} que vira o dropdown QR
+//     (so' sessoes status=active E type!=cloud)
+//   - bitrix_accounts_jids: os session_jid vinculados ao dominio em
+//     bitrix_accounts (pra detectar descasamento de device suffix, ex:
+//     whatsapp_sessions tem :68 mas bitrix_accounts tem :66)
+//
+// Se sessions_raw mostra a sessao mas session_options_qr vem vazio, a
+// causa e' status != active OU o device suffix descasado no vinculo.
+func (h *handlers) adminTenantBPDebugSessions(c *fiber.Ctx) error {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	ctx := c.Context()
+	domainKey := normalizePortalDomain(domain)
+
+	sessions, sErr := h.repo.ListSessionsByDomain(ctx, domainKey)
+	sessRaw := []map[string]interface{}{}
+	for _, s := range sessions {
+		sessRaw = append(sessRaw, map[string]interface{}{
+			"jid":    s.JID,
+			"phone":  s.Phone,
+			"status": string(s.Status),
+			"type":   string(s.Type),
+			"name":   s.DisplayName,
+		})
+	}
+
+	optsQR, _ := h.sessionOptionsForDomain(ctx, domainKey, false)
+	optsCloud, _ := h.sessionOptionsForDomain(ctx, domainKey, true)
+
+	// JIDs vinculados em bitrix_accounts (pra ver descasamento de suffix).
+	acctJIDs, _ := h.repo.ListBitrixAccountJIDsByDomain(ctx, domainKey)
+
+	out := fiber.Map{
+		"domain":               domainKey,
+		"sessions_raw":         sessRaw,
+		"session_options_qr":   optsQR,
+		"session_options_cloud": optsCloud,
+		"bitrix_accounts_jids": acctJIDs,
+		"hint":                 "Se sessions_raw tem a sessao mas session_options_qr vazio: ou status!=active, ou device suffix descasado (compare jid em sessions_raw vs bitrix_accounts_jids).",
+	}
+	if sErr != nil {
+		out["sessions_error"] = sErr.Error()
+	}
+	return c.JSON(out)
+}
+
 // POST /admin/api/tenant/bp-reregister?domain=... — forca delete + add
 // do robot. Util quando o registro persistiu mas com payload invalido
 // (ex: PROPERTIES que o Bitrix nao renderiza). Garante state limpo.
