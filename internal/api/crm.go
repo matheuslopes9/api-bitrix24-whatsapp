@@ -1110,6 +1110,36 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
+	// ABRE o chat no Open Channel JA' NA PRIMEIRA MSG do atendente. Sem isso,
+	// o chat so' nascia quando o CLIENTE respondia — o supervisor abria o
+	// Canal Aberto e nao via que o atendente ja tinha iniciado conversa.
+	// Espelha via pipeline inbound (cria o chat + posta + delivery), mesmo
+	// padrao do robot BizProc. Limitacao imconnector: a msg espelhada aparece
+	// do lado do cliente no chat — o rotulo deixa claro que foi envio externo.
+	if sessID, realJID, ok := h.waManager.ResolveSessionInfo(body.SessionJID); ok {
+		mirrorID := "crmext-" + uuid.New().String()
+		mirror := &queue.InboundJob{
+			ID:          mirrorID,
+			SessionJID:  realJID,
+			SessionID:   sessID,
+			FromJID:     toJID,
+			FromPhone:   phone,
+			MessageID:   mirrorID,
+			MessageType: "text",
+			Text:        fmt.Sprintf("📤 *Mensagem enviada externamente (%s):*\n%s", operatorName, body.Message),
+		}
+		if perr := h.q.PushInbound(c.Context(), mirror); perr != nil {
+			h.log.Warn("crm send: espelho no open channel falhou",
+				zap.String("to_jid", toJID), zap.Error(perr))
+		} else {
+			h.log.Info("crm send: chat aberto no open channel (primeira msg espelhada)",
+				zap.String("to_jid", toJID), zap.String("operator", operatorName))
+		}
+	} else {
+		h.log.Warn("crm send: sessao nao resolvida pra abrir chat no open channel",
+			zap.String("session", body.SessionJID))
+	}
+
 	h.log.Info("crm send: no chat — sent direct to WhatsApp with prefix",
 		zap.String("to_jid", toJID),
 		zap.String("operator", operatorName),
