@@ -1036,7 +1036,6 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if err != nil || portal == nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "portal não encontrado"})
 	}
-	creds := h.portalToCreds(portal)
 
 	phone := normalizeWAPhone(body.Phone)
 	toJID := phone + "@s.whatsapp.net"
@@ -1058,45 +1057,22 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		operatorName = "UC Talk"
 	}
 
-	// 1. Busca o chat_id do Open Lines vinculado a este contato/lead/deal.
-	//    Necessário para registrar a mensagem no Open Lines existente (não criar paralela).
-	chatID := ""
-	if body.EntityID != "" {
-		bxEntityType := strings.ToUpper(body.EntityType)
-		chatID, _ = h.bitrixClient.GetCRMChatLastID(c.Context(), creds, bxEntityType, body.EntityID)
-		if chatID == "" {
-			if chatsRaw, e := h.bitrixClient.GetCRMChats(c.Context(), creds, bxEntityType, body.EntityID); e == nil {
-				chatID = extractChatID(chatsRaw)
-			}
-		}
-	}
-
-	// 2. Se há chat no Open Lines, registra a msg lá. O Bitrix roteia para o
-	//    connector (ONIMCONNECTORMESSAGEADD) que enfileira o OutboundJob via
-	//    bitrixConnectorEvent — então NÃO enfileiramos direto aqui (evita duplicar).
-	//    Se não há chat ainda, enfileira direto pelo WhatsApp como fallback.
-	if chatID != "" {
-		if _, sendErr := h.bitrixClient.SendOperatorMessage(c.Context(), creds, chatID, body.Message); sendErr != nil {
-			h.log.Warn("crm send: SendOperatorMessage failed, falling back to direct WA send",
-				zap.String("chat_id", chatID), zap.Error(sendErr))
-			// Fallback: se falhou no Open Lines, envia direto pelo WA para não perder a msg
-			textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
-			job := &queue.OutboundJob{
-				SessionJID: body.SessionJID, ToJID: toJID, Text: textWithPrefix,
-				BitrixConnector: connectorID, BitrixLine: lineID, OperatorName: operatorName,
-			}
-			if err := h.q.PushOutbound(c.Context(), job); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar: " + err.Error()})
-			}
-			return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID})
-		}
-		h.log.Info("crm send: registered in Open Lines (Bitrix roteia para WA via connector)",
-			zap.String("chat_id", chatID), zap.String("operator", operatorName))
-		return c.JSON(fiber.Map{"status": "queued", "to_jid": toJID, "chat_id": chatID, "via": "openlines"})
-	}
-
-	// 3. Sem chat ainda — primeira mensagem do contato. Envia direto pelo WhatsApp
-	//    com prefixo formatado igual ao Open Lines.
+	// CAMINHO UNICO: envia direto pelo WhatsApp + espelha no Open Channel.
+	//
+	// HISTORICO: a versao anterior tinha 2 caminhos. Quando o contato ja tinha
+	// um chat no Open Lines (GetCRMChatLastID), postavamos via im.message.add
+	// no chat encontrado. PROBLEMA: im.message.add insere a msg no chat mas
+	// NAO REABRE a sessao do Open Lines — se a sessao estava encerrada (caso
+	// comum: qualquer contato com historico antigo), a mensagem caia num
+	// dialogo arquivado que NINGUEM via. O cliente recebia no WhatsApp, mas o
+	// Canal Aberto so mostrava a conversa quando o CLIENTE respondia.
+	//
+	// O UNICO mecanismo que comprovadamente cria E reabre o dialogo e' o
+	// pipeline do imconnector (o mesmo que roda quando o cliente manda msg).
+	// Entao: TODO envio da aba vai direto pro WA + espelho via InboundJob com
+	// rotulo "📤 Mensagem enviada externamente (Operador)". Funciona pros 3
+	// casos: sem chat (cria), sessao encerrada (reabre), sessao aberta
+	// (aparece rotulada — visivel e sem duplicar envio ao cliente).
 	textWithPrefix := fmt.Sprintf("*%s:*\n%s", operatorName, body.Message)
 	job := &queue.OutboundJob{
 		SessionJID:      body.SessionJID,
@@ -1110,12 +1086,10 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "falha ao enfileirar mensagem: " + err.Error()})
 	}
 
-	// ABRE o chat no Open Channel JA' NA PRIMEIRA MSG do atendente. Sem isso,
-	// o chat so' nascia quando o CLIENTE respondia — o supervisor abria o
-	// Canal Aberto e nao via que o atendente ja tinha iniciado conversa.
-	// Espelha via pipeline inbound (cria o chat + posta + delivery), mesmo
-	// padrao do robot BizProc. Limitacao imconnector: a msg espelhada aparece
-	// do lado do cliente no chat — o rotulo deixa claro que foi envio externo.
+	// Espelho no Open Channel: cria OU REABRE o dialogo na linha, posta a msg
+	// rotulada e marca delivery — mesmo padrao do robot BizProc. Limitacao
+	// imconnector: a msg espelhada aparece do lado do cliente no chat — o
+	// rotulo deixa claro que foi envio externo do operador.
 	if sessID, realJID, ok := h.waManager.ResolveSessionInfo(body.SessionJID); ok {
 		mirrorID := "crmext-" + uuid.New().String()
 		mirror := &queue.InboundJob{
@@ -1132,7 +1106,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 			h.log.Warn("crm send: espelho no open channel falhou",
 				zap.String("to_jid", toJID), zap.Error(perr))
 		} else {
-			h.log.Info("crm send: chat aberto no open channel (primeira msg espelhada)",
+			h.log.Info("crm send: dialogo aberto/reaberto no open channel (msg espelhada)",
 				zap.String("to_jid", toJID), zap.String("operator", operatorName))
 		}
 	} else {
@@ -1140,7 +1114,7 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 			zap.String("session", body.SessionJID))
 	}
 
-	h.log.Info("crm send: no chat — sent direct to WhatsApp with prefix",
+	h.log.Info("crm send: enviado direto ao WhatsApp + espelho no open channel",
 		zap.String("to_jid", toJID),
 		zap.String("operator", operatorName),
 	)
