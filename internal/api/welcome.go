@@ -274,8 +274,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
       <div class="name">Básico</div>
       <div class="desc">Para times que só precisam conectar o WhatsApp ao Bitrix24 e atender clientes pelo CRM.</div>
       <div class="price-row">
-        <span class="price">Grátis</span>
-        <span class="period">trial 7 dias</span>
+        <span class="price">Básico</span>
+        <span class="period">teste grátis de 7 dias incluso</span>
       </div>
       <ul>
         <li>1 número WhatsApp conectado</li>
@@ -285,7 +285,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <li>Histórico de 30 dias</li>
       </ul>
       <div class="cta">
-        <a class="btn btn-ghost" href="/dashboard" target="_top">Continuar com Básico</a>
+        <button class="btn btn-primary" id="btn-assinar-basic">Assinar Básico — Boleto</button>
+        <a class="btn btn-ghost" href="/dashboard" target="_top">Continuar teste grátis</a>
       </div>
     </div>
 
@@ -318,42 +319,47 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 </div>
 <script>
 (function(){
-  var btn = document.getElementById('btn-assinar-pro');
-  if (!btn) return;
-  btn.addEventListener('click', function(){
-    btn.disabled = true;
-    btn.textContent = 'Gerando boleto...';
-    fetch('/ui/billing/checkout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({method: 'boleto'})
-    })
-    .then(function(r){ return r.json().then(function(j){ return {status: r.status, body: j}; }); })
-    .then(function(res){
-      if (res.status === 200 && res.body && res.body.boleto_url) {
-        btn.textContent = 'Boleto gerado! Abrindo...';
-        window.open(res.body.boleto_url, '_blank');
-        setTimeout(function(){
-          btn.disabled = false;
-          btn.textContent = 'Assinar Pro agora — Boleto';
-        }, 3000);
-        return;
-      }
-      // 401 = sem cookie tenant (pagina aberta fora do Bitrix) | 503 = gateway
-      // nao configurado. Fallback: manda pro comercial.
-      var msg = (res.body && res.body.error) ? res.body.error :
-        'Nao foi possivel gerar o boleto agora. Fale com o comercial.';
-      alert(msg);
-      btn.disabled = false;
-      btn.textContent = 'Assinar Pro agora — Boleto';
-    })
-    .catch(function(){
-      alert('Falha de conexao ao gerar boleto. Tente novamente ou fale com o comercial.');
-      btn.disabled = false;
-      btn.textContent = 'Assinar Pro agora — Boleto';
+  // 2 planos pagos: Basico e Pro. Cada botao chama o checkout com o plano.
+  function ligarCheckout(btnId, plano, labelOriginal) {
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', function(){
+      btn.disabled = true;
+      btn.textContent = 'Gerando boleto...';
+      fetch('/ui/billing/checkout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({plan: plano, method: 'boleto'})
+      })
+      .then(function(r){ return r.json().then(function(j){ return {status: r.status, body: j}; }); })
+      .then(function(res){
+        if (res.status === 200 && res.body && res.body.boleto_url) {
+          btn.textContent = 'Boleto gerado! Abrindo...';
+          window.open(res.body.boleto_url, '_blank');
+          setTimeout(function(){
+            btn.disabled = false;
+            btn.textContent = labelOriginal;
+          }, 3000);
+          return;
+        }
+        // 401 = sem cookie tenant (pagina fora do Bitrix) | 503 = gateway
+        // nao configurado. Fallback: manda pro comercial.
+        var msg = (res.body && res.body.error) ? res.body.error :
+          'Nao foi possivel gerar o boleto agora. Fale com o comercial.';
+        alert(msg);
+        btn.disabled = false;
+        btn.textContent = labelOriginal;
+      })
+      .catch(function(){
+        alert('Falha de conexao ao gerar boleto. Tente novamente ou fale com o comercial.');
+        btn.disabled = false;
+        btn.textContent = labelOriginal;
+      });
     });
-  });
+  }
+  ligarCheckout('btn-assinar-basic', 'basic', 'Assinar Básico — Boleto');
+  ligarCheckout('btn-assinar-pro', 'pro', 'Assinar Pro agora — Boleto');
 })();
 </script>
 </body>

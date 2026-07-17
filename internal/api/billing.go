@@ -109,7 +109,7 @@ type mpTransactionResponse struct {
 }
 
 // maxipagoCreateBoleto cria uma venda-boleto e retorna (resposta, raw, err).
-func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payerName string, amountCents int64, dueDate time.Time) (*mpTransactionResponse, string, error) {
+func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payerName, planLabel string, amountCents int64, dueDate time.Time) (*mpTransactionResponse, string, error) {
 	reqBody := mpTransactionRequest{
 		Version: "3.1.1.15",
 		Verification: mpVerification{
@@ -123,7 +123,7 @@ func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payer
 			TransactionDetail: mpTransactionDetail{PayType: mpPayType{Boleto: &mpBoleto{
 				ExpirationDate: dueDate.Format("2006-01-02"),
 				Number:         fmt.Sprintf("%d", time.Now().Unix()%1000000),
-				Instructions:   "UC Talk - Plano Pro. Nao receber apos o vencimento.",
+				Instructions:   "UC Talk - Plano " + planLabel + ". Nao receber apos o vencimento.",
 			}}},
 			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
 		}},
@@ -182,6 +182,7 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "tenant nao identificado"})
 	}
 	var body struct {
+		Plan      string `json:"plan"`
 		Method    string `json:"method"`
 		PayerName string `json:"payer_name"`
 	}
@@ -194,17 +195,34 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 			"error": "metodo nao suportado ainda — use boleto",
 		})
 	}
+	// 2 planos pagos: basic e pro. Trial e' so' o periodo de teste do Basico.
+	plan := strings.ToLower(strings.TrimSpace(body.Plan))
+	var amount int64
+	switch plan {
+	case "basic":
+		amount = int64(h.cfg.Billing.BasicPriceCents)
+	case "", "pro":
+		plan = "pro"
+		amount = int64(h.cfg.Billing.ProPriceCents)
+	default:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "plano invalido — use basic ou pro",
+		})
+	}
 	payerName := strings.TrimSpace(body.PayerName)
 	if payerName == "" {
 		payerName = domain
 	}
 
-	amount := int64(h.cfg.Billing.ProPriceCents)
 	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	due := time.Now().AddDate(0, 0, 5) // vence em 5 dias
 
+	planLabel := "Basico"
+	if plan == "pro" {
+		planLabel = "Pro"
+	}
 	ctx := c.Context()
-	mpResp, raw, err := h.maxipagoCreateBoleto(ctx, ref, payerName, amount, due)
+	mpResp, raw, err := h.maxipagoCreateBoleto(ctx, ref, payerName, planLabel, amount, due)
 	if err != nil {
 		h.log.Error("billing: maxipago boleto falhou",
 			zap.String("domain", domain), zap.Error(err))
@@ -235,7 +253,7 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	charge := &db.BillingCharge{
 		ID:              uuid.New(),
 		Domain:          domain,
-		Plan:            "pro",
+		Plan:            plan,
 		Method:          "boleto",
 		AmountCents:     amount,
 		ReferenceNum:    ref,
@@ -250,11 +268,12 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"ok":            true,
+		"plan":          plan,
 		"reference_num": ref,
 		"boleto_url":    mpResp.BoletoURL,
 		"amount_cents":  amount,
 		"due_date":      due.Format("2006-01-02"),
-		"hint":          "Abra o boleto e pague. Assim que o maxiPago confirmar, o plano Pro e' liberado automaticamente.",
+		"hint":          "Abra o boleto e pague. Assim que o maxiPago confirmar, o plano e' liberado automaticamente.",
 	})
 }
 
@@ -323,17 +342,23 @@ func (h *handlers) billingMaxipagoPostback(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// LIBERACAO AUTOMATICA: ativa Pro por N dias a partir de agora.
+	// LIBERACAO AUTOMATICA: ativa O PLANO PAGO (basic ou pro) por N dias.
+	paidPlan := charge.Plan
+	if paidPlan != "basic" && paidPlan != "pro" {
+		paidPlan = "pro" // defensivo: charge legada sem plano valido
+	}
 	until := time.Now().AddDate(0, 0, h.cfg.Billing.ActivateDays)
-	notes := fmt.Sprintf("pagamento maxipago ref=%s em %s", ref, time.Now().Format("2006-01-02 15:04"))
-	if err := h.repo.SetTenantPlan(ctx, charge.Domain, "pro", "active", &until, notes); err != nil {
+	notes := fmt.Sprintf("pagamento maxipago plano=%s ref=%s em %s",
+		paidPlan, ref, time.Now().Format("2006-01-02 15:04"))
+	if err := h.repo.SetTenantPlan(ctx, charge.Domain, paidPlan, "active", &until, notes); err != nil {
 		h.log.Error("billing: ativar plano falhou",
 			zap.String("domain", charge.Domain), zap.Error(err))
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	h.log.Info("billing: PAGAMENTO CONFIRMADO — plano Pro ativado",
+	h.log.Info("billing: PAGAMENTO CONFIRMADO — plano ativado",
 		zap.String("domain", charge.Domain),
+		zap.String("plan", paidPlan),
 		zap.String("reference", ref),
 		zap.Time("active_until", until))
 	return c.SendStatus(fiber.StatusOK)

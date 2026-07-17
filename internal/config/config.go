@@ -27,8 +27,9 @@ type BillingConfig struct {
 	MaxiPagoEnv         string // MAXIPAGO_ENV: sandbox (default) | production
 	ProcessorCard       string // MAXIPAGO_PROCESSOR_CARD: 1 = simulador sandbox
 	ProcessorBoleto     string // MAXIPAGO_PROCESSOR_BOLETO: 12 = boleto teste
+	BasicPriceCents     int    // MAXIPAGO_BASIC_PRICE_CENTS: preco do Basico em centavos
 	ProPriceCents       int    // MAXIPAGO_PRO_PRICE_CENTS: preco do Pro em centavos
-	ActivateDays        int    // MAXIPAGO_ACTIVATE_DAYS: dias de Pro por pagamento
+	ActivateDays        int    // MAXIPAGO_ACTIVATE_DAYS: dias liberados por pagamento
 }
 
 type AppConfig struct {
@@ -145,6 +146,7 @@ func Load() (*Config, error) {
 			MaxiPagoEnv:         getEnvWithDefault("MAXIPAGO_ENV", "sandbox"),
 			ProcessorCard:       getEnvWithDefault("MAXIPAGO_PROCESSOR_CARD", "1"),
 			ProcessorBoleto:     getEnvWithDefault("MAXIPAGO_PROCESSOR_BOLETO", "12"),
+			BasicPriceCents:     getIntWithDefault("MAXIPAGO_BASIC_PRICE_CENTS", 9900),
 			ProPriceCents:       getIntWithDefault("MAXIPAGO_PRO_PRICE_CENTS", 19900),
 			ActivateDays:        getIntWithDefault("MAXIPAGO_ACTIVATE_DAYS", 30),
 		},
