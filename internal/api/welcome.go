@@ -308,13 +308,53 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
         <li>Suporte prioritário</li>
       </ul>
       <div class="cta">
-        <a class="btn btn-primary" href="https://wa.me/551932345030?text=Quero%20o%20plano%20Pro%20do%20UC%20Talk" target="_blank">Falar com comercial (WhatsApp)</a>
-        <a class="btn btn-ghost" href="mailto:comercial@uctechnology.com.br?subject=UC%20Talk%20-%20Plano%20Pro" target="_blank">Enviar e-mail</a>
+        <button class="btn btn-primary" id="btn-assinar-pro">Assinar Pro agora — Boleto</button>
+        <a class="btn btn-ghost" href="https://wa.me/551932345030?text=Quero%20o%20plano%20Pro%20do%20UC%20Talk" target="_blank">Falar com comercial (WhatsApp)</a>
       </div>
     </div>
   </div>
 
   <div class="back"><a href="/dashboard" target="_top">← Voltar pro App</a></div>
 </div>
+<script>
+(function(){
+  var btn = document.getElementById('btn-assinar-pro');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    btn.disabled = true;
+    btn.textContent = 'Gerando boleto...';
+    fetch('/ui/billing/checkout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({method: 'boleto'})
+    })
+    .then(function(r){ return r.json().then(function(j){ return {status: r.status, body: j}; }); })
+    .then(function(res){
+      if (res.status === 200 && res.body && res.body.boleto_url) {
+        btn.textContent = 'Boleto gerado! Abrindo...';
+        window.open(res.body.boleto_url, '_blank');
+        setTimeout(function(){
+          btn.disabled = false;
+          btn.textContent = 'Assinar Pro agora — Boleto';
+        }, 3000);
+        return;
+      }
+      // 401 = sem cookie tenant (pagina aberta fora do Bitrix) | 503 = gateway
+      // nao configurado. Fallback: manda pro comercial.
+      var msg = (res.body && res.body.error) ? res.body.error :
+        'Nao foi possivel gerar o boleto agora. Fale com o comercial.';
+      alert(msg);
+      btn.disabled = false;
+      btn.textContent = 'Assinar Pro agora — Boleto';
+    })
+    .catch(function(){
+      alert('Falha de conexao ao gerar boleto. Tente novamente ou fale com o comercial.');
+      btn.disabled = false;
+      btn.textContent = 'Assinar Pro agora — Boleto';
+    });
+  });
+})();
+</script>
 </body>
 </html>`

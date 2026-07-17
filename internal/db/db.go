@@ -384,6 +384,31 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE tenant_plans
 				ADD COLUMN IF NOT EXISTS master_auto_set_at TIMESTAMPTZ;
 		`},
+		{"028_billing_charges", `
+			-- Cobrancas geradas via gateway maxiPago (boleto/cartao).
+			-- 1 row por tentativa de cobranca. reference_num e' a chave que
+			-- amarra o postback do maxiPago de volta ao tenant.
+			--
+			-- status: 'pending' (gerada, aguardando pagto) | 'paid' |
+			--         'failed' | 'cancelled'
+			CREATE TABLE IF NOT EXISTS billing_charges (
+				id                 UUID PRIMARY KEY,
+				domain             TEXT NOT NULL,
+				plan               TEXT NOT NULL DEFAULT 'pro',
+				method             TEXT NOT NULL DEFAULT 'boleto',
+				amount_cents       BIGINT NOT NULL,
+				reference_num      TEXT NOT NULL UNIQUE,
+				mp_order_id        TEXT NOT NULL DEFAULT '',
+				mp_transaction_id  TEXT NOT NULL DEFAULT '',
+				boleto_url         TEXT NOT NULL DEFAULT '',
+				status             TEXT NOT NULL DEFAULT 'pending',
+				raw_response       TEXT NOT NULL DEFAULT '',
+				created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				paid_at            TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_billing_charges_domain ON billing_charges (domain);
+			CREATE INDEX IF NOT EXISTS idx_billing_charges_status ON billing_charges (status);
+		`},
 	}
 
 	for _, m := range migrations {

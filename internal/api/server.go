@@ -116,6 +116,10 @@ func New(
 	ui.Get("/templates/purge-broken", h.requireProPlan, h.uiTemplatesPurgeBroken)
 	ui.Post("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
 	ui.Get("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
+	// Billing (maxiPago): checkout gera boleto do Pro; charges = historico.
+	// SEM gate de plano: cliente com trial EXPIRADO precisa conseguir pagar.
+	ui.Post("/billing/checkout", h.uiBillingCheckout)
+	ui.Get("/billing/charges", h.uiBillingCharges)
 	ui.Post("/templates/create", h.requireProPlan, h.uiTemplatesCreate)
 	ui.Post("/templates/update", h.requireProPlan, h.uiTemplatesUpdate)
 	ui.Post("/templates/delete", h.requireProPlan, h.uiTemplatesDelete)
@@ -171,6 +175,9 @@ func New(
 	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
 	app.Get("/bitrix-app", h.bitrixAppMenu)           // LEFT_MENU placement — usuarios liberados
 	app.Post("/bitrix-app", h.bitrixAppMenu)
+	// Postback do maxiPago (publico — o gateway chama). Configurar no portal
+	// maxiPago: Configuracoes > URL de notificacao apontando pra este path.
+	app.Post("/billing/maxipago/postback", h.billingMaxipagoPostback)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
 	bx.Get("/crm/tab", h.bitrixCRMTab)

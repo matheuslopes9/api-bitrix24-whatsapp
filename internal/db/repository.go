@@ -2283,3 +2283,88 @@ func (r *Repository) PurgePortalCompletely(ctx context.Context, domain string) (
 	}
 	return out, nil
 }
+
+// ─── Billing (maxiPago) ────────────────────────────────────────────────────
+
+// BillingCharge representa uma cobranca gerada no gateway maxiPago.
+type BillingCharge struct {
+	ID              uuid.UUID  `json:"id"`
+	Domain          string     `json:"domain"`
+	Plan            string     `json:"plan"`
+	Method          string     `json:"method"`
+	AmountCents     int64      `json:"amount_cents"`
+	ReferenceNum    string     `json:"reference_num"`
+	MPOrderID       string     `json:"mp_order_id"`
+	MPTransactionID string     `json:"mp_transaction_id"`
+	BoletoURL       string     `json:"boleto_url"`
+	Status          string     `json:"status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	PaidAt          *time.Time `json:"paid_at,omitempty"`
+}
+
+// CreateBillingCharge insere uma cobranca pending.
+func (r *Repository) CreateBillingCharge(ctx context.Context, c *BillingCharge) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO billing_charges (id, domain, plan, method, amount_cents,
+			reference_num, mp_order_id, mp_transaction_id, boleto_url, status, raw_response)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)`,
+		c.ID, c.Domain, c.Plan, c.Method, c.AmountCents,
+		c.ReferenceNum, c.MPOrderID, c.MPTransactionID, c.BoletoURL, "")
+	return err
+}
+
+// GetBillingChargeByReference localiza cobranca pelo reference_num (chave do
+// postback maxiPago).
+func (r *Repository) GetBillingChargeByReference(ctx context.Context, ref string) (*BillingCharge, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, plan, method, amount_cents, reference_num,
+		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
+		FROM billing_charges WHERE reference_num = $1`, ref)
+	var c BillingCharge
+	if err := row.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
+		&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
+		&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// MarkBillingChargePaid marca a cobranca como paga (idempotente) e grava o
+// payload bruto do postback pra auditoria/tuning.
+func (r *Repository) MarkBillingChargePaid(ctx context.Context, ref, rawPayload string) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE billing_charges
+		   SET status = 'paid', paid_at = NOW(), raw_response = $2
+		 WHERE reference_num = $1 AND status <> 'paid'`, ref, rawPayload)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// ListBillingChargesByDomain — historico de cobrancas do tenant (recentes primeiro).
+func (r *Repository) ListBillingChargesByDomain(ctx context.Context, domain string, limit int) ([]*BillingCharge, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, domain, plan, method, amount_cents, reference_num,
+		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
+		FROM billing_charges WHERE domain = $1
+		ORDER BY created_at DESC LIMIT $2`, domain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BillingCharge
+	for rows.Next() {
+		var c BillingCharge
+		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
+			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
+			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}

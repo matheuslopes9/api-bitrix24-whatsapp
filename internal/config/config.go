@@ -15,6 +15,20 @@ type Config struct {
 	Bitrix   BitrixConfig
 	Queue    QueueConfig
 	Watchdog WatchdogConfig
+	Billing  BillingConfig
+}
+
+// BillingConfig — gateway maxiPago (Rede). Sandbox: testapi.maxipago.net.
+// MERCHANT_ID/KEY vem do portal maxiPago (Configuracoes > Dados da Loja).
+// Env "sandbox" | "production" decide a base URL da API XML.
+type BillingConfig struct {
+	MaxiPagoMerchantID  string // MAXIPAGO_MERCHANT_ID
+	MaxiPagoMerchantKey string // MAXIPAGO_MERCHANT_KEY
+	MaxiPagoEnv         string // MAXIPAGO_ENV: sandbox (default) | production
+	ProcessorCard       string // MAXIPAGO_PROCESSOR_CARD: 1 = simulador sandbox
+	ProcessorBoleto     string // MAXIPAGO_PROCESSOR_BOLETO: 12 = boleto teste
+	ProPriceCents       int    // MAXIPAGO_PRO_PRICE_CENTS: preco do Pro em centavos
+	ActivateDays        int    // MAXIPAGO_ACTIVATE_DAYS: dias de Pro por pagamento
 }
 
 type AppConfig struct {
@@ -124,6 +138,15 @@ func Load() (*Config, error) {
 		},
 		Watchdog: WatchdogConfig{
 			PingIntervalSecs: getIntWithDefault("WATCHDOG_PING_INTERVAL_SECS", 30),
+		},
+		Billing: BillingConfig{
+			MaxiPagoMerchantID:  viper.GetString("MAXIPAGO_MERCHANT_ID"),
+			MaxiPagoMerchantKey: viper.GetString("MAXIPAGO_MERCHANT_KEY"),
+			MaxiPagoEnv:         getEnvWithDefault("MAXIPAGO_ENV", "sandbox"),
+			ProcessorCard:       getEnvWithDefault("MAXIPAGO_PROCESSOR_CARD", "1"),
+			ProcessorBoleto:     getEnvWithDefault("MAXIPAGO_PROCESSOR_BOLETO", "12"),
+			ProPriceCents:       getIntWithDefault("MAXIPAGO_PRO_PRICE_CENTS", 19900),
+			ActivateDays:        getIntWithDefault("MAXIPAGO_ACTIVATE_DAYS", 30),
 		},
 	}
 

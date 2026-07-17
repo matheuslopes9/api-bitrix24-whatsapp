@@ -1768,8 +1768,9 @@ function atualizarPlano() {
       if (isExpired) {
         dot.style.background = '#f87171';
         if (labelEl) labelEl.textContent = 'EXPIRADO';
-        if (detail) detail.innerHTML = 'Acesso bloqueado.<br>Entre em contato comercial pra reativar.';
+        if (detail) detail.innerHTML = 'Acesso bloqueado.<br>Veja os planos pra reativar.';
         if (upgrade) upgrade.style.display = 'block';
+        mostrarPopupPlanoExpirado();
       } else if (isTrial) {
         dot.style.background = '#fbbf24';
         if (labelEl) labelEl.textContent = 'TRIAL';
@@ -1807,6 +1808,30 @@ function atualizarPlano() {
       });
     })
     .catch(function(){ /* silencioso */ });
+}
+
+// Popup bloqueante quando o trial de 7 dias expira. Mostrado 1x por
+// carregamento de pagina (fechar esconde ate o proximo reload — o acesso
+// continua bloqueado pelo backend de qualquer forma).
+var _popupExpiradoJaMostrado = false;
+function mostrarPopupPlanoExpirado() {
+  if (_popupExpiradoJaMostrado) return;
+  _popupExpiradoJaMostrado = true;
+  if (document.getElementById('plan-expired-overlay')) return;
+  var ov = document.createElement('div');
+  ov.id = 'plan-expired-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  ov.innerHTML =
+    '<div style="max-width:480px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(248,113,113,.35);border-radius:20px;padding:34px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);">' +
+      '<div style="font-size:44px;margin-bottom:12px;">⏰</div>' +
+      '<h2 style="font-size:22px;font-weight:800;color:#f1f5f9;margin:0 0 10px;">Seu período de teste terminou</h2>' +
+      '<p style="font-size:14px;color:#94a3b8;line-height:1.6;margin:0 0 22px;">Os 7 dias de trial gratuito do UC Talk chegaram ao fim. Pra continuar enviando e recebendo mensagens do WhatsApp no seu Bitrix24, escolha um plano.</p>' +
+      '<div style="display:flex;flex-direction:column;gap:10px;">' +
+        '<a href="/planos" target="_top" style="display:block;padding:14px;border-radius:12px;background:linear-gradient(90deg,#25D366,#10b981);color:#fff;font-weight:700;font-size:15px;text-decoration:none;">Ver planos e assinar</a>' +
+        '<button onclick="document.getElementById(\'plan-expired-overlay\').style.display=\'none\'" style="padding:11px;border-radius:12px;background:rgba(255,255,255,.05);color:#64748b;font-size:13px;border:1px solid rgba(255,255,255,.08);cursor:pointer;">Fechar (acesso continua bloqueado)</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
 }
 
 function renderizarDispositivos(sessoes) {
