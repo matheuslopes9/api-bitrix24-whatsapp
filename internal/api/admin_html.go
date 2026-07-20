@@ -67,7 +67,7 @@ const adminHomeHTML = `<!doctype html>
 
   /* ── SIDEBAR ── */
   .sidebar{width:var(--sbw);flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:60;transition:transform .2s}
-  .sb-brand{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:18px 18px 16px;border-bottom:1px solid var(--border)}
+  .sb-brand{display:flex;flex-direction:column;align-items:center;gap:8px;padding:22px 16px 18px;border-bottom:1px solid var(--border)}
   .sb-brand .logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--green),#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
   .sb-brand .t1{font-size:.98em;font-weight:800;line-height:1.1}
   .sb-brand .t2{font-size:.68em;color:var(--dim);font-weight:600;margin-top:1px}
@@ -193,8 +193,8 @@ const adminHomeHTML = `<!doctype html>
 
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
-    <img src="/assets/logo.png" alt="UC Talk" style="height:34px;width:auto;max-width:150px;object-fit:contain;display:block">
-    <div class="t2" style="margin-left:2px">Painel Admin</div>
+    <img src="/assets/logo.png" alt="UC Talk" style="width:100%;max-width:180px;height:auto;object-fit:contain;display:block">
+    <div class="t2" style="letter-spacing:.1em;text-transform:uppercase">Painel Admin</div>
   </div>
   <nav class="sb-nav">
     <div class="sb-group">Principal</div>
@@ -211,6 +211,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="ips" onclick="irPara('ips')"><span class="ic">🚫</span> IPs bloqueados</div>
     <div class="sb-item" data-page="audit" onclick="irPara('audit')"><span class="ic">📋</span> Auditoria</div>
     <div class="sb-group">Sistema</div>
+    <div class="sb-item" data-page="preview" onclick="irPara('preview')"><span class="ic">👁️</span> Preview do app</div>
     <div class="sb-item" data-page="tools" onclick="irPara('tools')"><span class="ic">🔧</span> Ferramentas</div>
     <div class="sb-item" data-page="diag" onclick="irPara('diag')"><span class="ic">🩺</span> Diagnóstico</div>
   </nav>
@@ -359,6 +360,22 @@ const adminHomeHTML = `<!doctype html>
       </div></div>
     </div>
 
+    <!-- PREVIEW -->
+    <div class="page" id="page-preview">
+      <div class="toolcard" style="margin-bottom:14px">
+        <h3>👁️ Preview do app (como o cliente vê no Bitrix24)</h3>
+        <p>Esta é a interface que o cliente enxerga dentro do Bitrix24. Você acessa via cookie de admin — no cliente real, ela abre no iframe do Marketplace. Use o seletor pra ver as telas de um tenant específico.</p>
+        <div class="row" style="align-items:center">
+          <input class="dominput" id="preview-domain" placeholder="domínio do tenant (opcional) — ex: crm.cliente.bitrix24.com" style="margin:0;max-width:420px">
+          <button class="btn btn-primary" onclick="recarregarPreview()" style="height:38px">Carregar preview</button>
+          <button class="btn" onclick="abrirPreviewNovaAba()" style="height:38px">Abrir em nova aba ↗</button>
+        </div>
+      </div>
+      <div style="background:#0b1220;border:1px solid var(--border);border-radius:14px;overflow:hidden;height:74vh">
+        <iframe id="preview-frame" src="about:blank" style="width:100%;height:100%;border:0;background:#0f172a" title="Preview UC Talk"></iframe>
+      </div>
+    </div>
+
     <!-- TOOLS -->
     <div class="page" id="page-tools">
       <div class="tools">
@@ -413,6 +430,7 @@ var PAGES={
   users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
   audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
+  preview:{title:'Preview do app',sub:'Como o cliente vê o UC Talk no Bitrix24'},
   tools:{title:'Ferramentas',sub:'Ações de manutenção e reparo'},
   diag:{title:'Diagnóstico',sub:'Estado interno do banco de dados'}
 };
@@ -431,8 +449,21 @@ function irPara(p){
   if(p==='ips')carregarIPs();
   if(p==='audit')carregarAudit();
   if(p==='logs')iniciarLogs(); else pararLogs();
+  if(p==='preview')abrirPreview();
   if(p==='system'){clearInterval(window._sysT);window._sysT=setInterval(carregarSystem,5000);}else{clearInterval(window._sysT);}
 }
+function previewURL(){
+  var dom=(document.getElementById('preview-domain').value||'').trim();
+  var url='/dashboard';
+  if(dom)url+='?domain='+encodeURIComponent(dom);
+  return url;
+}
+function abrirPreview(){
+  var f=document.getElementById('preview-frame');
+  if(f && (f.src==='about:blank' || f.src.indexOf('about:blank')>=0))f.src=previewURL();
+}
+function recarregarPreview(){document.getElementById('preview-frame').src=previewURL();}
+function abrirPreviewNovaAba(){window.open(previewURL(),'_blank');}
 function abrirSidebar(){document.getElementById('sidebar').classList.add('open');document.getElementById('backdrop').classList.add('open');}
 function fecharSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('backdrop').classList.remove('open');}
 
