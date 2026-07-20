@@ -83,6 +83,7 @@ type mpTransactionDetail struct {
 
 type mpPayType struct {
 	Boleto *mpBoleto `xml:"boleto,omitempty"`
+	Pix    *mpPix    `xml:"pix,omitempty"`
 }
 
 type mpBoleto struct {
@@ -91,11 +92,18 @@ type mpBoleto struct {
 	Instructions   string `xml:"instructions"`
 }
 
+// mpPix — bloco PIX. expirationTime em segundos ate o QR expirar.
+type mpPix struct {
+	ExpirationTime string `xml:"expirationTime,omitempty"` // segundos (ex: 3600)
+}
+
 type mpPayment struct {
 	ChargeTotal string `xml:"chargeTotal"` // "199.00"
 }
 
-// mpTransactionResponse — campos que interessam da resposta.
+// mpTransactionResponse — campos que interessam da resposta (boleto + pix +
+// cartao). Nomes de tags variam entre versoes do maxiPago; capturamos os
+// mais comuns. O que nao vier fica vazio.
 type mpTransactionResponse struct {
 	XMLName         xml.Name `xml:"transaction-response"`
 	ResponseCode    string   `xml:"responseCode"`
@@ -104,8 +112,27 @@ type mpTransactionResponse struct {
 	TransactionID   string   `xml:"transactionID"`
 	ReferenceNum    string   `xml:"referenceNum"`
 	BoletoURL       string   `xml:"boletoUrl"`
-	ErrorMessage    string   `xml:"errorMessage"`
-	ProcessorMsg    string   `xml:"processorMessage"`
+	// PIX: o copia-e-cola (payload EMV) e a imagem/base64 do QR. Tags
+	// possiveis: pixQRCode / pixCopyPaste / qrCode / emv.
+	PixQRCode    string `xml:"pixQRCode"`
+	PixCopyPaste string `xml:"pixCopyPaste"`
+	QRCode       string `xml:"qrCode"`
+	EMV          string `xml:"emv"`
+	ErrorMessage string `xml:"errorMessage"`
+	ProcessorMsg string `xml:"processorMessage"`
+	// AuthCode: presente em cartao aprovado.
+	AuthCode string `xml:"authCode"`
+}
+
+// pixPayload devolve o texto copia-e-cola do PIX, tentando as varias tags
+// que o maxiPago pode usar.
+func (r *mpTransactionResponse) pixPayload() string {
+	for _, s := range []string{r.PixCopyPaste, r.EMV, r.PixQRCode, r.QRCode} {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // maxipagoCreateBoleto cria uma venda-boleto e retorna (resposta, raw, err).
@@ -128,7 +155,19 @@ func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payer
 			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
 		}},
 	}
+	return h.maxipagoPostXML(ctx, reqBody)
+}
 
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// maxipagoPostXML envia o request XML e devolve (resposta parseada, raw, err).
+// Compartilhado por boleto/pix/cartao.
+func (h *handlers) maxipagoPostXML(ctx context.Context, reqBody mpTransactionRequest) (*mpTransactionResponse, string, error) {
 	xmlBytes, err := xml.Marshal(reqBody)
 	if err != nil {
 		return nil, "", err
@@ -158,11 +197,25 @@ func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payer
 	return &out, raw, nil
 }
 
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
+// maxipagoCreatePix cria uma cobranca PIX. QR expira em expirSeconds.
+func (h *handlers) maxipagoCreatePix(ctx context.Context, referenceNum, payerName string, amountCents int64, expirSeconds int) (*mpTransactionResponse, string, error) {
+	reqBody := mpTransactionRequest{
+		Version: "3.1.1.15",
+		Verification: mpVerification{
+			MerchantID:  h.cfg.Billing.MaxiPagoMerchantID,
+			MerchantKey: h.cfg.Billing.MaxiPagoMerchantKey,
+		},
+		Order: mpOrder{Sale: mpSale{
+			ProcessorID:  h.cfg.Billing.ProcessorPix,
+			ReferenceNum: referenceNum,
+			Billing:      &mpBilling{Name: payerName},
+			TransactionDetail: mpTransactionDetail{PayType: mpPayType{Pix: &mpPix{
+				ExpirationTime: fmt.Sprintf("%d", expirSeconds),
+			}}},
+			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
+		}},
 	}
-	return s[:n] + "..."
+	return h.maxipagoPostXML(ctx, reqBody)
 }
 
 // ─── Endpoints ─────────────────────────────────────────────────────────────
@@ -187,12 +240,13 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		PayerName string `json:"payer_name"`
 	}
 	_ = c.BodyParser(&body)
-	if body.Method == "" {
-		body.Method = "boleto"
+	method := strings.ToLower(strings.TrimSpace(body.Method))
+	if method == "" {
+		method = "boleto"
 	}
-	if body.Method != "boleto" {
+	if method != "boleto" && method != "pix" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "metodo nao suportado ainda — use boleto",
+			"error": "metodo nao suportado — use boleto ou pix",
 		})
 	}
 	// 2 planos pagos: basic e pro. Trial e' so' o periodo de teste do Basico.
@@ -213,68 +267,97 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	if payerName == "" {
 		payerName = domain
 	}
-
-	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
-	due := time.Now().AddDate(0, 0, 5) // vence em 5 dias
-
 	planLabel := "Basico"
 	if plan == "pro" {
 		planLabel = "Pro"
 	}
+
+	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	ctx := c.Context()
-	mpResp, raw, err := h.maxipagoCreateBoleto(ctx, ref, payerName, planLabel, amount, due)
+
+	var mpResp *mpTransactionResponse
+	var raw string
+	var err error
+	due := time.Now().AddDate(0, 0, 5) // boleto vence em 5 dias
+
+	if method == "pix" {
+		mpResp, raw, err = h.maxipagoCreatePix(ctx, ref, payerName, amount, 3600) // QR 1h
+	} else {
+		mpResp, raw, err = h.maxipagoCreateBoleto(ctx, ref, payerName, planLabel, amount, due)
+	}
 	if err != nil {
-		h.log.Error("billing: maxipago boleto falhou",
-			zap.String("domain", domain), zap.Error(err))
+		h.log.Error("billing: maxipago falhou",
+			zap.String("domain", domain), zap.String("method", method), zap.Error(err))
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-			"error": "falha ao gerar boleto no gateway: " + err.Error(),
+			"error": "falha ao gerar cobranca no gateway: " + err.Error(),
 		})
 	}
 	h.log.Info("billing: maxipago resposta",
-		zap.String("domain", domain),
-		zap.String("reference", ref),
-		zap.String("response_code", mpResp.ResponseCode),
-		zap.String("raw", truncateStr(raw, 500)))
+		zap.String("domain", domain), zap.String("method", method),
+		zap.String("reference", ref), zap.String("response_code", mpResp.ResponseCode),
+		zap.String("raw", truncateStr(raw, 800)))
 
-	if mpResp.ResponseCode != "0" || mpResp.BoletoURL == "" {
-		msg := mpResp.ErrorMessage
-		if msg == "" {
-			msg = mpResp.ResponseMessage
-		}
-		if msg == "" {
-			msg = mpResp.ProcessorMsg
-		}
+	// Sucesso do gateway: responseCode 0. Boleto precisa de URL; PIX precisa
+	// de payload copia-e-cola.
+	pixPayload := mpResp.pixPayload()
+	badBoleto := method == "boleto" && mpResp.BoletoURL == ""
+	badPix := method == "pix" && pixPayload == ""
+	if mpResp.ResponseCode != "0" || badBoleto || badPix {
+		msg := firstNonEmpty(mpResp.ErrorMessage, mpResp.ResponseMessage, mpResp.ProcessorMsg,
+			"o gateway nao retornou os dados do pagamento")
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
 			"error":         "gateway recusou a cobranca: " + msg,
 			"response_code": mpResp.ResponseCode,
 		})
 	}
 
+	// PIX guarda o payload no campo boleto_url (reaproveitado como "link/dado
+	// do pagamento") pra nao criar coluna nova; o method distingue.
+	storedURL := mpResp.BoletoURL
+	if method == "pix" {
+		storedURL = pixPayload
+	}
 	charge := &db.BillingCharge{
 		ID:              uuid.New(),
 		Domain:          domain,
 		Plan:            plan,
-		Method:          "boleto",
+		Method:          method,
 		AmountCents:     amount,
 		ReferenceNum:    ref,
 		MPOrderID:       mpResp.OrderID,
 		MPTransactionID: mpResp.TransactionID,
-		BoletoURL:       mpResp.BoletoURL,
+		BoletoURL:       storedURL,
 	}
 	if err := h.repo.CreateBillingCharge(ctx, charge); err != nil {
 		h.log.Error("billing: persistir cobranca falhou", zap.Error(err))
-		// Nao aborta — o boleto ja existe no gateway; devolve a URL mesmo assim.
 	}
 
-	return c.JSON(fiber.Map{
+	out := fiber.Map{
 		"ok":            true,
 		"plan":          plan,
+		"method":        method,
 		"reference_num": ref,
-		"boleto_url":    mpResp.BoletoURL,
 		"amount_cents":  amount,
-		"due_date":      due.Format("2006-01-02"),
-		"hint":          "Abra o boleto e pague. Assim que o maxiPago confirmar, o plano e' liberado automaticamente.",
-	})
+	}
+	if method == "pix" {
+		out["pix_copy_paste"] = pixPayload
+		out["hint"] = "Pague o PIX pelo app do seu banco. A liberação é automática em segundos."
+	} else {
+		out["boleto_url"] = mpResp.BoletoURL
+		out["due_date"] = due.Format("2006-01-02")
+		out["hint"] = "Abra o boleto e pague. Assim que o maxiPago confirmar, o plano é liberado automaticamente."
+	}
+	return c.JSON(out)
+}
+
+// firstNonEmpty devolve a primeira string nao-vazia (helper de mensagens).
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // POST /billing/maxipago/postback — notificacao de status do maxiPago.

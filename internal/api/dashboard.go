@@ -1825,15 +1825,63 @@ function renderAssinaturaCharges(charges){
   el.innerHTML='<div style="display:flex;padding:8px 14px;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid rgba(255,255,255,.06);"><div style="flex:1;">Plano</div><div style="width:110px;">Valor</div><div style="width:100px;">Status</div><div style="width:110px;">Data</div><div style="width:70px;text-align:right;">Boleto</div></div>'+rows;
 }
 
+// assinarPlano abre um modal pra escolher o método (PIX ou boleto).
 function assinarPlano(plano, btn){
-  var orig=btn.textContent; btn.disabled=true; btn.textContent='Gerando boleto…';
-  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:'boleto'})})
+  abrirModalPagamento(plano);
+}
+function abrirModalPagamento(plano){
+  fecharModalPagamento();
+  var ov=document.createElement('div');
+  ov.id='pgto-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
+  ov.innerHTML='<div style="max-width:440px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:26px" onclick="event.stopPropagation()">'+
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:1.2em;font-weight:800;color:#f1f5f9">Assinar plano</div>'+
+      '<button onclick="fecharModalPagamento()" style="background:none;border:0;color:#64748b;font-size:20px;cursor:pointer">×</button></div>'+
+    '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">Escolha como pagar. O PIX libera o acesso na hora.</div>'+
+    '<div style="display:flex;flex-direction:column;gap:10px">'+
+      '<button class="btn btn-primary" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'pix\')">⚡ PIX — liberação imediata</button>'+
+      '<button class="btn" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'boleto\')">🧾 Boleto bancário</button>'+
+    '</div>'+
+    '<div id="pgto-resultado" style="margin-top:18px"></div>'+
+  '</div>';
+  ov.onclick=function(){ fecharModalPagamento(); };
+  document.body.appendChild(ov);
+}
+function fecharModalPagamento(){ var m=document.getElementById('pgto-modal'); if(m)m.remove(); }
+function pagarCom(plano, metodo){
+  var box=document.getElementById('pgto-resultado');
+  box.innerHTML='<div style="text-align:center;color:#94a3b8;font-size:13px;padding:12px">Gerando '+(metodo==='pix'?'PIX':'boleto')+'…</div>';
+  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:metodo})})
     .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
     .then(function(res){
-      if(res.ok && res.j.boleto_url){ btn.textContent='Boleto gerado! Abrindo…'; window.open(res.j.boleto_url,'_blank'); setTimeout(function(){btn.disabled=false;btn.textContent=orig;carregarAssinatura();},2500); }
-      else { alert(res.j.error||'Não foi possível gerar o boleto agora.'); btn.disabled=false; btn.textContent=orig; }
+      if(!res.ok){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">'+(res.j.error||'Falha ao gerar cobrança.')+'</div>'; return; }
+      if(metodo==='pix' && res.j.pix_copy_paste){
+        var code=res.j.pix_copy_paste;
+        box.innerHTML='<div style="background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.25);border-radius:12px;padding:14px">'+
+          '<div style="font-size:12px;color:#25D366;font-weight:700;margin-bottom:8px">✅ PIX gerado — copie e pague no seu banco</div>'+
+          '<textarea readonly style="width:100%;height:76px;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#cbd5e1;font-size:11px;font-family:monospace;padding:8px;resize:none" id="pix-code">'+code+'</textarea>'+
+          '<button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="copiarPix()">📋 Copiar código PIX</button>'+
+          '<div style="font-size:11px;color:#64748b;margin-top:8px;text-align:center">A liberação é automática assim que o pagamento cair.</div>'+
+        '</div>';
+        setTimeout(carregarAssinatura, 1500);
+      } else if(metodo==='boleto' && res.j.boleto_url){
+        window.open(res.j.boleto_url,'_blank');
+        box.innerHTML='<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:12px;padding:14px;text-align:center">'+
+          '<div style="font-size:13px;color:#93c5fd;margin-bottom:8px">🧾 Boleto gerado e aberto em nova aba.</div>'+
+          '<a href="'+res.j.boleto_url+'" target="_blank" class="btn btn-primary" style="text-decoration:none">Abrir boleto novamente</a>'+
+        '</div>';
+        setTimeout(carregarAssinatura, 1500);
+      } else {
+        box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">O gateway não retornou os dados do pagamento.</div>';
+      }
     })
-    .catch(function(){ alert('Falha de conexão.'); btn.disabled=false; btn.textContent=orig; });
+    .catch(function(){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">Falha de conexão.</div>'; });
+}
+function copiarPix(){
+  var t=document.getElementById('pix-code'); if(!t)return;
+  t.select(); t.setSelectionRange(0,99999);
+  try{ document.execCommand('copy'); }catch(e){}
+  if(navigator.clipboard){ navigator.clipboard.writeText(t.value).catch(function(){}); }
 }
 function cancelarAssinatura(){
   if(!confirm('Cancelar a renovação da assinatura?\n\nVocê continua com acesso completo até o fim do período já pago. Não haverá nova cobrança.'))return;
