@@ -2368,3 +2368,102 @@ func (r *Repository) ListBillingChargesByDomain(ctx context.Context, domain stri
 	}
 	return out, rows.Err()
 }
+
+// ─── Admin metrics (agregados globais) ─────────────────────────────────────
+
+// AdminMetrics resume o estado do negocio pro painel super-admin.
+type AdminMetrics struct {
+	TenantsTotal     int   `json:"tenants_total"`
+	TenantsTrial     int   `json:"tenants_trial"`
+	TenantsActive    int   `json:"tenants_active"`
+	TenantsExpired   int   `json:"tenants_expired"`
+	TenantsSuspended int   `json:"tenants_suspended"`
+	TenantsPro       int   `json:"tenants_pro"`
+	TenantsBasic     int   `json:"tenants_basic"`
+	SessionsActive   int   `json:"sessions_active"`
+	Msgs24h          int64 `json:"msgs_24h"`
+	ChargesPaid      int   `json:"charges_paid"`
+	ChargesPending   int   `json:"charges_pending"`
+	RevenueCentsPaid int64 `json:"revenue_cents_paid"`
+}
+
+// GetAdminMetrics computa os agregados em poucas queries.
+func (r *Repository) GetAdminMetrics(ctx context.Context) (*AdminMetrics, error) {
+	m := &AdminMetrics{}
+
+	// Planos por status/plan. Ignora placeholders (domain = member_id) via
+	// join defensivo: contamos so' tenant_plans, que so' existe pra domain real.
+	rows, err := r.pool.Query(ctx, `
+		SELECT plan, status, COUNT(*) FROM tenant_plans GROUP BY plan, status`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var plan, status string
+		var n int
+		if err := rows.Scan(&plan, &status, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		m.TenantsTotal += n
+		switch status {
+		case "trial":
+			m.TenantsTrial += n
+		case "active":
+			m.TenantsActive += n
+		case "expired":
+			m.TenantsExpired += n
+		case "suspended":
+			m.TenantsSuspended += n
+		}
+		if plan == "pro" {
+			m.TenantsPro += n
+		} else {
+			m.TenantsBasic += n
+		}
+	}
+	rows.Close()
+
+	// Sessoes ativas (todas).
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM whatsapp_sessions WHERE status = 'active'`).Scan(&m.SessionsActive)
+
+	// Msgs 24h.
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages WHERE created_at > NOW() - INTERVAL '24 hours'`).Scan(&m.Msgs24h)
+
+	// Billing.
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FILTER (WHERE status='paid'),
+		        COUNT(*) FILTER (WHERE status='pending'),
+		        COALESCE(SUM(amount_cents) FILTER (WHERE status='paid'), 0)
+		 FROM billing_charges`).Scan(&m.ChargesPaid, &m.ChargesPending, &m.RevenueCentsPaid)
+
+	return m, nil
+}
+
+// ListRecentBillingCharges — ultimas cobrancas de TODOS os tenants (admin).
+func (r *Repository) ListRecentBillingCharges(ctx context.Context, limit int) ([]*BillingCharge, error) {
+	if limit <= 0 {
+		limit = 30
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, domain, plan, method, amount_cents, reference_num,
+		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
+		FROM billing_charges ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BillingCharge
+	for rows.Next() {
+		var c BillingCharge
+		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
+			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
+			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}

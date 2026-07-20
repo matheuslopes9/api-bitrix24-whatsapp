@@ -11,12 +11,75 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
+
+// ─── Rate-limit de login (anti brute-force) ────────────────────────────────
+//
+// Bloqueia tentativas de login por IP apos N falhas numa janela. In-memory
+// (1 instancia do app) — suficiente pro painel admin de baixa cardinalidade.
+// Reset da contagem em login bem-sucedido.
+const (
+	loginMaxFails    = 5
+	loginLockWindow  = 15 * time.Minute
+)
+
+type loginAttempt struct {
+	fails     int
+	firstFail time.Time
+	lockedAt  time.Time
+}
+
+var (
+	loginAttemptsMu sync.Mutex
+	loginAttempts   = map[string]*loginAttempt{}
+)
+
+// loginRateLimited retorna (bloqueado, segundosRestantes). Chamado ANTES de
+// validar credenciais.
+func loginRateLimited(ip string) (bool, int) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a := loginAttempts[ip]
+	if a == nil {
+		return false, 0
+	}
+	// Janela expirou desde a primeira falha — zera.
+	if time.Since(a.firstFail) > loginLockWindow {
+		delete(loginAttempts, ip)
+		return false, 0
+	}
+	if a.fails >= loginMaxFails {
+		remaining := int((loginLockWindow - time.Since(a.firstFail)).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+		return true, remaining
+	}
+	return false, 0
+}
+
+func loginRecordFail(ip string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a := loginAttempts[ip]
+	if a == nil || time.Since(a.firstFail) > loginLockWindow {
+		loginAttempts[ip] = &loginAttempt{fails: 1, firstFail: time.Now()}
+		return
+	}
+	a.fails++
+}
+
+func loginRecordSuccess(ip string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	delete(loginAttempts, ip)
+}
 
 // setPartitionedCookie seta cookie via header Set-Cookie cru pra incluir
 // atributo `Partitioned` — necessario pra cookies em iframe cross-site
@@ -52,6 +115,21 @@ func safePrefix(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// clientIP extrai o IP real do cliente atras do proxy do EasyPanel/Traefik.
+// Prioriza o primeiro IP do X-Forwarded-For; fallback pro RemoteIP direto.
+func clientIP(c *fiber.Ctx) string {
+	if xff := c.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.Index(xff, ","); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xr := c.Get("X-Real-IP"); xr != "" {
+		return strings.TrimSpace(xr)
+	}
+	return c.IP()
 }
 
 const adminCookieName = "uctalk_admin"
@@ -231,11 +309,25 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 	if h.cfg.App.AdminUser == "" || h.cfg.App.AdminPassword == "" {
 		return c.Status(503).SendString("admin desabilitado")
 	}
+
+	// Rate-limit por IP (anti brute-force). O IP vem do X-Forwarded-For
+	// (EasyPanel/Traefik proxy) com fallback pro RemoteIP.
+	ip := clientIP(c)
+	if blocked, remaining := loginRateLimited(ip); blocked {
+		h.log.Warn("admin login: rate limited", zap.String("ip", ip), zap.Int("retry_after_s", remaining))
+		return c.Redirect("/admin/login?err=Muitas+tentativas.+Aguarde+"+
+			strconv.Itoa(remaining/60+1)+"+minutos.", fiber.StatusFound)
+	}
+
 	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(h.cfg.App.AdminUser)) == 1
 	passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(h.cfg.App.AdminPassword)) == 1
 	if !userOK || !passOK {
+		loginRecordFail(ip)
+		h.log.Warn("admin login: credenciais invalidas", zap.String("ip", ip))
 		return c.Redirect("/admin/login?err=Credenciais+inv%C3%A1lidas", fiber.StatusFound)
 	}
+	loginRecordSuccess(ip)
+	h.log.Info("admin login: sucesso", zap.String("ip", ip))
 	expires := time.Now().Add(adminCookieTTL)
 	c.Cookie(&fiber.Cookie{
 		Name:     adminCookieName,

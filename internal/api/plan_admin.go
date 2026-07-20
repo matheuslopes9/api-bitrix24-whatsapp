@@ -14,6 +14,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// GET /admin/api/metrics — KPIs globais pro dashboard super-admin.
+func (h *handlers) adminMetrics(c *fiber.Ctx) error {
+	m, err := h.repo.GetAdminMetrics(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(m)
+}
+
+// GET /admin/api/billing/charges — ultimas cobrancas de todos os tenants.
+func (h *handlers) adminBillingCharges(c *fiber.Ctx) error {
+	charges, err := h.repo.ListRecentBillingCharges(c.Context(), 40)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"charges": charges})
+}
+
 // GET /admin/api/tenant/plan?domain=cliente.bitrix24.com
 func (h *handlers) adminTenantGetPlan(c *fiber.Ctx) error {
 	domain := normalizePortalDomain(strings.TrimSpace(c.Query("domain")))

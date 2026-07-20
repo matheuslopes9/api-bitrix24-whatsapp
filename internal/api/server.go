@@ -244,10 +244,21 @@ func New(
 	app.Get("/admin/login", h.adminLoginPage)
 	app.Post("/admin/login", h.adminLoginSubmit)
 	app.Get("/admin/logout", h.adminLogout)
-	admin := app.Group("/admin", h.requireAdminAuth)
+	// Security headers no painel admin. NAO global: o resto do app roda em
+	// iframe do Bitrix e headers restritivos (X-Frame-Options DENY) quebrariam
+	// o embed. O admin nunca e' embedado, entao pode ser trancado.
+	admin := app.Group("/admin", func(c *fiber.Ctx) error {
+		c.Set("X-Frame-Options", "DENY")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("Referrer-Policy", "no-referrer")
+		c.Set("Cache-Control", "no-store")
+		return c.Next()
+	}, h.requireAdminAuth)
 	admin.Get("/", h.adminHome)
 	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
+	admin.Get("/api/metrics", h.adminMetrics)              // KPIs globais
+	admin.Get("/api/billing/charges", h.adminBillingCharges) // cobrancas de todos
 	admin.Get("/api/debug", h.adminDebug)
 	admin.Post("/api/queue/flush", h.adminFlushQueue)
 	admin.Post("/api/cleanup/banned-sessions", h.adminCleanupBannedSessions)
