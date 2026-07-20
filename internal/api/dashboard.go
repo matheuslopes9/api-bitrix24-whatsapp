@@ -441,12 +441,8 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
 <!-- Sidebar -->
 <nav id="sidebar">
   <!-- Logo -->
-  <div style="padding:6px 10px;margin-bottom:20px;display:flex;flex-direction:column;align-items:center;text-align:center;">
-    <img src="/assets/logo.png" alt="UC Technology" style="max-width:100px;height:auto;display:block;"/>
-    <div style="margin-top:7px;">
-      <div style="font-size:13px;font-weight:700;color:#f1f5f9;">UC Talk</div>
-      <div style="font-size:11px;color:#334155;">UC Technology</div>
-    </div>
+  <div style="padding:10px 8px 6px;margin-bottom:20px;display:flex;align-items:center;justify-content:center;">
+    <img src="/assets/logo.png" alt="UC Talk" style="width:100%;max-width:180px;height:auto;display:block;"/>
   </div>
 
   <!-- Badge do portal (visível apenas no modo cliente) -->
