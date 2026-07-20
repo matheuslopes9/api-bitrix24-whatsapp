@@ -69,9 +69,19 @@ const adminHomeHTML = `<!doctype html>
   .sb-brand .logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--green),#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
   .sb-brand .t1{font-size:.98em;font-weight:800;line-height:1.1}
   .sb-brand .t2{font-size:.68em;color:var(--dim);font-weight:600;margin-top:1px}
-  .sb-nav{flex:1;padding:12px 10px;overflow-y:auto}
-  .sb-group{font-size:.66em;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:700;padding:12px 12px 6px}
-  .sb-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;color:var(--muted);font-size:.9em;font-weight:600;cursor:pointer;margin-bottom:2px;transition:background .12s,color .12s}
+  .sb-nav{flex:1;padding:12px 10px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent}
+  .sb-nav::-webkit-scrollbar{width:6px}
+  .sb-nav::-webkit-scrollbar-track{background:transparent}
+  .sb-nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:999px}
+  .sb-nav::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2)}
+  /* Scrollbar discreta global (tabelas, panes, logs) */
+  *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:999px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2)}
+  .sb-group{font-size:.64em;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:700;padding:11px 12px 4px}
+  .sb-item{display:flex;align-items:center;gap:11px;padding:8px 12px;border-radius:9px;color:var(--muted);font-size:.87em;font-weight:600;cursor:pointer;margin-bottom:1px;transition:background .12s,color .12s}
   .sb-item:hover{background:var(--hover);color:var(--txt)}
   .sb-item.active{background:linear-gradient(90deg,rgba(37,211,102,.16),rgba(37,211,102,.02));color:#fff}
   .sb-item.active .ic{filter:none}
