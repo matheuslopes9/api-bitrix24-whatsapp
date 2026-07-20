@@ -159,7 +159,13 @@ html,body{font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;bac
 .card-flat{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:12px;}
 
 /* ── Sidebar ── */
-#sidebar{position:fixed;top:0;left:0;height:100%;width:240px;background:rgba(10,14,26,.95);border-right:1px solid rgba(255,255,255,.07);backdrop-filter:blur(20px);z-index:40;display:flex;flex-direction:column;padding:20px 14px;gap:4px;transition:transform .25s cubic-bezier(.4,0,.2,1);}
+#sidebar{position:fixed;top:0;left:0;height:100%;width:240px;background:rgba(10,14,26,.95);border-right:1px solid rgba(255,255,255,.07);backdrop-filter:blur(20px);z-index:40;display:flex;flex-direction:column;padding:20px 14px;gap:4px;transition:transform .25s cubic-bezier(.4,0,.2,1);overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent;}
+#sidebar::-webkit-scrollbar{width:6px;}
+#sidebar::-webkit-scrollbar-track{background:transparent;}
+#sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px;}
+#sidebar::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.24);}
+body.tema-claro #sidebar{scrollbar-color:rgba(0,0,0,.18) transparent;}
+body.tema-claro #sidebar::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);}
 #sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:30;backdrop-filter:blur(2px);}
 
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:10px;cursor:pointer;font-size:13.5px;font-weight:500;color:#64748b;border:1px solid transparent;transition:background .15s,color .15s,border-color .15s;white-space:nowrap;}
