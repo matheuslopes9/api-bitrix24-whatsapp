@@ -1753,7 +1753,19 @@ function renderAssinaturaStatus(d){
   if(state==='active') acao='<button class="btn btn-ghost" style="border-color:rgba(248,113,113,.3);color:#fca5a5;" onclick="cancelarAssinatura()">Cancelar assinatura</button>';
   else if(state==='cancelling') acao='<button class="btn btn-primary" onclick="reativarAssinatura()">Reativar renovação</button>';
 
-  el.innerHTML=
+  // Banner de renovacao: assinatura ativa vencendo em <=5 dias.
+  var renovar='';
+  if(d.renewal_soon){
+    var rd=d.renewal_days||0;
+    var txt=rd<=0?'vence hoje':('vence em '+rd+' dia'+(rd>1?'s':''));
+    renovar='<div style="background:linear-gradient(90deg,rgba(251,191,36,.14),rgba(251,146,60,.06));border:1px solid rgba(251,191,36,.3);border-radius:12px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
+      '<span style="font-size:20px;">🔔</span>'+
+      '<div style="flex:1;min-width:180px;font-size:13px;color:#fcd34d;line-height:1.5;">Sua assinatura <strong>'+txt+'</strong>. Renove pra não perder o acesso — gere um novo boleto agora.</div>'+
+      '<button class="btn btn-primary" onclick="assinarPlano(\''+(d.plan||'pro')+'\',this)">Renovar — Boleto</button>'+
+    '</div>';
+  }
+
+  el.innerHTML= renovar +
     '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'+
       '<div style="width:54px;height:54px;border-radius:14px;background:'+cfg.bg+';display:flex;align-items:center;justify-content:center;font-size:26px;">'+cfg.ic+'</div>'+
       '<div style="flex:1;min-width:200px;">'+

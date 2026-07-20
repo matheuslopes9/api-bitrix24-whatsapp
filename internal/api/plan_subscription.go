@@ -76,20 +76,25 @@ func (h *handlers) uiPlanDetails(c *fiber.Ctx) error {
 				days = 0
 			}
 			out["days_remaining"] = days
+
+			// Lembrete de renovacao: assinatura PAGA (nao cancelada) vencendo
+			// em <=5 dias. O cliente ve um banner "renove" com botao que gera
+			// novo boleto. Trial tem o proprio countdown, entao so' pra active.
+			if plan.Status == "active" && !plan.CancelAtPeriodEnd && days <= 5 {
+				out["renewal_soon"] = true
+				out["renewal_days"] = days
+			}
 		}
 		if plan.CancelledAt != nil {
 			out["cancelled_at"] = plan.CancelledAt.Format(time.RFC3339)
 		}
 	}
 
-	// Sessoes vs limite.
+	// Sessoes vs limite (do plano configuravel, via resolveTenantFeatures).
+	feat := h.resolveTenantFeatures(ctx, domain)
 	count, _ := h.repo.CountActiveSessionsByDomain(ctx, domain)
 	out["sessions_used"] = count
-	if plan != nil && plan.HasProFeatures() {
-		out["sessions_limit"] = maxSessionsPro
-	} else {
-		out["sessions_limit"] = maxSessionsBasic
-	}
+	out["sessions_limit"] = feat.MaxSessions
 
 	// Precos vigentes (pra UI montar os cards de assinatura).
 	out["price_basic_cents"] = h.cfg.Billing.BasicPriceCents
