@@ -2093,11 +2093,13 @@ func (r *Repository) GetTenantPlan(ctx context.Context, domain string) (*TenantP
 	row := r.pool.QueryRow(ctx, `
 		SELECT domain, plan, status, trial_ends_at, active_until,
 		       created_at, updated_at, notes,
-		       COALESCE(welcome_shown, FALSE), master_auto_set_at
+		       COALESCE(welcome_shown, FALSE), master_auto_set_at,
+		       COALESCE(cancel_at_period_end, FALSE), cancelled_at
 		FROM tenant_plans WHERE domain = $1`, domain)
 	var p TenantPlan
 	err := row.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-		&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt)
+		&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt,
+		&p.CancelAtPeriodEnd, &p.CancelledAt)
 	if err != nil {
 		// pgx.ErrNoRows nao importado aqui — comparacao por mensagem evita
 		// import circular.
@@ -2194,7 +2196,8 @@ func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error)
 	rows, err := r.pool.Query(ctx, `
 		SELECT domain, plan, status, trial_ends_at, active_until,
 		       created_at, updated_at, notes,
-		       COALESCE(welcome_shown, FALSE), master_auto_set_at
+		       COALESCE(welcome_shown, FALSE), master_auto_set_at,
+		       COALESCE(cancel_at_period_end, FALSE), cancelled_at
 		FROM tenant_plans
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -2205,12 +2208,31 @@ func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error)
 	for rows.Next() {
 		var p TenantPlan
 		if err := rows.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-			&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt); err != nil {
+			&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt,
+			&p.CancelAtPeriodEnd, &p.CancelledAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &p)
 	}
 	return out, rows.Err()
+}
+
+// SetPlanCancellation marca/desmarca cancelamento agendado (nao renova no
+// fim do periodo). Mantem status='active' e active_until — o acesso segue
+// ate la. reactivate=false marca cancelamento; true reverte (volta a renovar).
+func (r *Repository) SetPlanCancellation(ctx context.Context, domain string, cancel bool) error {
+	if cancel {
+		_, err := r.pool.Exec(ctx, `
+			UPDATE tenant_plans
+			   SET cancel_at_period_end = TRUE, cancelled_at = NOW(), updated_at = NOW()
+			 WHERE domain = $1`, domain)
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tenant_plans
+		   SET cancel_at_period_end = FALSE, cancelled_at = NULL, updated_at = NOW()
+		 WHERE domain = $1`, domain)
+	return err
 }
 
 // CountActiveSessionsByDomain conta sessoes (QR + Cloud) ativas vinculadas

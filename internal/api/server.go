@@ -86,6 +86,10 @@ func New(
 	ui.Post("/sessions/refresh-status", h.uiRefreshSessionsStatus)
 	ui.Get("/overview", h.uiOverview)
 	ui.Get("/plan", h.uiTenantPlan)
+	// Gestao de assinatura pelo CLIENTE (aba Planos & Assinatura do dashboard).
+	ui.Get("/plan/details", h.uiPlanDetails)
+	ui.Post("/plan/cancel", h.uiPlanCancel)
+	ui.Post("/plan/reactivate", h.uiPlanReactivate)
 	ui.Post("/welcome/dismiss", h.uiWelcomeDismiss)
 	// ─── Sessões Cloud API (Meta Oficial) — PRO ──────────────────────────
 	ui.Post("/sessions/cloud", h.requireProPlan, h.uiCreateCloudSession)

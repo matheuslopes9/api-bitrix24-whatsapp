@@ -148,6 +148,36 @@ type TenantPlan struct {
 	Notes           string     `db:"notes"`
 	WelcomeShown    bool       `db:"welcome_shown"`         // TRUE = ja' viu boas-vindas
 	MasterAutoSetAt *time.Time `db:"master_auto_set_at"`    // quando backend auto-setou master
+	CancelAtPeriodEnd bool     `db:"cancel_at_period_end"`  // cliente cancelou; nao renova
+	CancelledAt     *time.Time `db:"cancelled_at"`          // quando cancelou
+}
+
+// SubscriptionState resume o estado da assinatura pro cliente:
+//   'trial'      — em periodo de teste
+//   'active'     — pago e renovando
+//   'cancelling' — cancelado mas ainda no periodo pago (usa ate active_until)
+//   'expired'    — sem acesso
+//   'suspended'  — suspenso manual
+func (p *TenantPlan) SubscriptionState() string {
+	if p == nil {
+		return "expired"
+	}
+	if p.Status == "suspended" {
+		return "suspended"
+	}
+	if p.Status == "trial" {
+		if p.IsAccessAllowed() {
+			return "trial"
+		}
+		return "expired"
+	}
+	if p.Status == "active" && p.IsAccessAllowed() {
+		if p.CancelAtPeriodEnd {
+			return "cancelling"
+		}
+		return "active"
+	}
+	return "expired"
 }
 
 // IsAccessAllowed retorna true se o tenant tem acesso a usar o app.

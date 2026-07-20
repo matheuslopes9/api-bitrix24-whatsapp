@@ -480,6 +480,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
   </div>
+  <div class="nav-item" id="nav-assinatura" onclick="showPage('assinatura')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+    Planos &amp; Assinatura
+  </div>
 
   <div style="flex:1;"></div>
 
@@ -1256,6 +1260,33 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
+  <!-- ══════════════════════ PÁGINA ASSINATURA ══════════════════════ -->
+  <div id="page-assinatura" class="page">
+    <div class="section-hdr">
+      <div>
+        <div class="section-title">Planos &amp; Assinatura</div>
+        <div class="section-sub">Gerencie seu plano, pagamentos e cancelamento</div>
+      </div>
+    </div>
+
+    <!-- Card de status da assinatura -->
+    <div id="assinatura-status" class="card-flat" style="padding:22px;margin-bottom:18px;">
+      <div style="text-align:center;padding:20px;color:#334155;">Carregando plano…</div>
+    </div>
+
+    <!-- Cards dos planos disponíveis (assinar/upgrade) -->
+    <div class="section-title" style="font-size:15px;margin-bottom:12px;">Escolha ou altere seu plano</div>
+    <div id="assinatura-planos" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:22px;"></div>
+
+    <!-- Histórico de pagamentos -->
+    <div class="section-title" style="font-size:15px;margin-bottom:12px;">Histórico de pagamentos</div>
+    <div class="card-flat" style="overflow:hidden;">
+      <div id="assinatura-charges" style="padding:8px;">
+        <div style="text-align:center;padding:24px;color:#334155;font-size:13px;">Carregando…</div>
+      </div>
+    </div>
+  </div>
+
 
 </div>
 
@@ -1657,7 +1688,7 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios', assinatura: 'Planos & Assinatura' };
 
 function showPage(nome) {
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
@@ -1675,6 +1706,123 @@ function showPage(nome) {
   if (nome === 'templates') carregarTemplatesDashboard();
   if (nome === 'historico') carregarHistoricoSessoes();
   if (nome === 'sms') carregarSMSPage();
+  if (nome === 'assinatura') carregarAssinatura();
+}
+
+// ─── Assinatura (planos, pagamento, cancelamento) ─────────────────────────────
+function fmtCentavos(c){ return 'R$ ' + ((c||0)/100).toFixed(2).replace('.',','); }
+function fmtDataBR(s){ if(!s)return '—'; try{return new Date(s).toLocaleDateString('pt-BR');}catch(e){return s;} }
+
+function carregarAssinatura(){
+  fetch(apiUrl('/ui/plan/details'))
+    .then(function(r){ return r.json(); })
+    .then(function(d){ renderAssinaturaStatus(d); renderAssinaturaPlanos(d); renderAssinaturaCharges(d.charges||[]); })
+    .catch(function(){ document.getElementById('assinatura-status').innerHTML='<div style="text-align:center;padding:20px;color:#f87171;">Falha ao carregar plano.</div>'; });
+}
+
+function renderAssinaturaStatus(d){
+  var el=document.getElementById('assinatura-status');
+  var state=d.state||'expired';
+  var cfg={
+    trial:{cor:'#fbbf24',bg:'rgba(251,191,36,.1)',lbl:'Período de teste',ic:'⏳'},
+    active:{cor:'#25D366',bg:'rgba(37,211,102,.1)',lbl:'Assinatura ativa',ic:'✅'},
+    cancelling:{cor:'#fb923c',bg:'rgba(251,146,60,.1)',lbl:'Cancelamento agendado',ic:'⚠️'},
+    expired:{cor:'#f87171',bg:'rgba(248,113,113,.1)',lbl:'Sem acesso',ic:'⛔'},
+    suspended:{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:'Suspenso',ic:'🚫'}
+  }[state]||{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:state,ic:'•'};
+  var planNome=d.plan==='pro'?'Pro':d.plan==='basic'?'Básico':'—';
+  var dias=(typeof d.days_remaining==='number')?d.days_remaining:null;
+
+  var msg='';
+  if(state==='trial') msg='Você tem <strong>'+(dias!=null?dias:'?')+' dia(s)</strong> restantes no teste grátis. Assine um plano pra continuar.';
+  else if(state==='active') msg='Renova automaticamente em <strong>'+fmtDataBR(d.period_end)+'</strong>. '+(dias!=null?dias+' dia(s) no período atual.':'');
+  else if(state==='cancelling') msg='Cancelamento agendado. Você mantém acesso até <strong>'+fmtDataBR(d.period_end)+'</strong> e não será cobrado novamente.';
+  else if(state==='expired') msg='Seu acesso expirou. Assine um plano abaixo pra reativar.';
+  else if(state==='suspended') msg='Sua conta está suspensa. Entre em contato com o suporte.';
+
+  var acao='';
+  if(state==='active') acao='<button class="btn btn-ghost" style="border-color:rgba(248,113,113,.3);color:#fca5a5;" onclick="cancelarAssinatura()">Cancelar assinatura</button>';
+  else if(state==='cancelling') acao='<button class="btn btn-primary" onclick="reativarAssinatura()">Reativar renovação</button>';
+
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'+
+      '<div style="width:54px;height:54px;border-radius:14px;background:'+cfg.bg+';display:flex;align-items:center;justify-content:center;font-size:26px;">'+cfg.ic+'</div>'+
+      '<div style="flex:1;min-width:200px;">'+
+        '<div style="display:flex;align-items:center;gap:10px;">'+
+          '<span style="font-size:18px;font-weight:800;color:#f1f5f9;">'+cfg.lbl+'</span>'+
+          '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;background:'+cfg.bg+';color:'+cfg.cor+';">Plano '+planNome+'</span>'+
+        '</div>'+
+        '<div style="font-size:13px;color:#94a3b8;margin-top:6px;line-height:1.6;">'+msg+'</div>'+
+        '<div style="font-size:12px;color:#475569;margin-top:6px;">'+(d.sessions_used||0)+' / '+(d.sessions_limit||1)+' sessão(ões) em uso</div>'+
+      '</div>'+
+      (acao?'<div>'+acao+'</div>':'')+
+    '</div>';
+}
+
+function planoCard(d, plano){
+  var isPro=plano==='pro';
+  var preco=isPro?d.price_pro_cents:d.price_basic_cents;
+  var atual=(d.plan===plano && (d.state==='active'||d.state==='cancelling'));
+  var nome=isPro?'Pro':'Básico';
+  var feats=isPro
+    ? ['Até 10 números (QR + Cloud Meta)','Templates Não Oficiais e Meta HSM','Robôs de automação BizProc','Campanhas SMS','Relatórios completos','Suporte prioritário']
+    : ['1 número WhatsApp','Aba no Contato/Lead/Deal','Envio e recepção inline','Permissões básicas','Histórico de 30 dias'];
+  var cor=isPro?'#a78bfa':'#60a5fa';
+  var btn = atual
+    ? '<button class="btn" disabled style="width:100%;opacity:.5;cursor:default;">Plano atual</button>'
+    : (d.billing_configured
+        ? '<button class="btn btn-primary" style="width:100%;" onclick="assinarPlano(\''+plano+'\',this)">Assinar '+nome+' — Boleto</button>'
+        : '<button class="btn" style="width:100%;opacity:.6;cursor:not-allowed;" disabled>Pagamento indisponível</button>');
+  return '<div class="card-flat" style="padding:22px;border:1px solid '+(atual?cor:'rgba(255,255,255,.08)')+';'+(atual?'box-shadow:0 0 24px '+cor+'22;':'')+'">'+
+    '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:'+cor+';">'+nome+'</div>'+
+    '<div style="font-size:26px;font-weight:800;color:#f1f5f9;margin:8px 0 2px;">'+fmtCentavos(preco)+'<span style="font-size:13px;color:#475569;font-weight:500;"> /mês</span></div>'+
+    '<ul style="list-style:none;padding:0;margin:16px 0;display:flex;flex-direction:column;gap:8px;">'+
+      feats.map(function(f){return '<li style="font-size:12.5px;color:#cbd5e1;display:flex;gap:8px;align-items:flex-start;line-height:1.5;"><span style="color:'+cor+';">✓</span>'+f+'</li>';}).join('')+
+    '</ul>'+btn+'</div>';
+}
+function renderAssinaturaPlanos(d){
+  document.getElementById('assinatura-planos').innerHTML = planoCard(d,'basic') + planoCard(d,'pro');
+}
+
+function renderAssinaturaCharges(charges){
+  var el=document.getElementById('assinatura-charges');
+  if(!charges||!charges.length){ el.innerHTML='<div style="text-align:center;padding:24px;color:#334155;font-size:13px;">Nenhum pagamento ainda.</div>'; return; }
+  var rows=charges.map(function(c){
+    var st=c.status==='paid'?'<span style="color:#25D366;">● pago</span>':c.status==='pending'?'<span style="color:#fbbf24;">● pendente</span>':'<span style="color:#64748b;">'+c.status+'</span>';
+    var bol=c.boleto_url?'<a href="'+c.boleto_url+'" target="_blank" style="color:#60a5fa;">abrir ↗</a>':'—';
+    return '<div style="display:flex;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12.5px;">'+
+      '<div style="flex:1;color:#cbd5e1;">'+(c.plan==='pro'?'Pro':'Básico')+'</div>'+
+      '<div style="width:110px;color:#94a3b8;">'+fmtCentavos(c.amount_cents)+'</div>'+
+      '<div style="width:100px;">'+st+'</div>'+
+      '<div style="width:110px;color:#475569;">'+fmtDataBR(c.created_at)+'</div>'+
+      '<div style="width:70px;text-align:right;">'+bol+'</div>'+
+    '</div>';
+  }).join('');
+  el.innerHTML='<div style="display:flex;padding:8px 14px;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid rgba(255,255,255,.06);"><div style="flex:1;">Plano</div><div style="width:110px;">Valor</div><div style="width:100px;">Status</div><div style="width:110px;">Data</div><div style="width:70px;text-align:right;">Boleto</div></div>'+rows;
+}
+
+function assinarPlano(plano, btn){
+  var orig=btn.textContent; btn.disabled=true; btn.textContent='Gerando boleto…';
+  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:'boleto'})})
+    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
+    .then(function(res){
+      if(res.ok && res.j.boleto_url){ btn.textContent='Boleto gerado! Abrindo…'; window.open(res.j.boleto_url,'_blank'); setTimeout(function(){btn.disabled=false;btn.textContent=orig;carregarAssinatura();},2500); }
+      else { alert(res.j.error||'Não foi possível gerar o boleto agora.'); btn.disabled=false; btn.textContent=orig; }
+    })
+    .catch(function(){ alert('Falha de conexão.'); btn.disabled=false; btn.textContent=orig; });
+}
+function cancelarAssinatura(){
+  if(!confirm('Cancelar a renovação da assinatura?\n\nVocê continua com acesso completo até o fim do período já pago. Não haverá nova cobrança.'))return;
+  fetch(apiUrl('/ui/plan/cancel'),{method:'POST'})
+    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
+    .then(function(res){ alert(res.j.message||(res.ok?'Cancelado.':res.j.error||'Falha.')); carregarAssinatura(); })
+    .catch(function(){ alert('Falha de conexão.'); });
+}
+function reativarAssinatura(){
+  fetch(apiUrl('/ui/plan/reactivate'),{method:'POST'})
+    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
+    .then(function(res){ alert(res.j.message||(res.ok?'Reativado.':res.j.error||'Falha.')); carregarAssinatura(); })
+    .catch(function(){ alert('Falha de conexão.'); });
 }
 
 function openSidebar() {

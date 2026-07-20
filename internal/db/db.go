@@ -510,6 +510,17 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log (created_at DESC);
 		`},
+		{"032_plan_cancellation", `
+			-- Cancelamento agendado (padrao SaaS): cliente cancela mas usa ate
+			-- o fim do periodo pago (active_until). cancel_at_period_end=TRUE
+			-- marca que NAO deve renovar. cancelled_at = quando cancelou.
+			-- O acesso continua liberado ate active_until (IsAccessAllowed nao
+			-- muda). Um job/checagem no vencimento move pra expired.
+			ALTER TABLE tenant_plans
+				ADD COLUMN IF NOT EXISTS cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;
+			ALTER TABLE tenant_plans
+				ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+		`},
 		{"031_blocked_ips", `
 			-- IPs bloqueados persistentes (alem do rate-limit em memoria).
 			-- reason: 'manual' | 'brute_force'. active=FALSE = liberado.
