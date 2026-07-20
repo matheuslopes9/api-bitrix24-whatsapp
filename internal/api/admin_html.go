@@ -28,8 +28,10 @@ const adminLoginHTML = `<!doctype html>
 </head>
 <body>
 <form class="card" method="post" action="/admin/login">
-  <div class="brand"><div class="logo">🛡️</div><h1>UC Talk — Admin</h1></div>
-  <p class="desc">Painel de administração. Gerencie tenants, planos, pagamentos e a saúde do sistema.</p>
+  <div class="brand" style="justify-content:center;margin-bottom:14px">
+    <img src="/assets/logo.png" alt="UC Talk" style="height:46px;width:auto;max-width:220px;object-fit:contain">
+  </div>
+  <p class="desc" style="text-align:center">Painel de administração. Gerencie tenants, planos, pagamentos e a saúde do sistema.</p>
   <!--ERR-->
   <div class="field">
     <label for="user">Usuário</label>
@@ -65,7 +67,7 @@ const adminHomeHTML = `<!doctype html>
 
   /* ── SIDEBAR ── */
   .sidebar{width:var(--sbw);flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:60;transition:transform .2s}
-  .sb-brand{display:flex;align-items:center;gap:11px;padding:18px 18px 16px;border-bottom:1px solid var(--border)}
+  .sb-brand{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:18px 18px 16px;border-bottom:1px solid var(--border)}
   .sb-brand .logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--green),#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
   .sb-brand .t1{font-size:.98em;font-weight:800;line-height:1.1}
   .sb-brand .t2{font-size:.68em;color:var(--dim);font-weight:600;margin-top:1px}
@@ -191,8 +193,8 @@ const adminHomeHTML = `<!doctype html>
 
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
-    <div class="logo">🛡️</div>
-    <div><div class="t1">UC Talk</div><div class="t2">Painel Admin</div></div>
+    <img src="/assets/logo.png" alt="UC Talk" style="height:34px;width:auto;max-width:150px;object-fit:contain;display:block">
+    <div class="t2" style="margin-left:2px">Painel Admin</div>
   </div>
   <nav class="sb-nav">
     <div class="sb-group">Principal</div>
