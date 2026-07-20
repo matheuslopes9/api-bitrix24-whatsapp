@@ -188,8 +188,16 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-group">Principal</div>
     <div class="sb-item active" data-page="overview" onclick="irPara('overview')"><span class="ic">📊</span> Visão geral</div>
     <div class="sb-item" data-page="tenants" onclick="irPara('tenants')"><span class="ic">🏢</span> Tenants <span class="badge-count" id="cnt-tenants">0</span></div>
+    <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
     <div class="sb-group">Financeiro</div>
     <div class="sb-item" data-page="billing" onclick="irPara('billing')"><span class="ic">💳</span> Pagamentos <span class="badge-count" id="cnt-charges">0</span></div>
+    <div class="sb-group">Monitoramento</div>
+    <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
+    <div class="sb-item" data-page="logs" onclick="irPara('logs')"><span class="ic">📜</span> Logs ao vivo</div>
+    <div class="sb-group">Segurança</div>
+    <div class="sb-item" data-page="users" onclick="irPara('users')"><span class="ic">👥</span> Usuários admin</div>
+    <div class="sb-item" data-page="ips" onclick="irPara('ips')"><span class="ic">🚫</span> IPs bloqueados</div>
+    <div class="sb-item" data-page="audit" onclick="irPara('audit')"><span class="ic">📋</span> Auditoria</div>
     <div class="sb-group">Sistema</div>
     <div class="sb-item" data-page="tools" onclick="irPara('tools')"><span class="ic">🔧</span> Ferramentas</div>
     <div class="sb-item" data-page="diag" onclick="irPara('diag')"><span class="ic">🩺</span> Diagnóstico</div>
@@ -257,6 +265,88 @@ const adminHomeHTML = `<!doctype html>
       </div></div>
     </div>
 
+    <!-- USAGE -->
+    <div class="page" id="page-usage">
+      <div class="section-title">📈 Consumo por tenant</div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>Tenant</th><th>Msgs 24h</th><th>Msgs 7d</th><th>Msgs 30d</th><th>Sessões</th><th>Pagamentos</th><th>Receita</th></tr></thead>
+          <tbody id="usage-body"><tr><td colspan="7" class="loading">Carregando consumo…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- SYSTEM -->
+    <div class="page" id="page-system">
+      <div class="kpis" id="sys-kpis"><div class="loading">Carregando métricas do sistema…</div></div>
+      <div class="section-title">🖥️ Recursos do processo</div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table><tbody id="sys-detail"><tr><td class="loading">Carregando…</td></tr></tbody></table>
+      </div></div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="page" id="page-logs">
+      <div class="toolbar">
+        <input class="search" id="log-filter" placeholder="🔎 Filtrar linhas (ex: error, domain)…" oninput="filtrarLogs()">
+        <button class="btn" id="log-pause" onclick="toggleLogPause()">⏸ Pausar</button>
+        <button class="btn" onclick="document.getElementById('log-view').innerHTML=''">🗑 Limpar</button>
+      </div>
+      <pre id="log-view" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.76em;line-height:1.5;color:#a7f3d0;overflow:auto;height:60vh;white-space:pre-wrap"></pre>
+    </div>
+
+    <!-- USERS -->
+    <div class="page" id="page-users">
+      <div class="toolcard" style="margin-bottom:16px">
+        <h3>➕ Novo usuário admin</h3>
+        <p>Crie logins adicionais pro painel. O login root (env) continua funcionando sempre.</p>
+        <div class="row" style="gap:8px;align-items:flex-end">
+          <div style="flex:1;min-width:140px"><label style="font-size:.72em;color:var(--dim)">E-mail</label><input class="dominput" id="u-email" placeholder="pessoa@uctechnology.com.br" style="margin:0"></div>
+          <div style="flex:1;min-width:120px"><label style="font-size:.72em;color:var(--dim)">Nome</label><input class="dominput" id="u-name" placeholder="Nome" style="margin:0"></div>
+          <div style="min-width:140px"><label style="font-size:.72em;color:var(--dim)">Senha (8+)</label><input class="dominput" id="u-pass" type="password" placeholder="senha" style="margin:0"></div>
+          <div style="min-width:120px"><label style="font-size:.72em;color:var(--dim)">Papel</label>
+            <select class="filter" id="u-role" style="width:100%"><option value="support">Suporte</option><option value="superadmin">Superadmin</option></select></div>
+          <button class="btn btn-primary" onclick="criarUser()" style="height:38px">Criar</button>
+        </div>
+      </div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>E-mail</th><th>Nome</th><th>Papel</th><th>Status</th><th>Último acesso</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody id="users-body"><tr><td colspan="6" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- IPS -->
+    <div class="page" id="page-ips">
+      <div class="toolcard" style="margin-bottom:16px">
+        <h3>🚫 Bloquear IP manualmente</h3>
+        <p>IPs com muitas tentativas de login são bloqueados automaticamente. Aqui você libera ou adiciona bloqueios manuais.</p>
+        <div class="row" style="gap:8px;align-items:flex-end">
+          <div style="flex:1;min-width:160px"><label style="font-size:.72em;color:var(--dim)">IP</label><input class="dominput" id="ip-addr" placeholder="203.0.113.45" style="margin:0"></div>
+          <div style="flex:2;min-width:160px"><label style="font-size:.72em;color:var(--dim)">Nota</label><input class="dominput" id="ip-note" placeholder="motivo (opcional)" style="margin:0"></div>
+          <button class="btn btn-danger" onclick="bloquearIP()" style="height:38px">Bloquear</button>
+        </div>
+      </div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>IP</th><th>Motivo</th><th>Falhas</th><th>Status</th><th>Atualizado</th><th>Nota</th><th style="text-align:right">Ação</th></tr></thead>
+          <tbody id="ips-body"><tr><td colspan="7" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- AUDIT -->
+    <div class="page" id="page-audit">
+      <div class="section-title">📋 Log de auditoria</div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>Quando</th><th>Ator</th><th>Ação</th><th>Alvo</th><th>Detalhe</th><th>IP</th></tr></thead>
+          <tbody id="audit-body"><tr><td colspan="6" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
     <!-- TOOLS -->
     <div class="page" id="page-tools">
       <div class="tools">
@@ -304,7 +394,13 @@ var TENANTS=[];
 var PAGES={
   overview:{title:'Visão geral',sub:'Métricas e saúde do sistema'},
   tenants:{title:'Tenants',sub:'Portais Bitrix24 que instalaram o app'},
+  usage:{title:'Consumo',sub:'Uso de recursos por tenant'},
   billing:{title:'Pagamentos',sub:'Cobranças e receita via maxiPago'},
+  system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
+  logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
+  users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
+  ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
+  audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
   tools:{title:'Ferramentas',sub:'Ações de manutenção e reparo'},
   diag:{title:'Diagnóstico',sub:'Estado interno do banco de dados'}
 };
@@ -316,6 +412,14 @@ function irPara(p){
   document.getElementById('page-'+p).classList.add('active');
   if(PAGES[p]){document.getElementById('page-title').textContent=PAGES[p].title;document.getElementById('page-sub').textContent=PAGES[p].sub;}
   fecharSidebar();
+  // Carrega dados sob demanda por secao.
+  if(p==='usage')carregarUsage();
+  if(p==='system')carregarSystem();
+  if(p==='users')carregarUsers();
+  if(p==='ips')carregarIPs();
+  if(p==='audit')carregarAudit();
+  if(p==='logs')iniciarLogs(); else pararLogs();
+  if(p==='system'){clearInterval(window._sysT);window._sysT=setInterval(carregarSystem,5000);}else{clearInterval(window._sysT);}
 }
 function abrirSidebar(){document.getElementById('sidebar').classList.add('open');document.getElementById('backdrop').classList.add('open');}
 function fecharSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('backdrop').classList.remove('open');}
@@ -396,6 +500,112 @@ function setToolDomain(d){irPara('tools');document.getElementById('tool-domain')
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
 function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
+
+// ── USAGE ──
+function carregarUsage(){
+  fetch('/admin/api/usage').then(function(r){return r.json();}).then(function(d){
+    var b=document.getElementById('usage-body'); var list=d.usage||[];
+    if(!list.length){b.innerHTML='<tr><td colspan="7" class="empty">Sem dados de consumo ainda.</td></tr>';return;}
+    b.innerHTML=list.map(function(u){
+      var sess=(u.sessions_qr||0)+' QR'+(u.sessions_cloud?' · '+u.sessions_cloud+' Cloud':'');
+      return '<tr><td class="domain">'+u.domain+'</td><td>'+(u.msgs_24h||0)+'</td><td>'+(u.msgs_7d||0)+'</td><td><b>'+(u.msgs_30d||0)+'</b></td><td>'+sess+'</td><td>'+(u.charges_paid||0)+'</td><td>'+fmtBRL(u.revenue_cents)+'</td></tr>';
+    }).join('');
+  }).catch(function(){document.getElementById('usage-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar.</td></tr>';});
+}
+
+// ── SYSTEM ──
+function fmtUptime(s){s=s||0;var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m';}
+function carregarSystem(){
+  fetch('/admin/api/system').then(function(r){return r.json();}).then(function(s){
+    function k(cls,label,val,foot){return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+val+'</div><div class="foot">'+(foot||'')+'</div></div>';}
+    document.getElementById('sys-kpis').innerHTML=
+      k('blue','Goroutines',s.num_goroutine,s.num_cpu+' CPUs')+
+      k('purple','Heap (RAM)',(s.heap_alloc_mb||0).toFixed(1)+' MB','de '+(s.heap_sys_mb||0).toFixed(0)+' MB reservado')+
+      k('green','Redis',s.redis_ok?s.redis_ping_ms+' ms':'offline',s.redis_ok?'conectado':'sem conexão')+
+      k('amber','Filas',(s.queue_inbound||0)+(s.queue_outbound||0),'in '+(s.queue_inbound||0)+' · out '+(s.queue_outbound||0)+' · dead '+(s.queue_dead||0))+
+      k('blue','Conexões DB',(s.db_conns_used||0)+'/'+(s.db_conns_max||0),(s.db_conns_idle||0)+' ociosas')+
+      k('green','Uptime',fmtUptime(s.uptime_seconds),s.go_version||'');
+    var rows=[['Go',s.go_version],['CPUs',s.num_cpu],['Goroutines',s.num_goroutine],
+      ['Heap alocado',(s.heap_alloc_mb||0).toFixed(2)+' MB'],['Heap reservado',(s.heap_sys_mb||0).toFixed(2)+' MB'],
+      ['Stack',(s.stack_sys_mb||0).toFixed(2)+' MB'],['Total alocado (acum.)',(s.total_alloc_mb||0).toFixed(0)+' MB'],
+      ['Ciclos GC',s.num_gc],['Sessões WA vivas',s.wa_sessions_live],
+      ['DB conns (uso/idle/max)',(s.db_conns_used||0)+' / '+(s.db_conns_idle||0)+' / '+(s.db_conns_max||0)],
+      ['Redis ping',s.redis_ok?s.redis_ping_ms+' ms':'offline']];
+    document.getElementById('sys-detail').innerHTML=rows.map(function(r){return '<tr><td class="meta" style="width:220px">'+r[0]+'</td><td class="mono">'+(r[1]==null?'—':r[1])+'</td></tr>';}).join('');
+  }).catch(function(){document.getElementById('sys-kpis').innerHTML='<div class="empty">Falha ao carregar sistema.</div>';});
+}
+
+// ── LOGS (SSE) ──
+var _logES=null,_logPaused=false,_logFilter='';
+function iniciarLogs(){
+  if(_logES)return;
+  _logES=new EventSource('/admin/api/logs/stream');
+  _logES.onmessage=function(ev){ if(_logPaused)return; appendLog(ev.data); };
+  _logES.onerror=function(){ /* reconecta sozinho */ };
+}
+function pararLogs(){ if(_logES){_logES.close();_logES=null;} }
+function appendLog(text){
+  var v=document.getElementById('log-view'); if(!v)return;
+  if(_logFilter && text.toLowerCase().indexOf(_logFilter)<0)return;
+  var lvl='info'; try{var o=JSON.parse(text); lvl=o.level||'info'; text=(o.ts?new Date(o.ts*1000).toLocaleTimeString('pt-BR'):'')+' ['+lvl.toUpperCase()+'] '+(o.msg||'')+(o.error?' — '+o.error:'')+(o.domain?' {'+o.domain+'}':'');}catch(e){}
+  var color=lvl==='error'||lvl==='fatal'?'#fca5a5':lvl==='warn'?'#fcd34d':'#a7f3d0';
+  var line=document.createElement('div'); line.style.color=color; line.textContent=text;
+  v.appendChild(line);
+  while(v.childNodes.length>600)v.removeChild(v.firstChild);
+  v.scrollTop=v.scrollHeight;
+}
+function toggleLogPause(){_logPaused=!_logPaused;document.getElementById('log-pause').textContent=_logPaused?'▶ Retomar':'⏸ Pausar';}
+function filtrarLogs(){_logFilter=(document.getElementById('log-filter').value||'').toLowerCase();}
+
+// ── USERS ──
+function carregarUsers(){
+  fetch('/admin/api/users').then(function(r){return r.json();}).then(function(d){
+    var b=document.getElementById('users-body'); var list=d.users||[];
+    var root='<tr><td class="domain">'+(d.root_user||'admin')+' <span class="badge b-pro">ROOT</span></td><td>—</td><td>superadmin</td><td><span class="badge b-active">env</span></td><td class="meta">—</td><td style="text-align:right" class="meta">login raiz</td></tr>';
+    var rows=list.map(function(u){
+      var st=u.active?'<span class="badge b-active">ativo</span>':'<span class="badge b-suspended">inativo</span>';
+      var role=u.role==='superadmin'?'<span class="badge b-pro">superadmin</span>':'<span class="badge b-basic">suporte</span>';
+      return '<tr><td class="domain">'+u.email+'</td><td>'+(u.name||'—')+'</td><td>'+role+'</td><td>'+st+'</td><td class="meta">'+(u.last_login_at?fmtDate(u.last_login_at):'nunca')+'</td>'+
+        '<td style="text-align:right"><button class="btn" onclick="toggleUser(\''+u.id+'\','+(!u.active)+')">'+(u.active?'Desativar':'Ativar')+'</button> <button class="btn btn-danger" onclick="delUser(\''+u.id+'\',\''+u.email+'\')">Excluir</button></td></tr>';
+    }).join('');
+    b.innerHTML=root+(rows||'');
+  }).catch(function(){document.getElementById('users-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
+}
+function criarUser(){
+  var body={email:document.getElementById('u-email').value,name:document.getElementById('u-name').value,password:document.getElementById('u-pass').value,role:document.getElementById('u-role').value};
+  fetch('/admin/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){if(res.ok){toast('✓ usuário criado',true);document.getElementById('u-email').value='';document.getElementById('u-name').value='';document.getElementById('u-pass').value='';carregarUsers();}else toast('✗ '+(res.j.error||'falha'),false);})
+    .catch(function(){toast('✗ erro de conexão',false);});
+}
+function toggleUser(id,active){fetch('/admin/api/users/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,active:active})}).then(function(){toast('✓ atualizado',true);carregarUsers();}).catch(function(){toast('✗ falha',false);});}
+function delUser(id,email){if(!confirm('Excluir o admin '+email+'?'))return;fetch('/admin/api/users/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})}).then(function(){toast('✓ excluído',true);carregarUsers();}).catch(function(){toast('✗ falha',false);});}
+
+// ── IPS ──
+function carregarIPs(){
+  fetch('/admin/api/blocked-ips').then(function(r){return r.json();}).then(function(d){
+    var b=document.getElementById('ips-body'); var list=d.blocked||[];
+    if(!list.length){b.innerHTML='<tr><td colspan="7" class="empty">Nenhum IP bloqueado.</td></tr>';return;}
+    b.innerHTML=list.map(function(x){
+      var st=x.active?'<span class="badge b-expired">bloqueado</span>':'<span class="badge b-active">liberado</span>';
+      var rs=x.reason==='brute_force'?'<span class="badge b-trial">brute-force</span>':'<span class="badge b-basic">manual</span>';
+      var act=x.active?'<button class="btn btn-primary" onclick="unblockIP(\''+x.ip+'\')">Liberar</button>':'<button class="btn btn-danger" onclick="reblockIP(\''+x.ip+'\')">Rebloquear</button>';
+      return '<tr><td class="mono domain">'+x.ip+'</td><td>'+rs+'</td><td>'+(x.fail_count||0)+'</td><td>'+st+'</td><td class="meta">'+fmtDate(x.updated_at)+'</td><td class="meta">'+(x.note||'—')+'</td><td style="text-align:right">'+act+'</td></tr>';
+    }).join('');
+  }).catch(function(){document.getElementById('ips-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar.</td></tr>';});
+}
+function bloquearIP(){var ip=document.getElementById('ip-addr').value.trim();if(!ip){toast('Informe o IP',false);return;}fetch('/admin/api/blocked-ips/block',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip,note:document.getElementById('ip-note').value})}).then(function(){toast('✓ IP bloqueado',true);document.getElementById('ip-addr').value='';document.getElementById('ip-note').value='';carregarIPs();}).catch(function(){toast('✗ falha',false);});}
+function unblockIP(ip){fetch('/admin/api/blocked-ips/unblock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip})}).then(function(){toast('✓ IP liberado',true);carregarIPs();}).catch(function(){toast('✗ falha',false);});}
+function reblockIP(ip){fetch('/admin/api/blocked-ips/block',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip:ip,note:'rebloqueado manualmente'})}).then(function(){toast('✓ rebloqueado',true);carregarIPs();}).catch(function(){toast('✗ falha',false);});}
+
+// ── AUDIT ──
+function carregarAudit(){
+  fetch('/admin/api/audit').then(function(r){return r.json();}).then(function(d){
+    var b=document.getElementById('audit-body'); var list=d.entries||[];
+    if(!list.length){b.innerHTML='<tr><td colspan="6" class="empty">Sem registros ainda.</td></tr>';return;}
+    b.innerHTML=list.map(function(e){return '<tr><td class="meta">'+fmtDate(e.created_at)+'</td><td class="domain">'+(e.actor||'—')+'</td><td><span class="badge b-basic">'+(e.action||'')+'</span></td><td class="meta">'+(e.target||'—')+'</td><td class="meta">'+(e.detail||'')+'</td><td class="mono meta">'+(e.ip||'')+'</td></tr>';}).join('');
+  }).catch(function(){document.getElementById('audit-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
+}
 
 function carregarTudo(){
   fetch('/admin/api/metrics').then(function(r){return r.json();}).then(renderKpis).catch(function(){document.getElementById('kpis').innerHTML='<div class="empty">Falha ao carregar métricas.</div>';});

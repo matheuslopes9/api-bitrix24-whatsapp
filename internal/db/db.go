@@ -479,6 +479,50 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE tenant_plans
 				ADD COLUMN IF NOT EXISTS master_auto_set_at TIMESTAMPTZ;
 		`},
+		{"029_admin_users", `
+			-- Usuarios do painel admin (multi-admin com papeis). O login por
+			-- env (ADMIN_USER/ADMIN_PASSWORD) continua funcionando como 'root'
+			-- de emergencia; estes sao usuarios adicionais persistidos.
+			-- role: 'superadmin' (tudo) | 'support' (le tudo, acoes limitadas)
+			-- password_hash: bcrypt.
+			CREATE TABLE IF NOT EXISTS admin_users (
+				id            UUID PRIMARY KEY,
+				email         TEXT NOT NULL UNIQUE,
+				name          TEXT NOT NULL DEFAULT '',
+				password_hash TEXT NOT NULL,
+				role          TEXT NOT NULL DEFAULT 'support',
+				active        BOOLEAN NOT NULL DEFAULT TRUE,
+				last_login_at TIMESTAMPTZ,
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				created_by    TEXT NOT NULL DEFAULT ''
+			);
+		`},
+		{"030_admin_audit_log", `
+			-- Log de auditoria: toda acao relevante no painel admin.
+			CREATE TABLE IF NOT EXISTS admin_audit_log (
+				id         BIGSERIAL PRIMARY KEY,
+				actor      TEXT NOT NULL DEFAULT '',
+				action     TEXT NOT NULL DEFAULT '',
+				target     TEXT NOT NULL DEFAULT '',
+				detail     TEXT NOT NULL DEFAULT '',
+				ip         TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log (created_at DESC);
+		`},
+		{"031_blocked_ips", `
+			-- IPs bloqueados persistentes (alem do rate-limit em memoria).
+			-- reason: 'manual' | 'brute_force'. active=FALSE = liberado.
+			CREATE TABLE IF NOT EXISTS blocked_ips (
+				ip          TEXT PRIMARY KEY,
+				reason      TEXT NOT NULL DEFAULT 'manual',
+				fail_count  INT NOT NULL DEFAULT 0,
+				active      BOOLEAN NOT NULL DEFAULT TRUE,
+				note        TEXT NOT NULL DEFAULT '',
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+		`},
 		{"028_billing_charges", `
 			-- Cobrancas geradas via gateway maxiPago (boleto/cartao).
 			-- 1 row por tentativa de cobranca. reference_num e' a chave que

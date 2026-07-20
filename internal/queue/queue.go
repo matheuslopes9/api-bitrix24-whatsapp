@@ -231,6 +231,11 @@ func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	return
 }
 
+// Ping verifica conectividade com o Redis (pro monitoramento do admin).
+func (q *Queue) Ping(ctx context.Context) error {
+	return q.rdb.Ping(ctx).Err()
+}
+
 // Flush descarta TODOS os jobs das filas especificadas. Retorna os contadores
 // removidos. Útil para limpar acúmulo de testes ou em emergências.
 // kinds aceita "inbound", "outbound", "dead" — passar []string{"inbound","outbound","dead"} limpa tudo.

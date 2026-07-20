@@ -2467,3 +2467,248 @@ func (r *Repository) ListRecentBillingCharges(ctx context.Context, limit int) ([
 	}
 	return out, rows.Err()
 }
+
+// ─── Admin users (multi-admin com papeis) ──────────────────────────────────
+
+type AdminUser struct {
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	Name         string     `json:"name"`
+	PasswordHash string     `json:"-"`
+	Role         string     `json:"role"`
+	Active       bool       `json:"active"`
+	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	CreatedBy    string     `json:"created_by"`
+}
+
+func (r *Repository) CreateAdminUser(ctx context.Context, u *AdminUser) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO admin_users (id, email, name, password_hash, role, active, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		u.ID, u.Email, u.Name, u.PasswordHash, u.Role, u.Active, u.CreatedBy)
+	return err
+}
+
+func (r *Repository) GetAdminUserByEmail(ctx context.Context, email string) (*AdminUser, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, email, name, password_hash, role, active, last_login_at, created_at, created_by
+		FROM admin_users WHERE email = $1`, email)
+	var u AdminUser
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role,
+		&u.Active, &u.LastLoginAt, &u.CreatedAt, &u.CreatedBy); err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *Repository) ListAdminUsers(ctx context.Context) ([]*AdminUser, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, name, password_hash, role, active, last_login_at, created_at, created_by
+		FROM admin_users ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*AdminUser
+	for rows.Next() {
+		var u AdminUser
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role,
+			&u.Active, &u.LastLoginAt, &u.CreatedAt, &u.CreatedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, &u)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) SetAdminUserActive(ctx context.Context, id uuid.UUID, active bool) error {
+	_, err := r.pool.Exec(ctx, `UPDATE admin_users SET active=$2 WHERE id=$1`, id, active)
+	return err
+}
+
+func (r *Repository) DeleteAdminUser(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM admin_users WHERE id=$1`, id)
+	return err
+}
+
+func (r *Repository) TouchAdminUserLogin(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE admin_users SET last_login_at=NOW() WHERE id=$1`, id)
+	return err
+}
+
+func (r *Repository) CountAdminUsers(ctx context.Context) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&n)
+	return n, err
+}
+
+// ─── Admin audit log ───────────────────────────────────────────────────────
+
+type AuditEntry struct {
+	ID        int64     `json:"id"`
+	Actor     string    `json:"actor"`
+	Action    string    `json:"action"`
+	Target    string    `json:"target"`
+	Detail    string    `json:"detail"`
+	IP        string    `json:"ip"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (r *Repository) WriteAudit(ctx context.Context, actor, action, target, detail, ip string) {
+	// Best-effort: nunca quebra a acao por falha de auditoria.
+	_, _ = r.pool.Exec(ctx, `
+		INSERT INTO admin_audit_log (actor, action, target, detail, ip)
+		VALUES ($1,$2,$3,$4,$5)`, actor, action, target, detail, ip)
+}
+
+func (r *Repository) ListAudit(ctx context.Context, limit int) ([]*AuditEntry, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, actor, action, target, detail, ip, created_at
+		FROM admin_audit_log ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.Actor, &e.Action, &e.Target, &e.Detail, &e.IP, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+// ─── Blocked IPs ───────────────────────────────────────────────────────────
+
+type BlockedIP struct {
+	IP        string    `json:"ip"`
+	Reason    string    `json:"reason"`
+	FailCount int       `json:"fail_count"`
+	Active    bool      `json:"active"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (r *Repository) UpsertBlockedIP(ctx context.Context, ip, reason, note string, failCount int) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO blocked_ips (ip, reason, fail_count, active, note)
+		VALUES ($1,$2,$3,TRUE,$4)
+		ON CONFLICT (ip) DO UPDATE SET
+			reason = EXCLUDED.reason, fail_count = EXCLUDED.fail_count,
+			active = TRUE, note = EXCLUDED.note, updated_at = NOW()`,
+		ip, reason, failCount, note)
+	return err
+}
+
+func (r *Repository) SetBlockedIPActive(ctx context.Context, ip string, active bool) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE blocked_ips SET active=$2, updated_at=NOW() WHERE ip=$1`, ip, active)
+	return err
+}
+
+func (r *Repository) IsIPBlocked(ctx context.Context, ip string) bool {
+	var blocked bool
+	_ = r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM blocked_ips WHERE ip=$1 AND active=TRUE)`, ip).Scan(&blocked)
+	return blocked
+}
+
+func (r *Repository) ListBlockedIPs(ctx context.Context) ([]*BlockedIP, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ip, reason, fail_count, active, note, created_at, updated_at
+		FROM blocked_ips ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BlockedIP
+	for rows.Next() {
+		var b BlockedIP
+		if err := rows.Scan(&b.IP, &b.Reason, &b.FailCount, &b.Active, &b.Note, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &b)
+	}
+	return out, rows.Err()
+}
+
+// ─── Consumo por tenant ────────────────────────────────────────────────────
+
+type TenantUsage struct {
+	Domain        string `json:"domain"`
+	Msgs24h       int64  `json:"msgs_24h"`
+	Msgs7d        int64  `json:"msgs_7d"`
+	Msgs30d       int64  `json:"msgs_30d"`
+	SessionsQR    int    `json:"sessions_qr"`
+	SessionsCloud int    `json:"sessions_cloud"`
+	RevenueCents  int64  `json:"revenue_cents"`
+	ChargesPaid   int    `json:"charges_paid"`
+}
+
+// GetTenantUsage agrega consumo por dominio. Msgs via join messages ->
+// whatsapp_sessions -> bitrix_accounts (o vinculo de dominio). Storage nao
+// da pra medir por tenant sem tocar o disco (arquivos .db sao por telefone,
+// nao por dominio) — fica de fora aqui; a UI mostra sessoes como proxy.
+func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error) {
+	// Base: um row por dominio de bitrix_accounts (planos existentes).
+	rows, err := r.pool.Query(ctx, `
+		WITH dom AS (
+			SELECT DISTINCT domain FROM bitrix_accounts WHERE domain <> ''
+		),
+		sess AS (
+			SELECT ba.domain,
+			       COUNT(*) FILTER (WHERE ws.status='active' AND ws.jid NOT LIKE 'cloud:%') AS qr,
+			       COUNT(*) FILTER (WHERE ws.status='active' AND ws.jid LIKE 'cloud:%')     AS cloud
+			  FROM bitrix_accounts ba
+			  JOIN whatsapp_sessions ws
+			    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1) = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+			 GROUP BY ba.domain
+		),
+		msg AS (
+			SELECT ba.domain,
+			       COUNT(*) FILTER (WHERE m.created_at > NOW() - INTERVAL '24 hours') AS m24,
+			       COUNT(*) FILTER (WHERE m.created_at > NOW() - INTERVAL '7 days')   AS m7,
+			       COUNT(*) FILTER (WHERE m.created_at > NOW() - INTERVAL '30 days')  AS m30
+			  FROM bitrix_accounts ba
+			  JOIN whatsapp_sessions ws
+			    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1) = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+			  JOIN messages m ON m.session_id = ws.id
+			 GROUP BY ba.domain
+		),
+		bill AS (
+			SELECT domain,
+			       COALESCE(SUM(amount_cents) FILTER (WHERE status='paid'),0) AS rev,
+			       COUNT(*) FILTER (WHERE status='paid') AS paid
+			  FROM billing_charges GROUP BY domain
+		)
+		SELECT d.domain,
+		       COALESCE(msg.m24,0), COALESCE(msg.m7,0), COALESCE(msg.m30,0),
+		       COALESCE(sess.qr,0), COALESCE(sess.cloud,0),
+		       COALESCE(bill.rev,0), COALESCE(bill.paid,0)
+		  FROM dom d
+		  LEFT JOIN sess ON sess.domain = d.domain
+		  LEFT JOIN msg  ON msg.domain  = d.domain
+		  LEFT JOIN bill ON bill.domain = d.domain
+		 ORDER BY COALESCE(msg.m30,0) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*TenantUsage
+	for rows.Next() {
+		var u TenantUsage
+		if err := rows.Scan(&u.Domain, &u.Msgs24h, &u.Msgs7d, &u.Msgs30d,
+			&u.SessionsQR, &u.SessionsCloud, &u.RevenueCents, &u.ChargesPaid); err != nil {
+			return nil, err
+		}
+		out = append(out, &u)
+	}
+	return out, rows.Err()
+}

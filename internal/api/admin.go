@@ -313,20 +313,45 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 	// Rate-limit por IP (anti brute-force). O IP vem do X-Forwarded-For
 	// (EasyPanel/Traefik proxy) com fallback pro RemoteIP.
 	ip := clientIP(c)
+
+	// Bloqueio persistente (banco): IP na lista de bloqueados nao passa.
+	if h.repo.IsIPBlocked(c.Context(), ip) {
+		h.log.Warn("admin login: ip bloqueado (persistente)", zap.String("ip", ip))
+		return c.Redirect("/admin/login?err=IP+bloqueado.+Contate+o+administrador.", fiber.StatusFound)
+	}
+
 	if blocked, remaining := loginRateLimited(ip); blocked {
 		h.log.Warn("admin login: rate limited", zap.String("ip", ip), zap.Int("retry_after_s", remaining))
+		// Persiste o bloqueio por brute-force pra aparecer no painel de IPs.
+		_ = h.repo.UpsertBlockedIP(c.Context(), ip, "brute_force",
+			"bloqueio automatico por tentativas de login", loginMaxFails)
 		return c.Redirect("/admin/login?err=Muitas+tentativas.+Aguarde+"+
 			strconv.Itoa(remaining/60+1)+"+minutos.", fiber.StatusFound)
 	}
 
 	userOK := subtle.ConstantTimeCompare([]byte(user), []byte(h.cfg.App.AdminUser)) == 1
 	passOK := subtle.ConstantTimeCompare([]byte(pass), []byte(h.cfg.App.AdminPassword)) == 1
+
+	// Se nao bateu com o root do env, tenta os admins do banco (bcrypt).
 	if !userOK || !passOK {
+		if dbUserOK := h.tryDBAdminLogin(c, user, pass); dbUserOK {
+			loginRecordSuccess(ip)
+			h.repo.WriteAudit(c.Context(), user, "login.success", "", "db-user", ip)
+			h.log.Info("admin login: sucesso (db user)", zap.String("ip", ip), zap.String("user", user))
+			expires := time.Now().Add(adminCookieTTL)
+			c.Cookie(&fiber.Cookie{
+				Name: adminCookieName, Value: signAdminCookie(h.cfg.App.Secret, expires),
+				Path: "/", Expires: expires, HTTPOnly: true,
+				Secure: strings.HasPrefix(h.cfg.App.PublicURL, "https://"), SameSite: "Lax",
+			})
+			return c.Redirect("/admin", fiber.StatusFound)
+		}
 		loginRecordFail(ip)
 		h.log.Warn("admin login: credenciais invalidas", zap.String("ip", ip))
 		return c.Redirect("/admin/login?err=Credenciais+inv%C3%A1lidas", fiber.StatusFound)
 	}
 	loginRecordSuccess(ip)
+	h.repo.WriteAudit(c.Context(), user, "login.success", "", "env-root", ip)
 	h.log.Info("admin login: sucesso", zap.String("ip", ip))
 	expires := time.Now().Add(adminCookieTTL)
 	c.Cookie(&fiber.Cookie{

@@ -18,17 +18,28 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/logbuffer"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/watchdog"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.mau.fi/whatsmeow/types/events"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func main() {
 	// ─── Logger ──────────────────────────────────────────────────────────
-	log, _ := zap.NewProduction()
+	// Logger de producao (JSON no stdout) + tee pro ring buffer em memoria,
+	// que alimenta o stream de logs em tempo real do painel admin.
+	baseCfg := zap.NewProductionConfig()
+	baseCore, _ := baseCfg.Build()
+	jsonEnc := zapcore.NewJSONEncoder(baseCfg.EncoderConfig)
+	tee := zapcore.NewTee(
+		baseCore.Core(),
+		logbuffer.NewCore(jsonEnc, baseCfg.Level),
+	)
+	log := zap.New(tee, zap.AddCaller())
 	defer log.Sync()
 
 	// ─── Config ──────────────────────────────────────────────────────────

@@ -260,6 +260,18 @@ func New(
 	admin.Get("/api/metrics", h.adminMetrics)              // KPIs globais
 	admin.Get("/api/billing/charges", h.adminBillingCharges) // cobrancas de todos
 	admin.Get("/api/debug", h.adminDebug)
+	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
+	admin.Get("/api/users", h.adminListUsers)
+	admin.Post("/api/users", h.adminCreateUser)
+	admin.Post("/api/users/toggle", h.adminToggleUser)
+	admin.Post("/api/users/delete", h.adminDeleteUser)
+	admin.Get("/api/audit", h.adminAuditLog)
+	admin.Get("/api/system", h.adminSystem)          // monitoramento processo
+	admin.Get("/api/usage", h.adminUsage)            // consumo por tenant
+	admin.Get("/api/logs/stream", h.adminLogsStream) // SSE logs em tempo real
+	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
+	admin.Post("/api/blocked-ips/block", h.adminBlockIP)
+	admin.Post("/api/blocked-ips/unblock", h.adminUnblockIP)
 	admin.Post("/api/queue/flush", h.adminFlushQueue)
 	admin.Post("/api/cleanup/banned-sessions", h.adminCleanupBannedSessions)
 	admin.Post("/api/cleanup/placeholder-portals", h.adminCleanupPlaceholders)
