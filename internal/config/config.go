@@ -147,7 +147,7 @@ func Load() (*Config, error) {
 			MaxiPagoEnv:         getEnvWithDefault("MAXIPAGO_ENV", "sandbox"),
 			ProcessorCard:       getEnvWithDefault("MAXIPAGO_PROCESSOR_CARD", "1"),
 			ProcessorBoleto:     getEnvWithDefault("MAXIPAGO_PROCESSOR_BOLETO", "12"),
-			ProcessorPix:        getEnvWithDefault("MAXIPAGO_PROCESSOR_PIX", "5"),
+			ProcessorPix:        getEnvWithDefault("MAXIPAGO_PROCESSOR_PIX", "206"),
 			BasicPriceCents:     getIntWithDefault("MAXIPAGO_BASIC_PRICE_CENTS", 9900),
 			ProPriceCents:       getIntWithDefault("MAXIPAGO_PRO_PRICE_CENTS", 19900),
 			ActivateDays:        getIntWithDefault("MAXIPAGO_ACTIVATE_DAYS", 30),

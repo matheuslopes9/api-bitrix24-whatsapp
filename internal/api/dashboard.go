@@ -1857,9 +1857,15 @@ function pagarCom(plano, metodo){
       if(!res.ok){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">'+(res.j.error||'Falha ao gerar cobrança.')+'</div>'; return; }
       if(metodo==='pix' && res.j.pix_copy_paste){
         var code=res.j.pix_copy_paste;
+        var qr='';
+        if(res.j.pix_qr_base64){
+          var src=res.j.pix_qr_base64.indexOf('data:')===0?res.j.pix_qr_base64:('data:image/png;base64,'+res.j.pix_qr_base64);
+          qr='<div style="text-align:center;margin-bottom:12px"><img src="'+src+'" alt="QR PIX" style="width:180px;height:180px;background:#fff;border-radius:10px;padding:8px"></div>';
+        }
         box.innerHTML='<div style="background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.25);border-radius:12px;padding:14px">'+
-          '<div style="font-size:12px;color:#25D366;font-weight:700;margin-bottom:8px">✅ PIX gerado — copie e pague no seu banco</div>'+
-          '<textarea readonly style="width:100%;height:76px;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#cbd5e1;font-size:11px;font-family:monospace;padding:8px;resize:none" id="pix-code">'+code+'</textarea>'+
+          '<div style="font-size:12px;color:#25D366;font-weight:700;margin-bottom:10px;text-align:center">✅ PIX gerado — escaneie ou copie</div>'+
+          qr+
+          '<textarea readonly style="width:100%;height:70px;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#cbd5e1;font-size:11px;font-family:monospace;padding:8px;resize:none" id="pix-code">'+code+'</textarea>'+
           '<button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="copiarPix()">📋 Copiar código PIX</button>'+
           '<div style="font-size:11px;color:#64748b;margin-top:8px;text-align:center">A liberação é automática assim que o pagamento cair.</div>'+
         '</div>';

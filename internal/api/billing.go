@@ -92,9 +92,11 @@ type mpBoleto struct {
 	Instructions   string `xml:"instructions"`
 }
 
-// mpPix — bloco PIX. expirationTime em segundos ate o QR expirar.
+// mpPix — bloco PIX (maxiPago apidocs). processorID 206. expirationTime em
+// segundos ate o QR expirar; paymentInfo e' a descricao mostrada ao pagador.
 type mpPix struct {
 	ExpirationTime string `xml:"expirationTime,omitempty"` // segundos (ex: 3600)
+	PaymentInfo    string `xml:"paymentInfo,omitempty"`    // descricao da cobranca
 }
 
 type mpPayment struct {
@@ -112,22 +114,21 @@ type mpTransactionResponse struct {
 	TransactionID   string   `xml:"transactionID"`
 	ReferenceNum    string   `xml:"referenceNum"`
 	BoletoURL       string   `xml:"boletoUrl"`
-	// PIX: o copia-e-cola (payload EMV) e a imagem/base64 do QR. Tags
-	// possiveis: pixQRCode / pixCopyPaste / qrCode / emv.
-	PixQRCode    string `xml:"pixQRCode"`
+	// PIX (maxiPago apidocs): <emv> = copia-e-cola; <imagem_base64> = PNG
+	// base64 do QR. Fallbacks pra variacoes de nome por seguranca.
+	EMV          string `xml:"emv"`
+	ImagemBase64 string `xml:"imagem_base64"`
 	PixCopyPaste string `xml:"pixCopyPaste"`
 	QRCode       string `xml:"qrCode"`
-	EMV          string `xml:"emv"`
 	ErrorMessage string `xml:"errorMessage"`
 	ProcessorMsg string `xml:"processorMessage"`
 	// AuthCode: presente em cartao aprovado.
 	AuthCode string `xml:"authCode"`
 }
 
-// pixPayload devolve o texto copia-e-cola do PIX, tentando as varias tags
-// que o maxiPago pode usar.
+// pixPayload devolve o texto copia-e-cola (EMV) do PIX, com fallbacks.
 func (r *mpTransactionResponse) pixPayload() string {
-	for _, s := range []string{r.PixCopyPaste, r.EMV, r.PixQRCode, r.QRCode} {
+	for _, s := range []string{r.EMV, r.PixCopyPaste, r.QRCode} {
 		if strings.TrimSpace(s) != "" {
 			return s
 		}
@@ -211,6 +212,7 @@ func (h *handlers) maxipagoCreatePix(ctx context.Context, referenceNum, payerNam
 			Billing:      &mpBilling{Name: payerName},
 			TransactionDetail: mpTransactionDetail{PayType: mpPayType{Pix: &mpPix{
 				ExpirationTime: fmt.Sprintf("%d", expirSeconds),
+				PaymentInfo:    "UC Talk - assinatura",
 			}}},
 			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
 		}},
@@ -341,6 +343,9 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	}
 	if method == "pix" {
 		out["pix_copy_paste"] = pixPayload
+		if img := strings.TrimSpace(mpResp.ImagemBase64); img != "" {
+			out["pix_qr_base64"] = img
+		}
 		out["hint"] = "Pague o PIX pelo app do seu banco. A liberação é automática em segundos."
 	} else {
 		out["boleto_url"] = mpResp.BoletoURL
