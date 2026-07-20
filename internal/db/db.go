@@ -47,6 +47,101 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 		name string
 		sql  string
 	}{
+		{"000_base_schema", `
+			-- Schema base: cria as tabelas que as migrations 006+ assumem que
+			-- ja existem. Em bancos ANTIGOS (producao) essas tabelas foram
+			-- criadas por migrations 001-005 legadas (removidas do codigo depois
+			-- que os bancos ja as tinham). Num banco NOVO/ZERADO elas faltavam,
+			-- e a migration 006 quebrava com 'relation "messages" does not exist'.
+			-- TODAS com IF NOT EXISTS: no-op seguro em bancos que ja as tem;
+			-- cria do zero em bancos novos. As colunas extras (from_jid, type,
+			-- cloud_*, author_name, etc) sao adicionadas pelas migrations 006+
+			-- via ALTER ... ADD COLUMN IF NOT EXISTS — nao duplicam aqui.
+
+			CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+				id            UUID PRIMARY KEY,
+				jid           TEXT NOT NULL UNIQUE,
+				phone         TEXT NOT NULL DEFAULT '',
+				display_name  TEXT NOT NULL DEFAULT '',
+				status        TEXT NOT NULL DEFAULT 'disconnected',
+				session_file  TEXT,
+				last_seen     TIMESTAMPTZ,
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS contact_mapping (
+				id             UUID PRIMARY KEY,
+				wa_jid         TEXT NOT NULL,
+				wa_phone       TEXT NOT NULL DEFAULT '',
+				wa_name        TEXT NOT NULL DEFAULT '',
+				bitrix_entity  TEXT NOT NULL DEFAULT '',
+				bitrix_id      TEXT NOT NULL DEFAULT '',
+				bitrix_chat_id TEXT NOT NULL DEFAULT '',
+				session_id     UUID,
+				created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				UNIQUE (wa_jid, session_id)
+			);
+
+			CREATE TABLE IF NOT EXISTS messages (
+				id            UUID PRIMARY KEY,
+				wa_message_id TEXT NOT NULL UNIQUE,
+				session_id    UUID,
+				contact_id    UUID,
+				direction     TEXT NOT NULL DEFAULT 'inbound',
+				message_type  TEXT NOT NULL DEFAULT 'text',
+				content       TEXT NOT NULL DEFAULT '',
+				media_url     TEXT NOT NULL DEFAULT '',
+				media_mime    TEXT NOT NULL DEFAULT '',
+				media_size    BIGINT NOT NULL DEFAULT 0,
+				status        TEXT NOT NULL DEFAULT 'received',
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS bitrix_accounts (
+				id           UUID PRIMARY KEY,
+				session_jid  TEXT NOT NULL UNIQUE,
+				domain       TEXT NOT NULL DEFAULT '',
+				client_id    TEXT NOT NULL DEFAULT '',
+				client_secret TEXT NOT NULL DEFAULT '',
+				open_line_id INTEGER NOT NULL DEFAULT 0,
+				connector_id TEXT NOT NULL DEFAULT '',
+				redirect_uri TEXT NOT NULL DEFAULT '',
+				status       TEXT NOT NULL DEFAULT 'active',
+				created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS bitrix_portals (
+				id            UUID PRIMARY KEY,
+				domain        TEXT NOT NULL UNIQUE,
+				access_token  TEXT NOT NULL DEFAULT '',
+				refresh_token TEXT NOT NULL DEFAULT '',
+				expires_at    TIMESTAMPTZ,
+				member_id     TEXT NOT NULL DEFAULT '',
+				connector_id  TEXT NOT NULL DEFAULT '',
+				open_line_id  INTEGER NOT NULL DEFAULT 0,
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			CREATE TABLE IF NOT EXISTS bitrix_tokens (
+				id            UUID PRIMARY KEY,
+				domain        TEXT NOT NULL,
+				client_id     TEXT NOT NULL DEFAULT '',
+				access_token  TEXT NOT NULL DEFAULT '',
+				refresh_token TEXT NOT NULL DEFAULT '',
+				expires_at    TIMESTAMPTZ,
+				scope         TEXT NOT NULL DEFAULT '',
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				UNIQUE (domain, client_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages (created_at);
+			CREATE INDEX IF NOT EXISTS idx_contact_mapping_wa_jid ON contact_mapping (wa_jid);
+			CREATE INDEX IF NOT EXISTS idx_bitrix_accounts_domain ON bitrix_accounts (domain);
+		`},
 		{"006_messages_jid", `
 			ALTER TABLE messages ADD COLUMN IF NOT EXISTS from_jid TEXT NOT NULL DEFAULT '';
 			ALTER TABLE messages ADD COLUMN IF NOT EXISTS to_jid   TEXT NOT NULL DEFAULT '';
