@@ -99,7 +99,7 @@ func (h *handlers) uiPlanDetails(c *fiber.Ctx) error {
 	// Precos vigentes (pra UI montar os cards de assinatura).
 	out["price_basic_cents"] = h.cfg.Billing.BasicPriceCents
 	out["price_pro_cents"] = h.cfg.Billing.ProPriceCents
-	out["billing_configured"] = h.maxipagoConfigured()
+	out["billing_configured"] = h.maxipagoConfigured(ctx)
 
 	// Historico de cobrancas do tenant.
 	charges, _ := h.repo.ListBillingChargesByDomain(ctx, domain, 12)

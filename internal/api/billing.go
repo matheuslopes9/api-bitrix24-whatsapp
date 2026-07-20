@@ -31,21 +31,68 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
 
 // ─── Cliente XML maxiPago ──────────────────────────────────────────────────
 
-func (h *handlers) maxipagoBaseURL() string {
-	if strings.EqualFold(h.cfg.Billing.MaxiPagoEnv, "production") {
+// effectiveBilling resolve a config de billing: PRIORIDADE ao banco
+// (billing_config, editavel pela UI admin), com FALLBACK pro env. Campos
+// vazios no banco caem no env correspondente. Assim o usuario configura o
+// gateway pela tela sem depender de env/deploy, mas o env ainda funciona.
+func (h *handlers) effectiveBilling(ctx context.Context) config.BillingConfig {
+	b := h.cfg.Billing // base = env
+	row, _ := h.repo.GetBillingConfig(ctx)
+	if row == nil {
+		return b
+	}
+	if row.Environment != "" {
+		b.MaxiPagoEnv = row.Environment
+	}
+	if row.MerchantID != "" {
+		b.MaxiPagoMerchantID = row.MerchantID
+	}
+	if row.MerchantKey != "" {
+		b.MaxiPagoMerchantKey = row.MerchantKey
+	}
+	if row.ProcessorBoleto != "" {
+		b.ProcessorBoleto = row.ProcessorBoleto
+	}
+	if row.ProcessorPix != "" {
+		b.ProcessorPix = row.ProcessorPix
+	}
+	if row.ProcessorCard != "" {
+		b.ProcessorCard = row.ProcessorCard
+	}
+	if row.ActivateDays > 0 {
+		b.ActivateDays = row.ActivateDays
+	}
+	// Preco do plano continua vindo do env/plan_definitions (nao aqui).
+	return b
+}
+
+func maxipagoBaseURLFor(bc config.BillingConfig) string {
+	if strings.EqualFold(bc.MaxiPagoEnv, "production") {
 		return "https://api.maxipago.net"
 	}
 	return "https://testapi.maxipago.net"
 }
 
-func (h *handlers) maxipagoConfigured() bool {
-	return h.cfg.Billing.MaxiPagoMerchantID != "" && h.cfg.Billing.MaxiPagoMerchantKey != ""
+// maxipagoConfigured usa a config efetiva (banco+env). Alem das credenciais,
+// respeita a flag "enabled" da config do banco (se existir e for false,
+// considera desabilitado).
+func (h *handlers) maxipagoConfigured(ctx context.Context) bool {
+	bc := h.effectiveBilling(ctx)
+	if bc.MaxiPagoMerchantID == "" || bc.MaxiPagoMerchantKey == "" {
+		return false
+	}
+	// Se ha config no banco e ela esta desabilitada, respeita.
+	if row, _ := h.repo.GetBillingConfig(ctx); row != nil && row.MerchantID != "" && !row.Enabled {
+		return false
+	}
+	return true
 }
 
 // mpTransactionRequest — payload minimo pra venda com boleto (manual 2.0.3).
@@ -137,15 +184,15 @@ func (r *mpTransactionResponse) pixPayload() string {
 }
 
 // maxipagoCreateBoleto cria uma venda-boleto e retorna (resposta, raw, err).
-func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payerName, planLabel string, amountCents int64, dueDate time.Time) (*mpTransactionResponse, string, error) {
+func (h *handlers) maxipagoCreateBoleto(ctx context.Context, bc config.BillingConfig, referenceNum, payerName, planLabel string, amountCents int64, dueDate time.Time) (*mpTransactionResponse, string, error) {
 	reqBody := mpTransactionRequest{
 		Version: "3.1.1.15",
 		Verification: mpVerification{
-			MerchantID:  h.cfg.Billing.MaxiPagoMerchantID,
-			MerchantKey: h.cfg.Billing.MaxiPagoMerchantKey,
+			MerchantID:  bc.MaxiPagoMerchantID,
+			MerchantKey: bc.MaxiPagoMerchantKey,
 		},
 		Order: mpOrder{Sale: mpSale{
-			ProcessorID:  h.cfg.Billing.ProcessorBoleto,
+			ProcessorID:  bc.ProcessorBoleto,
 			ReferenceNum: referenceNum,
 			Billing:      &mpBilling{Name: payerName},
 			TransactionDetail: mpTransactionDetail{PayType: mpPayType{Boleto: &mpBoleto{
@@ -156,7 +203,7 @@ func (h *handlers) maxipagoCreateBoleto(ctx context.Context, referenceNum, payer
 			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
 		}},
 	}
-	return h.maxipagoPostXML(ctx, reqBody)
+	return h.maxipagoPostXML(ctx, bc, reqBody)
 }
 
 func truncateStr(s string, n int) string {
@@ -167,8 +214,8 @@ func truncateStr(s string, n int) string {
 }
 
 // maxipagoPostXML envia o request XML e devolve (resposta parseada, raw, err).
-// Compartilhado por boleto/pix/cartao.
-func (h *handlers) maxipagoPostXML(ctx context.Context, reqBody mpTransactionRequest) (*mpTransactionResponse, string, error) {
+// Compartilhado por boleto/pix/cartao. bc decide o ambiente (base URL).
+func (h *handlers) maxipagoPostXML(ctx context.Context, bc config.BillingConfig, reqBody mpTransactionRequest) (*mpTransactionResponse, string, error) {
 	xmlBytes, err := xml.Marshal(reqBody)
 	if err != nil {
 		return nil, "", err
@@ -176,7 +223,7 @@ func (h *handlers) maxipagoPostXML(ctx context.Context, reqBody mpTransactionReq
 	payload := []byte(xml.Header + string(xmlBytes))
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		h.maxipagoBaseURL()+"/UniversalAPI/postXML", bytes.NewReader(payload))
+		maxipagoBaseURLFor(bc)+"/UniversalAPI/postXML", bytes.NewReader(payload))
 	if err != nil {
 		return nil, "", err
 	}
@@ -199,15 +246,15 @@ func (h *handlers) maxipagoPostXML(ctx context.Context, reqBody mpTransactionReq
 }
 
 // maxipagoCreatePix cria uma cobranca PIX. QR expira em expirSeconds.
-func (h *handlers) maxipagoCreatePix(ctx context.Context, referenceNum, payerName string, amountCents int64, expirSeconds int) (*mpTransactionResponse, string, error) {
+func (h *handlers) maxipagoCreatePix(ctx context.Context, bc config.BillingConfig, referenceNum, payerName string, amountCents int64, expirSeconds int) (*mpTransactionResponse, string, error) {
 	reqBody := mpTransactionRequest{
 		Version: "3.1.1.15",
 		Verification: mpVerification{
-			MerchantID:  h.cfg.Billing.MaxiPagoMerchantID,
-			MerchantKey: h.cfg.Billing.MaxiPagoMerchantKey,
+			MerchantID:  bc.MaxiPagoMerchantID,
+			MerchantKey: bc.MaxiPagoMerchantKey,
 		},
 		Order: mpOrder{Sale: mpSale{
-			ProcessorID:  h.cfg.Billing.ProcessorPix,
+			ProcessorID:  bc.ProcessorPix,
 			ReferenceNum: referenceNum,
 			Billing:      &mpBilling{Name: payerName},
 			TransactionDetail: mpTransactionDetail{PayType: mpPayType{Pix: &mpPix{
@@ -217,7 +264,7 @@ func (h *handlers) maxipagoCreatePix(ctx context.Context, referenceNum, payerNam
 			Payment: mpPayment{ChargeTotal: fmt.Sprintf("%d.%02d", amountCents/100, amountCents%100)},
 		}},
 	}
-	return h.maxipagoPostXML(ctx, reqBody)
+	return h.maxipagoPostXML(ctx, bc, reqBody)
 }
 
 // ─── Endpoints ─────────────────────────────────────────────────────────────
@@ -226,12 +273,13 @@ func (h *handlers) maxipagoCreatePix(ctx context.Context, referenceNum, payerNam
 // Cria a cobranca do plano Pro no maxiPago e devolve a URL do boleto.
 // Requer cookie tenant (requireTenantOrAdmin) — o domain vem do contexto.
 func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
-	if !h.maxipagoConfigured() {
+	if !h.maxipagoConfigured(c.Context()) {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "gateway de pagamento nao configurado — entre em contato com o comercial UC Technology",
 			"code":  "billing_not_configured",
 		})
 	}
+	bc := h.effectiveBilling(c.Context())
 	domain, ok := c.Locals("tenant_domain").(string)
 	if !ok || domain == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "tenant nao identificado"})
@@ -283,9 +331,9 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	due := time.Now().AddDate(0, 0, 5) // boleto vence em 5 dias
 
 	if method == "pix" {
-		mpResp, raw, err = h.maxipagoCreatePix(ctx, ref, payerName, amount, 3600) // QR 1h
+		mpResp, raw, err = h.maxipagoCreatePix(ctx, bc, ref, payerName, amount, 3600) // QR 1h
 	} else {
-		mpResp, raw, err = h.maxipagoCreateBoleto(ctx, ref, payerName, planLabel, amount, due)
+		mpResp, raw, err = h.maxipagoCreateBoleto(ctx, bc, ref, payerName, planLabel, amount, due)
 	}
 	if err != nil {
 		h.log.Error("billing: maxipago falhou",
@@ -435,7 +483,7 @@ func (h *handlers) billingMaxipagoPostback(c *fiber.Ctx) error {
 	if paidPlan != "basic" && paidPlan != "pro" {
 		paidPlan = "pro" // defensivo: charge legada sem plano valido
 	}
-	until := time.Now().AddDate(0, 0, h.cfg.Billing.ActivateDays)
+	until := time.Now().AddDate(0, 0, h.effectiveBilling(ctx).ActivateDays)
 	notes := fmt.Sprintf("pagamento maxipago plano=%s ref=%s em %s",
 		paidPlan, ref, time.Now().Format("2006-01-02 15:04"))
 	if err := h.repo.SetTenantPlan(ctx, charge.Domain, paidPlan, "active", &until, notes); err != nil {

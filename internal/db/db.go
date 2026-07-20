@@ -510,6 +510,27 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log (created_at DESC);
 		`},
+		{"034_billing_config", `
+			-- Config do gateway de pagamento (maxiPago) editavel pela UI admin,
+			-- em vez de depender so' de env var. Linha unica (id=1). Valores
+			-- vazios caem no fallback do env. merchant_key e' sensivel — nunca
+			-- retornado pro front (so' um flag "configurado").
+			CREATE TABLE IF NOT EXISTS billing_config (
+				id                INT PRIMARY KEY DEFAULT 1,
+				provider          TEXT NOT NULL DEFAULT 'maxipago',
+				environment       TEXT NOT NULL DEFAULT 'sandbox',   -- sandbox | production
+				merchant_id       TEXT NOT NULL DEFAULT '',
+				merchant_key      TEXT NOT NULL DEFAULT '',
+				processor_boleto  TEXT NOT NULL DEFAULT '12',
+				processor_pix     TEXT NOT NULL DEFAULT '206',
+				processor_card    TEXT NOT NULL DEFAULT '1',
+				activate_days     INT NOT NULL DEFAULT 30,
+				enabled           BOOLEAN NOT NULL DEFAULT FALSE,
+				updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				CONSTRAINT billing_config_single CHECK (id = 1)
+			);
+			INSERT INTO billing_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+		`},
 		{"033_plan_definitions", `
 			-- Construtor de planos: cada plano e' uma linha configuravel pela
 			-- UI admin (preco + quais features libera + limite de sessoes).

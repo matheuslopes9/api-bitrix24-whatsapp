@@ -268,6 +268,10 @@ func New(
 	admin.Get("/api/plan-defs", h.adminListPlanDefs)
 	admin.Post("/api/plan-defs", h.adminSavePlanDef)
 	admin.Post("/api/plan-defs/delete", h.adminDeletePlanDef)
+	// Config do gateway de pagamento (maxiPago) editavel pela UI
+	admin.Get("/api/billing-config", h.adminGetBillingConfig)
+	admin.Post("/api/billing-config", h.adminSaveBillingConfig)
+	admin.Post("/api/billing-config/test", h.adminTestBillingConfig)
 	admin.Get("/api/debug", h.adminDebug)
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
 	admin.Get("/api/users", h.adminListUsers)

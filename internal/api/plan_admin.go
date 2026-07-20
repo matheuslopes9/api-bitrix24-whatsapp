@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
@@ -69,6 +70,101 @@ func (h *handlers) adminDeletePlanDef(c *fiber.Ctx) error {
 	}
 	h.repo.WriteAudit(c.Context(), h.adminActor(c), "plan.delete", req.Code, "", clientIP(c))
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// ─── Config do gateway de pagamento (billing_config) ───────────────────────
+
+// GET /admin/api/billing-config — config atual (SEM a merchant_key).
+// Inclui flags indicando o que veio do banco vs env (pro admin saber).
+func (h *handlers) adminGetBillingConfig(c *fiber.Ctx) error {
+	row, err := h.repo.GetBillingConfig(c.Context())
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if row == nil {
+		row = &db.BillingConfigRow{Environment: "sandbox", ProcessorBoleto: "12", ProcessorPix: "206", ProcessorCard: "1", ActivateDays: 30}
+	}
+	return c.JSON(fiber.Map{
+		"provider":          row.Provider,
+		"environment":       row.Environment,
+		"merchant_id":       row.MerchantID,
+		"has_merchant_key":  row.MerchantKey != "",
+		"processor_boleto":  row.ProcessorBoleto,
+		"processor_pix":     row.ProcessorPix,
+		"processor_card":    row.ProcessorCard,
+		"activate_days":     row.ActivateDays,
+		"enabled":           row.Enabled,
+		"updated_at":        row.UpdatedAt.Format(time.RFC3339),
+		// Fallback do env (informativo — mostra o que valeria se o banco vazio)
+		"env_merchant_id":   h.cfg.Billing.MaxiPagoMerchantID,
+		"env_has_key":       h.cfg.Billing.MaxiPagoMerchantKey != "",
+		"postback_url":      h.cfg.App.BaseURL() + "/billing/maxipago/postback",
+	})
+}
+
+// POST /admin/api/billing-config — salva. merchant_key so' e' atualizada se
+// vier preenchida (front manda vazio pra preservar a atual).
+func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
+	var req struct {
+		Environment     string `json:"environment"`
+		MerchantID      string `json:"merchant_id"`
+		MerchantKey     string `json:"merchant_key"`
+		ProcessorBoleto string `json:"processor_boleto"`
+		ProcessorPix    string `json:"processor_pix"`
+		ProcessorCard   string `json:"processor_card"`
+		ActivateDays    int    `json:"activate_days"`
+		Enabled         bool   `json:"enabled"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	env := strings.ToLower(strings.TrimSpace(req.Environment))
+	if env != "production" {
+		env = "sandbox"
+	}
+	if req.ActivateDays <= 0 {
+		req.ActivateDays = 30
+	}
+	keyChanged := strings.TrimSpace(req.MerchantKey) != ""
+	row := &db.BillingConfigRow{
+		Provider:        "maxipago",
+		Environment:     env,
+		MerchantID:      strings.TrimSpace(req.MerchantID),
+		MerchantKey:     strings.TrimSpace(req.MerchantKey),
+		ProcessorBoleto: strings.TrimSpace(req.ProcessorBoleto),
+		ProcessorPix:    strings.TrimSpace(req.ProcessorPix),
+		ProcessorCard:   strings.TrimSpace(req.ProcessorCard),
+		ActivateDays:    req.ActivateDays,
+		Enabled:         req.Enabled,
+	}
+	if err := h.repo.SaveBillingConfig(c.Context(), row, keyChanged); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "billing.config", env,
+		"merchant="+row.MerchantID+" enabled="+boolStr(row.Enabled), clientIP(c))
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+// POST /admin/api/billing-config/test — testa as credenciais gerando um PIX
+// de teste (R$0,01) e reportando se o gateway respondeu. Nao persiste charge.
+func (h *handlers) adminTestBillingConfig(c *fiber.Ctx) error {
+	bc := h.effectiveBilling(c.Context())
+	if bc.MaxiPagoMerchantID == "" || bc.MaxiPagoMerchantKey == "" {
+		return c.Status(400).JSON(fiber.Map{"ok": false, "error": "merchant_id/key nao configurados"})
+	}
+	ref := "test-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+	mpResp, raw, err := h.maxipagoCreatePix(c.Context(), bc, ref, "Teste UC Talk", 1, 600)
+	if err != nil {
+		return c.JSON(fiber.Map{"ok": false, "error": err.Error(), "raw": truncateStr(raw, 600)})
+	}
+	ok := mpResp.ResponseCode == "0" && mpResp.pixPayload() != ""
+	return c.JSON(fiber.Map{
+		"ok":            ok,
+		"response_code": mpResp.ResponseCode,
+		"message":       firstNonEmpty(mpResp.ResponseMessage, mpResp.ErrorMessage, mpResp.ProcessorMsg),
+		"pix_ok":        mpResp.pixPayload() != "",
+		"raw":           truncateStr(raw, 600),
+	})
 }
 
 // GET /admin/api/metrics — KPIs globais pro dashboard super-admin.

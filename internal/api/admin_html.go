@@ -203,6 +203,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
     <div class="sb-group">Financeiro</div>
     <div class="sb-item" data-page="plandefs" onclick="irPara('plandefs')"><span class="ic">🧩</span> Planos</div>
+    <div class="sb-item" data-page="gateway" onclick="irPara('gateway')"><span class="ic">🔌</span> Gateway</div>
     <div class="sb-item" data-page="billing" onclick="irPara('billing')"><span class="ic">💳</span> Pagamentos <span class="badge-count" id="cnt-charges">0</span></div>
     <div class="sb-group">Monitoramento</div>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
@@ -277,6 +278,51 @@ const adminHomeHTML = `<!doctype html>
           <tbody id="billing-body"><tr><td colspan="8" class="loading">Carregando cobranças…</td></tr></tbody>
         </table>
       </div></div>
+    </div>
+
+    <!-- GATEWAY (config de pagamento) -->
+    <div class="page" id="page-gateway">
+      <div style="max-width:640px">
+        <div class="toolcard">
+          <h3>🔌 Gateway de pagamento (maxiPago)</h3>
+          <p>Configure as credenciais aqui — não precisa mais mexer em variável de ambiente. Valores salvos aqui têm prioridade sobre o env.</p>
+
+          <label style="font-size:.72em;color:var(--dim)">Ambiente</label>
+          <select class="filter" id="bc-env" style="width:100%;margin:2px 0 12px">
+            <option value="sandbox">Sandbox (testes)</option>
+            <option value="production">Produção</option>
+          </select>
+
+          <label style="font-size:.72em;color:var(--dim)">Merchant ID</label>
+          <input class="dominput" id="bc-mid" placeholder="ex: 39041" style="margin:2px 0 12px">
+
+          <label style="font-size:.72em;color:var(--dim)">Merchant Key <span id="bc-key-hint" style="color:var(--dim)"></span></label>
+          <input class="dominput" id="bc-key" type="password" placeholder="deixe em branco pra manter a atual" style="margin:2px 0 12px">
+
+          <div style="display:flex;gap:10px">
+            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. Boleto</label><input class="dominput" id="bc-boleto" value="12" style="margin:2px 0 12px"></div>
+            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. PIX</label><input class="dominput" id="bc-pix" value="206" style="margin:2px 0 12px"></div>
+            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. Cartão</label><input class="dominput" id="bc-card" value="1" style="margin:2px 0 12px"></div>
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:flex-end">
+            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias liberados por pagamento</label><input class="dominput" id="bc-days" type="number" min="1" value="30" style="margin:2px 0 0"></div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding-bottom:8px;cursor:pointer"><input type="checkbox" id="bc-enabled" style="width:16px;height:16px"> Habilitar pagamentos</label>
+          </div>
+
+          <div class="row" style="margin-top:16px">
+            <button class="btn btn-primary" onclick="salvarGateway()">Salvar</button>
+            <button class="btn" onclick="testarGateway()">Testar credenciais (PIX R$0,01)</button>
+          </div>
+          <div id="gateway-test" style="margin-top:12px"></div>
+        </div>
+
+        <div class="toolcard" style="margin-top:14px">
+          <h3>🔔 URL de notificação (postback)</h3>
+          <p>Cadastre esta URL no portal do maxiPago (Configurações → Notificação de status). É por ela que o gateway avisa quando um pagamento é confirmado.</p>
+          <input class="dominput" id="bc-postback" readonly onclick="this.select()" style="margin:0;cursor:pointer">
+        </div>
+      </div>
     </div>
 
     <!-- PLAN DEFS (construtor de planos) -->
@@ -437,6 +483,7 @@ var PAGES={
   tenants:{title:'Tenants',sub:'Portais Bitrix24 que instalaram o app'},
   usage:{title:'Consumo',sub:'Uso de recursos por tenant'},
   plandefs:{title:'Planos',sub:'Construtor de planos — preço e features'},
+  gateway:{title:'Gateway',sub:'Credenciais do gateway de pagamento'},
   billing:{title:'Pagamentos',sub:'Cobranças e receita via maxiPago'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
@@ -456,6 +503,7 @@ function irPara(p){
   if(PAGES[p]){document.getElementById('page-title').textContent=PAGES[p].title;document.getElementById('page-sub').textContent=PAGES[p].sub;}
   fecharSidebar();
   // Carrega dados sob demanda por secao.
+  if(p==='gateway')carregarGateway();
   if(p==='plandefs')carregarPlanDefs();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
@@ -557,6 +605,50 @@ function setToolDomain(d){irPara('tools');document.getElementById('tool-domain')
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
 function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
+
+// ── GATEWAY (config de pagamento) ──
+function carregarGateway(){
+  fetch('/admin/api/billing-config').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('bc-env').value=d.environment||'sandbox';
+    document.getElementById('bc-mid').value=d.merchant_id||'';
+    document.getElementById('bc-boleto').value=d.processor_boleto||'12';
+    document.getElementById('bc-pix').value=d.processor_pix||'206';
+    document.getElementById('bc-card').value=d.processor_card||'1';
+    document.getElementById('bc-days').value=d.activate_days||30;
+    document.getElementById('bc-enabled').checked=!!d.enabled;
+    document.getElementById('bc-postback').value=d.postback_url||'';
+    document.getElementById('bc-key').value='';
+    var hint=document.getElementById('bc-key-hint');
+    hint.textContent=d.has_merchant_key?'(já configurada — deixe vazio pra manter)':(d.env_has_key?'(usando a do env)':'(não configurada)');
+  }).catch(function(){toast('Falha ao carregar config',false);});
+}
+function salvarGateway(){
+  var body={
+    environment:document.getElementById('bc-env').value,
+    merchant_id:document.getElementById('bc-mid').value.trim(),
+    merchant_key:document.getElementById('bc-key').value,
+    processor_boleto:document.getElementById('bc-boleto').value.trim(),
+    processor_pix:document.getElementById('bc-pix').value.trim(),
+    processor_card:document.getElementById('bc-card').value.trim(),
+    activate_days:parseInt(document.getElementById('bc-days').value||'30',10),
+    enabled:document.getElementById('bc-enabled').checked
+  };
+  fetch('/admin/api/billing-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){res.ok?(toast('✓ gateway salvo',true),carregarGateway()):toast('✗ '+(res.j.error||'falha'),false);})
+    .catch(function(){toast('✗ erro de conexão',false);});
+}
+function testarGateway(){
+  var box=document.getElementById('gateway-test');
+  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando (gerando PIX de R$0,01)…</div>';
+  fetch('/admin/api/billing-config/test',{method:'POST'})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){ box.innerHTML='<div style="color:var(--green);font-size:.85em;padding:10px;background:rgba(37,211,102,.08);border-radius:8px;border:1px solid rgba(37,211,102,.25)">✅ Credenciais OK — o gateway gerou um PIX de teste com sucesso.</div>'; }
+      else { box.innerHTML='<div style="color:#fca5a5;font-size:.82em;padding:10px;background:rgba(248,113,113,.08);border-radius:8px;border:1px solid rgba(248,113,113,.25)">❌ '+(d.message||d.error||'Falha')+(d.response_code?' (código '+d.response_code+')':'')+'<div style="color:var(--dim);font-size:.9em;margin-top:6px;font-family:monospace;word-break:break-all">'+(d.raw||'').slice(0,300)+'</div></div>'; }
+    })
+    .catch(function(){ box.innerHTML='<div style="color:#fca5a5;font-size:.85em">Falha de conexão no teste.</div>'; });
+}
 
 // ── PLAN DEFS (construtor de planos) ──
 var PLANDEFS=[];

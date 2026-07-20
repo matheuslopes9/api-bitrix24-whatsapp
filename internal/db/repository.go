@@ -2839,3 +2839,66 @@ func (r *Repository) DeletePlanDefinition(ctx context.Context, code string) (boo
 	_, err := r.pool.Exec(ctx, `DELETE FROM plan_definitions WHERE code = $1`, code)
 	return err == nil, err
 }
+
+// ─── Billing config (gateway editavel pela UI) ─────────────────────────────
+
+type BillingConfigRow struct {
+	Provider         string    `json:"provider"`
+	Environment      string    `json:"environment"`
+	MerchantID       string    `json:"merchant_id"`
+	MerchantKey      string    `json:"-"` // sensivel: nunca serializa pro front
+	ProcessorBoleto  string    `json:"processor_boleto"`
+	ProcessorPix     string    `json:"processor_pix"`
+	ProcessorCard    string    `json:"processor_card"`
+	ActivateDays     int       `json:"activate_days"`
+	Enabled          bool      `json:"enabled"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// GetBillingConfig retorna a linha unica (id=1). Sempre existe (seed na
+// migration). Erro so' em falha de conexao.
+func (r *Repository) GetBillingConfig(ctx context.Context) (*BillingConfigRow, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT provider, environment, merchant_id, merchant_key,
+		       processor_boleto, processor_pix, processor_card,
+		       activate_days, enabled, updated_at
+		FROM billing_config WHERE id = 1`)
+	var b BillingConfigRow
+	err := row.Scan(&b.Provider, &b.Environment, &b.MerchantID, &b.MerchantKey,
+		&b.ProcessorBoleto, &b.ProcessorPix, &b.ProcessorCard,
+		&b.ActivateDays, &b.Enabled, &b.UpdatedAt)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &b, nil
+}
+
+// SaveBillingConfig atualiza a config. merchantKeyChanged=false preserva a
+// key atual (o front nao reenvia a key sensivel se nao mudou).
+func (r *Repository) SaveBillingConfig(ctx context.Context, b *BillingConfigRow, merchantKeyChanged bool) error {
+	if merchantKeyChanged {
+		_, err := r.pool.Exec(ctx, `
+			UPDATE billing_config SET
+				provider=$1, environment=$2, merchant_id=$3, merchant_key=$4,
+				processor_boleto=$5, processor_pix=$6, processor_card=$7,
+				activate_days=$8, enabled=$9, updated_at=NOW()
+			WHERE id = 1`,
+			b.Provider, b.Environment, b.MerchantID, b.MerchantKey,
+			b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
+			b.ActivateDays, b.Enabled)
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE billing_config SET
+			provider=$1, environment=$2, merchant_id=$3,
+			processor_boleto=$4, processor_pix=$5, processor_card=$6,
+			activate_days=$7, enabled=$8, updated_at=NOW()
+		WHERE id = 1`,
+		b.Provider, b.Environment, b.MerchantID,
+		b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
+		b.ActivateDays, b.Enabled)
+	return err
+}
