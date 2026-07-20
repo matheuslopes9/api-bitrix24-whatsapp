@@ -441,13 +441,14 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 			zap.String("domain", domain), zap.Error(err))
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
-	// PLAN GATE: BizProc robots sao feature Pro (envio automatizado em massa).
-	plan, _ := h.repo.GetTenantPlan(c.Context(), portal.Domain)
-	if plan == nil || !plan.HasProFeatures() {
-		h.log.Warn("bp-robot: plano Pro requerido",
+	// PLAN GATE: robots BizProc dependem da feature "automations" do plano
+	// (configuravel via plan_definitions, com fallback legado).
+	feat := h.resolveTenantFeatures(c.Context(), portal.Domain)
+	if !feat.Automations {
+		h.log.Warn("bp-robot: feature automations nao habilitada no plano",
 			zap.String("domain", portal.Domain))
 		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-			"error": "Robots BizProc sao feature do plano Pro. Faca upgrade pra usar.",
+			"error": "Automações não estão habilitadas no seu plano. Faça upgrade pra usar.",
 			"code":  "plan_pro_required",
 		})
 	}

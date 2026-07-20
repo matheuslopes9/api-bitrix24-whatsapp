@@ -1718,7 +1718,14 @@ function fmtDataBR(s){ if(!s)return '—'; try{return new Date(s).toLocaleDateSt
 function carregarAssinatura(){
   fetch(apiUrl('/ui/plan/details'))
     .then(function(r){ return r.json(); })
-    .then(function(d){ renderAssinaturaStatus(d); renderAssinaturaPlanos(d); renderAssinaturaCharges(d.charges||[]); })
+    .then(function(d){
+      renderAssinaturaStatus(d);
+      renderAssinaturaCharges(d.charges||[]);
+      // Planos disponiveis vem do backend (configurados no admin).
+      fetch(apiUrl('/ui/plans')).then(function(r){return r.json();}).then(function(pl){
+        renderAssinaturaPlanos(d, pl.plans||[]);
+      }).catch(function(){ renderAssinaturaPlanos(d, []); });
+    })
     .catch(function(){ document.getElementById('assinatura-status').innerHTML='<div style="text-align:center;padding:20px;color:#f87171;">Falha ao carregar plano.</div>'; });
 }
 
@@ -1761,29 +1768,32 @@ function renderAssinaturaStatus(d){
     '</div>';
 }
 
-function planoCard(d, plano){
-  var isPro=plano==='pro';
-  var preco=isPro?d.price_pro_cents:d.price_basic_cents;
-  var atual=(d.plan===plano && (d.state==='active'||d.state==='cancelling'));
-  var nome=isPro?'Pro':'Básico';
-  var feats=isPro
-    ? ['Até 10 números (QR + Cloud Meta)','Templates Não Oficiais e Meta HSM','Robôs de automação BizProc','Campanhas SMS','Relatórios completos','Suporte prioritário']
-    : ['1 número WhatsApp','Aba no Contato/Lead/Deal','Envio e recepção inline','Permissões básicas','Histórico de 30 dias'];
-  var cor=isPro?'#a78bfa':'#60a5fa';
+function planoCard(d, p){
+  var atual=(d.plan===p.code && (d.state==='active'||d.state==='cancelling'));
+  var cor=p.is_pro?'#a78bfa':'#60a5fa';
+  // Monta a lista de features a partir das flags configuradas.
+  var feats=['Até '+p.max_sessions+' número(s) WhatsApp','Aba no Contato/Lead/Deal','Envio e recepção inline'];
+  if(p.feat_templates)feats.push('Templates + Cloud API Meta');
+  if(p.feat_automations)feats.push('Automações (robôs BizProc)');
+  if(p.feat_sms)feats.push('Campanhas SMS');
+  if(p.feat_reports)feats.push('Relatórios + histórico longo');
   var btn = atual
     ? '<button class="btn" disabled style="width:100%;opacity:.5;cursor:default;">Plano atual</button>'
     : (d.billing_configured
-        ? '<button class="btn btn-primary" style="width:100%;" onclick="assinarPlano(\''+plano+'\',this)">Assinar '+nome+' — Boleto</button>'
+        ? '<button class="btn btn-primary" style="width:100%;" onclick="assinarPlano(\''+p.code+'\',this)">Assinar '+p.name+' — Boleto</button>'
         : '<button class="btn" style="width:100%;opacity:.6;cursor:not-allowed;" disabled>Pagamento indisponível</button>');
   return '<div class="card-flat" style="padding:22px;border:1px solid '+(atual?cor:'rgba(255,255,255,.08)')+';'+(atual?'box-shadow:0 0 24px '+cor+'22;':'')+'">'+
-    '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:'+cor+';">'+nome+'</div>'+
-    '<div style="font-size:26px;font-weight:800;color:#f1f5f9;margin:8px 0 2px;">'+fmtCentavos(preco)+'<span style="font-size:13px;color:#475569;font-weight:500;"> /mês</span></div>'+
+    '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:'+cor+';">'+p.name+'</div>'+
+    (p.description?'<div style="font-size:12px;color:#64748b;margin-top:3px;line-height:1.4">'+p.description+'</div>':'')+
+    '<div style="font-size:26px;font-weight:800;color:#f1f5f9;margin:10px 0 2px;">'+fmtCentavos(p.price_cents)+'<span style="font-size:13px;color:#475569;font-weight:500;"> /mês</span></div>'+
     '<ul style="list-style:none;padding:0;margin:16px 0;display:flex;flex-direction:column;gap:8px;">'+
       feats.map(function(f){return '<li style="font-size:12.5px;color:#cbd5e1;display:flex;gap:8px;align-items:flex-start;line-height:1.5;"><span style="color:'+cor+';">✓</span>'+f+'</li>';}).join('')+
     '</ul>'+btn+'</div>';
 }
-function renderAssinaturaPlanos(d){
-  document.getElementById('assinatura-planos').innerHTML = planoCard(d,'basic') + planoCard(d,'pro');
+function renderAssinaturaPlanos(d, planos){
+  var box=document.getElementById('assinatura-planos');
+  if(!planos||!planos.length){ box.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:24px;color:#334155;font-size:13px;">Nenhum plano disponível no momento.</div>'; return; }
+  box.innerHTML=planos.map(function(p){return planoCard(d,p);}).join('');
 }
 
 function renderAssinaturaCharges(charges){
@@ -1943,19 +1953,24 @@ function atualizarPlano() {
         if (upgrade) upgrade.style.display = 'block';
       }
 
-      // Esconde abas Pro pra plano basico/trial. Templates/SMS/etc somem.
-      var proFeatureSelectors = [
-        '[data-nav="templates"]',
-        '[data-nav="sms"]',
-        '[data-nav="relatorios"]',
-        '[data-nav="historico"]'
-      ];
-      proFeatureSelectors.forEach(function(sel){
-        var els = document.querySelectorAll(sel);
-        for (var i = 0; i < els.length; i++) {
-          els[i].style.display = isPro ? '' : 'none';
-        }
-      });
+      // Mostra/esconde cada aba conforme a FEATURE configurada no plano
+      // (via plan_definitions). Cada aba tem sua flag; fallback pra isPro
+      // quando o backend nao mandar a flag (compat).
+      function toggleNav(id, on){
+        var el=document.getElementById(id);
+        if(el)el.style.display=on?'':'none';
+      }
+      var fTpl = (p.feat_templates!==undefined)?p.feat_templates:isPro;
+      var fAut = (p.feat_automations!==undefined)?p.feat_automations:isPro;
+      var fSms = (p.feat_sms!==undefined)?p.feat_sms:isPro;
+      var fRep = (p.feat_reports!==undefined)?p.feat_reports:isPro;
+      toggleNav('nav-templates', fTpl);
+      toggleNav('nav-sms', fSms);
+      toggleNav('nav-relatorios', fRep);
+      toggleNav('nav-historico', fRep);
+      // Automações não têm aba própria no dashboard (ficam no Bitrix), mas
+      // guardamos a flag pra uso futuro. Assinatura fica SEMPRE visível.
+      window._planFeatures = {templates:fTpl,automations:fAut,sms:fSms,reports:fRep};
     })
     .catch(function(){ /* silencioso */ });
 }

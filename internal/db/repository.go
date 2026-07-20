@@ -2734,3 +2734,108 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 	}
 	return out, rows.Err()
 }
+
+// ─── Plan definitions (construtor de planos) ───────────────────────────────
+
+type PlanDefinition struct {
+	Code            string    `json:"code"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	PriceCents      int64     `json:"price_cents"`
+	MaxSessions     int       `json:"max_sessions"`
+	FeatTemplates   bool      `json:"feat_templates"`
+	FeatAutomations bool      `json:"feat_automations"`
+	FeatSMS         bool      `json:"feat_sms"`
+	FeatReports     bool      `json:"feat_reports"`
+	IsPro           bool      `json:"is_pro"`
+	Active          bool      `json:"active"`
+	SortOrder       int       `json:"sort_order"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+const planDefCols = `code, name, description, price_cents, max_sessions,
+	feat_templates, feat_automations, feat_sms, feat_reports,
+	is_pro, active, sort_order, created_at, updated_at`
+
+func scanPlanDef(row interface {
+	Scan(dest ...interface{}) error
+}) (*PlanDefinition, error) {
+	var p PlanDefinition
+	err := row.Scan(&p.Code, &p.Name, &p.Description, &p.PriceCents, &p.MaxSessions,
+		&p.FeatTemplates, &p.FeatAutomations, &p.FeatSMS, &p.FeatReports,
+		&p.IsPro, &p.Active, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetPlanDefinition retorna a definicao de um plano pelo code (nil se nao
+// existe). Usado pelo gating pra decidir features do tenant.
+func (r *Repository) GetPlanDefinition(ctx context.Context, code string) (*PlanDefinition, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+planDefCols+` FROM plan_definitions WHERE code = $1`, code)
+	p, err := scanPlanDef(row)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return p, nil
+}
+
+// ListPlanDefinitions retorna todos os planos (admin) ou so' ativos.
+func (r *Repository) ListPlanDefinitions(ctx context.Context, onlyActive bool) ([]*PlanDefinition, error) {
+	q := `SELECT ` + planDefCols + ` FROM plan_definitions`
+	if onlyActive {
+		q += ` WHERE active = TRUE`
+	}
+	q += ` ORDER BY sort_order ASC, price_cents ASC`
+	rows, err := r.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*PlanDefinition
+	for rows.Next() {
+		p, err := scanPlanDef(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// UpsertPlanDefinition cria ou atualiza um plano.
+func (r *Repository) UpsertPlanDefinition(ctx context.Context, p *PlanDefinition) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO plan_definitions
+			(code, name, description, price_cents, max_sessions,
+			 feat_templates, feat_automations, feat_sms, feat_reports,
+			 is_pro, active, sort_order, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+		ON CONFLICT (code) DO UPDATE SET
+			name=EXCLUDED.name, description=EXCLUDED.description,
+			price_cents=EXCLUDED.price_cents, max_sessions=EXCLUDED.max_sessions,
+			feat_templates=EXCLUDED.feat_templates, feat_automations=EXCLUDED.feat_automations,
+			feat_sms=EXCLUDED.feat_sms, feat_reports=EXCLUDED.feat_reports,
+			is_pro=EXCLUDED.is_pro, active=EXCLUDED.active,
+			sort_order=EXCLUDED.sort_order, updated_at=NOW()`,
+		p.Code, p.Name, p.Description, p.PriceCents, p.MaxSessions,
+		p.FeatTemplates, p.FeatAutomations, p.FeatSMS, p.FeatReports,
+		p.IsPro, p.Active, p.SortOrder)
+	return err
+}
+
+// DeletePlanDefinition remove um plano. Bloqueia se ha tenants usando.
+func (r *Repository) DeletePlanDefinition(ctx context.Context, code string) (bool, error) {
+	var inUse int
+	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tenant_plans WHERE plan = $1`, code).Scan(&inUse)
+	if inUse > 0 {
+		return false, nil // em uso — nao deleta
+	}
+	_, err := r.pool.Exec(ctx, `DELETE FROM plan_definitions WHERE code = $1`, code)
+	return err == nil, err
+}

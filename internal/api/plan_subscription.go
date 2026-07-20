@@ -14,6 +14,20 @@ import (
 	"go.uber.org/zap"
 )
 
+// GET /ui/plans — planos ATIVOS disponiveis pro cliente assinar (do banco,
+// configurados pelo admin). Cliente monta os cards a partir daqui.
+func (h *handlers) uiListPlans(c *fiber.Ctx) error {
+	defs, err := h.repo.ListPlanDefinitions(c.Context(), true)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]map[string]interface{}, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, planDefToClient(d))
+	}
+	return c.JSON(fiber.Map{"plans": out})
+}
+
 // GET /ui/plan/details — visao completa da assinatura pro cliente:
 // estado, plano, dias restantes, data de vencimento/renovacao, se esta
 // cancelando, e o historico de cobrancas do tenant.

@@ -202,6 +202,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="tenants" onclick="irPara('tenants')"><span class="ic">🏢</span> Tenants <span class="badge-count" id="cnt-tenants">0</span></div>
     <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
     <div class="sb-group">Financeiro</div>
+    <div class="sb-item" data-page="plandefs" onclick="irPara('plandefs')"><span class="ic">🧩</span> Planos</div>
     <div class="sb-item" data-page="billing" onclick="irPara('billing')"><span class="ic">💳</span> Pagamentos <span class="badge-count" id="cnt-charges">0</span></div>
     <div class="sb-group">Monitoramento</div>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
@@ -276,6 +277,17 @@ const adminHomeHTML = `<!doctype html>
           <tbody id="billing-body"><tr><td colspan="8" class="loading">Carregando cobranças…</td></tr></tbody>
         </table>
       </div></div>
+    </div>
+
+    <!-- PLAN DEFS (construtor de planos) -->
+    <div class="page" id="page-plandefs">
+      <div class="toolbar">
+        <div style="flex:1;font-size:.85em;color:var(--muted)">Configure preço e features de cada plano. Alterações valem na hora para novos gates e para os cards que o cliente vê.</div>
+        <button class="btn btn-primary" onclick="novoPlano()">➕ Novo plano</button>
+      </div>
+      <div id="plandefs-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">
+        <div class="loading">Carregando planos…</div>
+      </div>
     </div>
 
     <!-- USAGE -->
@@ -424,6 +436,7 @@ var PAGES={
   overview:{title:'Visão geral',sub:'Métricas e saúde do sistema'},
   tenants:{title:'Tenants',sub:'Portais Bitrix24 que instalaram o app'},
   usage:{title:'Consumo',sub:'Uso de recursos por tenant'},
+  plandefs:{title:'Planos',sub:'Construtor de planos — preço e features'},
   billing:{title:'Pagamentos',sub:'Cobranças e receita via maxiPago'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
@@ -443,6 +456,7 @@ function irPara(p){
   if(PAGES[p]){document.getElementById('page-title').textContent=PAGES[p].title;document.getElementById('page-sub').textContent=PAGES[p].sub;}
   fecharSidebar();
   // Carrega dados sob demanda por secao.
+  if(p==='plandefs')carregarPlanDefs();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
   if(p==='users')carregarUsers();
@@ -543,6 +557,96 @@ function setToolDomain(d){irPara('tools');document.getElementById('tool-domain')
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
 function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
+
+// ── PLAN DEFS (construtor de planos) ──
+var PLANDEFS=[];
+function carregarPlanDefs(){
+  fetch('/admin/api/plan-defs').then(function(r){return r.json();}).then(function(d){
+    PLANDEFS=d.plans||[]; renderPlanDefs();
+  }).catch(function(){document.getElementById('plandefs-list').innerHTML='<div class="empty">Falha ao carregar.</div>';});
+}
+function featChip(on,label){return '<span class="badge '+(on?'b-active':'b-none')+'" style="margin:2px 3px 0 0">'+(on?'✓ ':'✕ ')+label+'</span>';}
+function renderPlanDefs(){
+  var box=document.getElementById('plandefs-list');
+  if(!PLANDEFS.length){box.innerHTML='<div class="empty">Nenhum plano. Clique em "Novo plano".</div>';return;}
+  box.innerHTML=PLANDEFS.map(function(p){
+    var st=p.active?'<span class="badge b-active">ativo</span>':'<span class="badge b-suspended">inativo</span>';
+    return '<div class="toolcard">'+
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">'+
+        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+p.name+'</div>'+
+        '<div class="mono meta">'+p.code+'</div></div>'+st+'</div>'+
+      '<div style="font-size:1.5em;font-weight:800;color:var(--green);margin:6px 0">'+fmtBRL(p.price_cents)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> /mês</span></div>'+
+      '<div class="meta" style="margin-bottom:10px">Até <b>'+p.max_sessions+'</b> sessão(ões) · '+(p.is_pro?'rótulo Pro':'rótulo Básico')+'</div>'+
+      '<div style="margin-bottom:12px">'+featChip(p.feat_templates,'Templates')+featChip(p.feat_automations,'Automações')+featChip(p.feat_sms,'SMS')+featChip(p.feat_reports,'Relatórios')+'</div>'+
+      '<div class="row"><button class="btn" onclick="editarPlano(\''+p.code+'\')">Editar</button>'+
+        '<button class="btn btn-danger" onclick="excluirPlano(\''+p.code+'\')">Excluir</button></div>'+
+    '</div>';
+  }).join('');
+}
+function novoPlano(){ abrirPlanoModal(null); }
+function editarPlano(code){ var p=PLANDEFS.filter(function(x){return x.code===code;})[0]; abrirPlanoModal(p); }
+function abrirPlanoModal(p){
+  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99};
+  var ov=document.createElement('div');
+  ov.id='plano-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.8);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
+  function chk(id,on,lbl){return '<label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding:6px 0;cursor:pointer"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' style="width:16px;height:16px">'+lbl+'</label>';}
+  ov.innerHTML='<div style="max-width:460px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid var(--border);border-radius:18px;padding:26px">'+
+    '<div style="font-size:1.15em;font-weight:800;margin-bottom:16px">'+(isNew?'Novo plano':'Editar plano')+'</div>'+
+    '<label style="font-size:.72em;color:var(--dim)">Código (id) '+(isNew?'':'— fixo')+'</label>'+
+    '<input class="dominput" id="pd-code" value="'+p.code+'" '+(isNew?'':'disabled')+' placeholder="ex: starter" style="margin:2px 0 10px">'+
+    '<label style="font-size:.72em;color:var(--dim)">Nome</label>'+
+    '<input class="dominput" id="pd-name" value="'+(p.name||'')+'" placeholder="ex: Starter" style="margin:2px 0 10px">'+
+    '<label style="font-size:.72em;color:var(--dim)">Descrição</label>'+
+    '<input class="dominput" id="pd-desc" value="'+(p.description||'')+'" placeholder="uma frase" style="margin:2px 0 10px">'+
+    '<div style="display:flex;gap:10px">'+
+      '<div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Preço (R$)</label><input class="dominput" id="pd-price" type="number" step="0.01" value="'+((p.price_cents||0)/100).toFixed(2)+'" style="margin:2px 0 10px"></div>'+
+      '<div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Máx. sessões</label><input class="dominput" id="pd-max" type="number" min="1" value="'+(p.max_sessions||1)+'" style="margin:2px 0 10px"></div>'+
+    '</div>'+
+    '<div style="font-size:.72em;color:var(--dim);margin:6px 0 2px;text-transform:uppercase;letter-spacing:.05em">Features liberadas</div>'+
+    chk('pd-tpl',p.feat_templates,'Templates + Cloud API Meta')+
+    chk('pd-aut',p.feat_automations,'Automações (robôs BizProc)')+
+    chk('pd-sms',p.feat_sms,'Campanhas SMS')+
+    chk('pd-rep',p.feat_reports,'Relatórios + histórico longo')+
+    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
+    chk('pd-pro',p.is_pro,'Marcar como plano "Pro" (rótulo)')+
+    chk('pd-active',p.active,'Ativo (cliente pode assinar)')+
+    '<div class="row" style="margin-top:18px;justify-content:flex-end">'+
+      '<button class="btn" onclick="fecharPlanoModal()">Cancelar</button>'+
+      '<button class="btn btn-primary" onclick="salvarPlano('+(isNew?'true':'false')+')">Salvar</button>'+
+    '</div></div>';
+  document.body.appendChild(ov);
+}
+function fecharPlanoModal(){var m=document.getElementById('plano-modal');if(m)m.remove();}
+function salvarPlano(isNew){
+  var g=function(id){return document.getElementById(id);};
+  var body={
+    code:g('pd-code').value.trim().toLowerCase(),
+    name:g('pd-name').value.trim(),
+    description:g('pd-desc').value.trim(),
+    price_cents:Math.round(parseFloat(g('pd-price').value||'0')*100),
+    max_sessions:parseInt(g('pd-max').value||'1',10),
+    feat_templates:g('pd-tpl').checked,
+    feat_automations:g('pd-aut').checked,
+    feat_sms:g('pd-sms').checked,
+    feat_reports:g('pd-rep').checked,
+    is_pro:g('pd-pro').checked,
+    active:g('pd-active').checked,
+    sort_order:99
+  };
+  if(!body.code||!body.name){toast('Código e nome obrigatórios',false);return;}
+  fetch('/admin/api/plan-defs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){res.ok?(toast('✓ plano salvo',true),fecharPlanoModal(),carregarPlanDefs()):toast('✗ '+(res.j.error||'falha'),false);})
+    .catch(function(){toast('✗ erro de conexão',false);});
+}
+function excluirPlano(code){
+  if(!confirm('Excluir o plano "'+code+'"? (bloqueado se houver tenants usando)'))return;
+  fetch('/admin/api/plan-defs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){res.ok?(toast('✓ excluído',true),carregarPlanDefs()):toast('✗ '+(res.j.error||'falha'),false);})
+    .catch(function(){toast('✗ falha',false);});
+}
 
 // ── USAGE ──
 function carregarUsage(){

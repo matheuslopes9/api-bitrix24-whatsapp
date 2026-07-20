@@ -7,12 +7,69 @@ package api
 //      com dias restantes + chamada pra upgrade.
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
+
+// ─── Construtor de planos (plan_definitions) ───────────────────────────────
+
+// GET /admin/api/plan-defs — lista todas as definicoes de plano.
+func (h *handlers) adminListPlanDefs(c *fiber.Ctx) error {
+	defs, err := h.repo.ListPlanDefinitions(c.Context(), false)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"plans": defs})
+}
+
+// POST /admin/api/plan-defs — cria/atualiza um plano (upsert por code).
+func (h *handlers) adminSavePlanDef(c *fiber.Ctx) error {
+	var p db.PlanDefinition
+	if err := c.BodyParser(&p); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	p.Code = strings.ToLower(strings.TrimSpace(p.Code))
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Code == "" || p.Name == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "code e name obrigatorios"})
+	}
+	if p.MaxSessions < 1 {
+		p.MaxSessions = 1
+	}
+	if err := h.repo.UpsertPlanDefinition(c.Context(), &p); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "plan.save", p.Code,
+		"preco="+strconv.FormatInt(p.PriceCents, 10), clientIP(c))
+	return c.JSON(fiber.Map{"ok": true, "code": p.Code})
+}
+
+// POST /admin/api/plan-defs/delete — remove plano (bloqueia se em uso).
+func (h *handlers) adminDeletePlanDef(c *fiber.Ctx) error {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
+	}
+	req.Code = strings.ToLower(strings.TrimSpace(req.Code))
+	ok, err := h.repo.DeletePlanDefinition(c.Context(), req.Code)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if !ok {
+		return c.Status(409).JSON(fiber.Map{
+			"error": "plano em uso por tenants — mova-os pra outro plano antes de excluir",
+		})
+	}
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "plan.delete", req.Code, "", clientIP(c))
+	return c.JSON(fiber.Map{"ok": true})
+}
 
 // GET /admin/api/metrics — KPIs globais pro dashboard super-admin.
 func (h *handlers) adminMetrics(c *fiber.Ctx) error {
@@ -160,14 +217,18 @@ func (h *handlers) uiTenantPlan(c *fiber.Ctx) error {
 		}
 		summary["trial_days_remaining"] = days
 	}
-	// Contagem de sessoes vs limite — pra UI mostrar "2/10".
+	// Features resolvidas (via plan_definitions configuravel + fallback).
+	feat := h.resolveTenantFeatures(ctx, domain)
 	count, _ := h.repo.CountActiveSessionsByDomain(ctx, domain)
 	summary["sessions_used"] = count
-	if plan != nil && plan.HasProFeatures() {
-		summary["sessions_limit"] = maxSessionsPro
-	} else {
-		summary["sessions_limit"] = maxSessionsBasic
-	}
+	summary["sessions_limit"] = feat.MaxSessions
+	summary["feat_templates"] = feat.Templates
+	summary["feat_automations"] = feat.Automations
+	summary["feat_sms"] = feat.SMS
+	summary["feat_reports"] = feat.Reports
+	// has_pro_features agora reflete "tem alguma feature avancada" (pra a UI
+	// decidir mostrar/esconder abas). Preservado pra compat.
+	summary["has_pro_features"] = feat.hasAnyAdvanced()
 	return c.JSON(summary)
 }
 

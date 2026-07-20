@@ -510,6 +510,39 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log (created_at DESC);
 		`},
+		{"033_plan_definitions", `
+			-- Construtor de planos: cada plano e' uma linha configuravel pela
+			-- UI admin (preco + quais features libera + limite de sessoes).
+			-- code: identificador estavel referenciado por tenant_plans.plan.
+			-- As flags substituem o gating hardcoded (HasProFeatures etc).
+			CREATE TABLE IF NOT EXISTS plan_definitions (
+				code             TEXT PRIMARY KEY,
+				name             TEXT NOT NULL DEFAULT '',
+				description      TEXT NOT NULL DEFAULT '',
+				price_cents      BIGINT NOT NULL DEFAULT 0,
+				max_sessions     INT NOT NULL DEFAULT 1,
+				feat_templates   BOOLEAN NOT NULL DEFAULT FALSE,  -- templates + Cloud API Meta
+				feat_automations BOOLEAN NOT NULL DEFAULT FALSE,  -- robots BizProc
+				feat_sms         BOOLEAN NOT NULL DEFAULT FALSE,  -- campanhas SMS
+				feat_reports     BOOLEAN NOT NULL DEFAULT FALSE,  -- relatorios + historico longo
+				is_pro           BOOLEAN NOT NULL DEFAULT FALSE,  -- rotulo "pro" (compat gating antigo)
+				active           BOOLEAN NOT NULL DEFAULT TRUE,   -- aparece pro cliente assinar
+				sort_order       INT NOT NULL DEFAULT 0,
+				created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			-- Seed dos 2 planos atuais preservando o comportamento hardcoded:
+			-- basic = so conexao; pro = tudo. Idempotente (ON CONFLICT nada).
+			INSERT INTO plan_definitions
+				(code, name, description, price_cents, max_sessions,
+				 feat_templates, feat_automations, feat_sms, feat_reports, is_pro, active, sort_order)
+			VALUES
+				('basic','Básico','Conecte o WhatsApp ao Bitrix24 e atenda pelo CRM.',
+				 9900, 1, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, 1),
+				('pro','Pro','Automação, campanhas, múltiplos números e relatórios completos.',
+				 19900, 10, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, 2)
+			ON CONFLICT (code) DO NOTHING;
+		`},
 		{"032_plan_cancellation", `
 			-- Cancelamento agendado (padrao SaaS): cliente cancela mas usa ate
 			-- o fim do periodo pago (active_until). cancel_at_period_end=TRUE

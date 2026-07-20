@@ -85,12 +85,16 @@ func (h *handlers) requireProPlan(c *fiber.Ctx) error {
 			"upgrade": "Entre em contato com o comercial UC Technology pra ativar o plano Pro.",
 		})
 	}
-	if !plan.HasProFeatures() {
+	// Gate por features CONFIGURAVEIS: bloqueia se o plano do tenant nao tem
+	// nenhuma feature avancada habilitada (via plan_definitions). Fallback
+	// legado dentro de resolveTenantFeatures cobre planos sem definicao.
+	feat := h.resolveTenantFeatures(c.Context(), domain)
+	if !feat.hasAnyAdvanced() {
 		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-			"error":   "recurso exclusivo do plano Pro",
+			"error":   "recurso exclusivo de plano com features avançadas",
 			"code":    "plan_pro_required",
 			"plan":    planSummary(plan),
-			"upgrade": "Faca upgrade pro plano Pro pra usar esse recurso. Entre em contato com comercial UC Technology.",
+			"upgrade": "Faça upgrade do plano pra usar esse recurso.",
 		})
 	}
 	c.Locals("tenant_plan", plan)
@@ -137,15 +141,16 @@ func (h *handlers) requireSessionSlot(ctx context.Context, domain string) error 
 	if err != nil {
 		return err
 	}
-	limit := maxSessionsBasic
-	if plan.HasProFeatures() {
-		limit = maxSessionsPro
+	// Limite vem da definicao de plano configuravel (com fallback legado).
+	limit := h.resolveTenantFeatures(ctx, domain).MaxSessions
+	if limit <= 0 {
+		limit = maxSessionsBasic
 	}
 	if count >= limit {
 		return fiber.NewError(fiber.StatusPaymentRequired,
 			"limite de sessoes atingido para o plano "+plan.Plan+": "+
 				strconv.Itoa(count)+"/"+strconv.Itoa(limit)+
-				". Faca upgrade pro plano Pro pra mais sessoes.")
+				". Faca upgrade pra mais sessoes.")
 	}
 	return nil
 }

@@ -87,6 +87,7 @@ func New(
 	ui.Get("/overview", h.uiOverview)
 	ui.Get("/plan", h.uiTenantPlan)
 	// Gestao de assinatura pelo CLIENTE (aba Planos & Assinatura do dashboard).
+	ui.Get("/plans", h.uiListPlans) // planos ativos configurados
 	ui.Get("/plan/details", h.uiPlanDetails)
 	ui.Post("/plan/cancel", h.uiPlanCancel)
 	ui.Post("/plan/reactivate", h.uiPlanReactivate)
@@ -263,6 +264,10 @@ func New(
 	admin.Get("/api/tenants", h.adminListTenants)
 	admin.Get("/api/metrics", h.adminMetrics)              // KPIs globais
 	admin.Get("/api/billing/charges", h.adminBillingCharges) // cobrancas de todos
+	// Construtor de planos (definir preco + features por plano)
+	admin.Get("/api/plan-defs", h.adminListPlanDefs)
+	admin.Post("/api/plan-defs", h.adminSavePlanDef)
+	admin.Post("/api/plan-defs/delete", h.adminDeletePlanDef)
 	admin.Get("/api/debug", h.adminDebug)
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
 	admin.Get("/api/users", h.adminListUsers)
