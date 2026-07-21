@@ -569,7 +569,16 @@ function fecharSidebar(){document.getElementById('sidebar').classList.remove('op
 function fmtBRL(cents){return 'R$ '+((cents||0)/100).toFixed(2).replace('.',',');}
 function fmtDate(s){if(!s)return '—';try{return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return s;}}
 function planBadge(plan,status){var s=status||'no_plan';var cls={trial:'b-trial',active:'b-active',expired:'b-expired',suspended:'b-suspended',no_plan:'b-none'}[s]||'b-none';var lbl={trial:'Trial',active:'Ativo',expired:'Expirado',suspended:'Suspenso',no_plan:'Sem plano'}[s]||s;return '<span class="badge '+cls+'">'+lbl+'</span>';}
-function planTag(plan){if(plan==='pro')return '<span class="badge b-pro">PRO</span>';if(plan==='basic')return '<span class="badge b-basic">BÁSICO</span>';return '<span class="badge b-none">—</span>';}
+// planTag usa os planos configurados (PLANDEFS) pra rotular; cai nos
+// legados se ainda nao carregou a lista.
+function planTag(plan){
+  if(!plan||plan==='none')return '<span class="badge b-none">—</span>';
+  var def=(PLANDEFS||[]).filter(function(x){return x.code===plan;})[0];
+  var nome=def?def.name:(plan==='pro'?'Pro':plan==='basic'?'Básico':plan==='trial'?'Trial':plan);
+  var cls=(def&&def.is_trial_default)||plan==='trial'?'b-trial':
+          (def?(def.is_pro?'b-pro':'b-basic'):(plan==='pro'?'b-pro':'b-basic'));
+  return '<span class="badge '+cls+'">'+nome.toUpperCase()+'</span>';
+}
 function chargeStatus(s){return s==='paid'?'<span class="badge b-active">pago</span>':s==='pending'?'<span class="badge b-trial">pendente</span>':'<span class="badge b-none">'+s+'</span>';}
 
 function renderKpis(m){
@@ -782,15 +791,19 @@ function renderPlanDefs(){
   var box=document.getElementById('plandefs-list');
   if(!PLANDEFS.length){box.innerHTML='<div class="empty">Nenhum plano. Clique em "Novo plano".</div>';return;}
   box.innerHTML=PLANDEFS.map(function(p){
-    var st=p.active?'<span class="badge b-active">ativo</span>':'<span class="badge b-suspended">inativo</span>';
-    var trialBadge=p.is_trial_default?'<span class="badge b-trial" style="margin-left:4px">TRIAL '+(p.trial_days||0)+'d</span>':'';
-    return '<div class="toolcard"'+(p.is_trial_default?' style="border-color:rgba(251,191,36,.35)"':'')+'>'+
+    var isTrial=p.is_trial_default;
+    var st=isTrial?'<span class="badge b-trial">plano de teste</span>':
+           (p.active?'<span class="badge b-active">à venda</span>':'<span class="badge b-suspended">não listado</span>');
+    var preco=isTrial
+      ? '<div style="font-size:1.5em;font-weight:800;color:var(--amber);margin:6px 0">'+(p.trial_days||0)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> dias grátis</span></div>'
+      : '<div style="font-size:1.5em;font-weight:800;color:var(--green);margin:6px 0">'+fmtBRL(p.price_cents)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> /mês</span></div>';
+    return '<div class="toolcard"'+(isTrial?' style="border-color:rgba(251,191,36,.4);background:linear-gradient(160deg,rgba(251,191,36,.05),transparent)"':'')+'>'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">'+
-        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+p.name+trialBadge+'</div>'+
+        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+(isTrial?'⏳ ':'')+p.name+'</div>'+
         '<div class="mono meta">'+p.code+'</div></div>'+st+'</div>'+
-      '<div style="font-size:1.5em;font-weight:800;color:var(--green);margin:6px 0">'+fmtBRL(p.price_cents)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> /mês</span></div>'+
+      preco+
       '<div class="meta" style="margin-bottom:10px">Até <b>'+p.max_sessions+'</b> sessão(ões) · '+(p.is_pro?'rótulo Pro':'rótulo Básico')+
-        (p.is_trial_default?' · <span style="color:var(--amber)">novos clientes ganham '+(p.trial_days||0)+' dias grátis</span>':'')+'</div>'+
+        (isTrial?' · <span style="color:var(--amber)">concedido automaticamente no install</span>':'')+'</div>'+
       '<div style="margin-bottom:12px">'+featChip(p.feat_templates,'Templates')+featChip(p.feat_automations,'Automações')+featChip(p.feat_sms,'SMS')+featChip(p.feat_reports,'Relatórios')+'</div>'+
       '<div class="row"><button class="btn" onclick="editarPlano(\''+p.code+'\')">Editar</button>'+
         '<button class="btn btn-danger" onclick="excluirPlano(\''+p.code+'\')">Excluir</button></div>'+
@@ -823,14 +836,14 @@ function abrirPlanoModal(p){
     chk('pd-sms',p.feat_sms,'Campanhas SMS')+
     chk('pd-rep',p.feat_reports,'Relatórios + histórico longo')+
     '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
-    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 4px;text-transform:uppercase;letter-spacing:.05em">Período de teste (trial)</div>'+
-    chk('pd-trialdef',p.is_trial_default,'Plano padrão dos novos clientes (trial)')+
-    '<label style="font-size:.72em;color:var(--dim)">Dias de teste grátis</label>'+
+    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 6px;text-transform:uppercase;letter-spacing:.05em">Período de teste</div>'+
+    chk('pd-trialdef',p.is_trial_default,'Este é o plano de teste (novos clientes recebem)')+
+    '<label style="font-size:.72em;color:var(--dim)">Duração do teste (dias)</label>'+
     '<input class="dominput" id="pd-trialdays" type="number" min="0" value="'+(p.trial_days||0)+'" style="margin:2px 0 4px">'+
-    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Só vale para o plano marcado acima. 0 = sem teste grátis.</div>'+
+    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Ao marcar acima, todo cliente novo entra neste plano por esses dias. Só um plano pode ser o de teste.</div>'+
     '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
     chk('pd-pro',p.is_pro,'Marcar como plano "Pro" (rótulo)')+
-    chk('pd-active',p.active,'Ativo (cliente pode assinar)')+
+    chk('pd-active',p.active,'Disponível para assinatura (aparece nos cards do cliente)')+
     '<div class="row" style="margin-top:18px;justify-content:flex-end">'+
       '<button class="btn" onclick="fecharPlanoModal()">Cancelar</button>'+
       '<button class="btn btn-primary" onclick="salvarPlano('+(isNew?'true':'false')+')">Salvar</button>'+
@@ -977,6 +990,12 @@ function carregarAudit(){
 }
 
 function carregarTudo(){
+  // Planos primeiro: planTag() usa PLANDEFS pra rotular os badges em
+  // todas as abas (tenants, pagamentos, consumo).
+  fetch('/admin/api/plan-defs').then(function(r){return r.json();}).then(function(d){
+    PLANDEFS=d.plans||[];
+    if(document.getElementById('page-plandefs').classList.contains('active'))renderPlanDefs();
+  }).catch(function(){});
   fetch('/admin/api/metrics').then(function(r){return r.json();}).then(renderKpis).catch(function(){document.getElementById('kpis').innerHTML='<div class="empty">Falha ao carregar métricas.</div>';});
   fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar tenants.</td></tr>';});
   fetch('/admin/api/billing/charges').then(function(r){return r.json();}).then(function(d){renderBilling(d.charges||[]);renderRecentCharges(d.charges||[]);}).catch(function(){});

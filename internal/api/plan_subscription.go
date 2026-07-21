@@ -92,6 +92,10 @@ func (h *handlers) uiPlanDetails(c *fiber.Ctx) error {
 
 	// Sessoes vs limite (do plano configuravel, via resolveTenantFeatures).
 	feat := h.resolveTenantFeatures(ctx, domain)
+	// Nome legivel do plano (vem da definicao configurada).
+	if feat.PlanName != "" {
+		out["plan_name"] = feat.PlanName
+	}
 	count, _ := h.repo.CountActiveSessionsByDomain(ctx, domain)
 	out["sessions_used"] = count
 	out["sessions_limit"] = feat.MaxSessions

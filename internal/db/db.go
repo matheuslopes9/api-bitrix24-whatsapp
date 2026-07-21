@@ -630,23 +630,46 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 		`},
 		{"038_plan_trial", `
 			-- ORDEM IMPORTA: roda DEPOIS da 033 (que cria plan_definitions).
-			-- Trial passa a ser configuracao DO PLANO (aba Planos), nao um
-			-- campo solto no gateway. is_trial_default marca qual plano os
-			-- novos tenants recebem; trial_days e' a duracao desse teste.
+			--
+			-- O TRIAL e' um PLANO SEPARADO na lista (code 'trial'), com preco
+			-- zero e suas proprias features. is_trial_default marca qual plano
+			-- os novos tenants recebem; trial_days e' a duracao.
 			ALTER TABLE plan_definitions
 				ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 0;
 			ALTER TABLE plan_definitions
 				ADD COLUMN IF NOT EXISTS is_trial_default BOOLEAN NOT NULL DEFAULT FALSE;
-			-- O 'basic' era o plano de trial hardcoded — vira o default com
-			-- 7 dias. So' age se ninguem foi marcado ainda (idempotente).
-			UPDATE plan_definitions
-			   SET is_trial_default = TRUE,
-			       trial_days = 7
-			 WHERE code = 'basic'
+
+			-- Cria o plano Trial. active=FALSE porque ele NAO e' assinavel —
+			-- e' concedido automaticamente no install, nao aparece nos cards
+			-- de compra do cliente. Features iguais ao Basico por padrao;
+			-- o admin edita na aba Planos.
+			INSERT INTO plan_definitions
+				(code, name, description, price_cents, max_sessions,
+				 feat_templates, feat_automations, feat_sms, feat_reports,
+				 is_pro, active, sort_order, trial_days, is_trial_default)
+			VALUES
+				('trial','Trial','Período de teste gratuito para novos clientes.',
+				 0, 1, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 0, 7, TRUE)
+			ON CONFLICT (code) DO NOTHING;
+
+			-- Se ninguem estiver marcado como trial (ex: alguem desmarcou),
+			-- garante o 'trial' como default.
+			UPDATE plan_definitions SET is_trial_default = TRUE
+			 WHERE code = 'trial'
 			   AND NOT EXISTS (SELECT 1 FROM plan_definitions WHERE is_trial_default);
+
 			-- No maximo 1 plano marcado como default de trial.
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_trial_default
 				ON plan_definitions (is_trial_default) WHERE is_trial_default;
+		`},
+		{"039_migrate_trial_tenants", `
+			-- Tenants que estao em trial ainda apontam pro plano 'basic'
+			-- (comportamento antigo). Move pro plano 'trial' pra ficar
+			-- coerente com a nova modelagem. So' mexe em quem esta em trial.
+			UPDATE tenant_plans
+			   SET plan = 'trial', updated_at = NOW()
+			 WHERE status = 'trial' AND plan = 'basic'
+			   AND EXISTS (SELECT 1 FROM plan_definitions WHERE code = 'trial');
 		`},
 		{"032_plan_cancellation", `
 			-- Cancelamento agendado (padrao SaaS): cliente cancela mas usa ate

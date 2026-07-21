@@ -53,26 +53,17 @@ func (h *handlers) resolveTenantFeatures(ctx context.Context, domain string) *Te
 		return f
 	}
 
-	// Definicao configurada: usa as flags. So' vale se o tenant esta 'active'
-	// (pago) — trial usa Basico (regra de negocio preservada). Excecao: se o
-	// proprio plano seed 'basic' for trial, as flags dele valem (todas FALSE).
+	// As flags do PLANO valem — inclusive em trial. O Trial e' um plano
+	// separado (code 'trial') com as proprias features, configuraveis na aba
+	// Planos: se o admin quiser dar Pro completo no teste, e' so' marcar as
+	// features no plano Trial. Vale enquanto IsAccessAllowed (ja' checado).
 	f.PlanName = def.Name
 	f.IsPro = def.IsPro
 	f.MaxSessions = def.MaxSessions
-	if plan.Status == "active" {
-		f.Templates = def.FeatTemplates
-		f.Automations = def.FeatAutomations
-		f.SMS = def.FeatSMS
-		f.Reports = def.FeatReports
-	} else if plan.Status == "trial" {
-		// Trial: mantem regra antiga — trial e' sempre "basico" (so conexao),
-		// independente do plano configurado. Limite de sessao do basic.
-		if bd, _ := h.repo.GetPlanDefinition(ctx, "basic"); bd != nil {
-			f.MaxSessions = bd.MaxSessions
-		} else {
-			f.MaxSessions = maxSessionsBasic
-		}
-	}
+	f.Templates = def.FeatTemplates
+	f.Automations = def.FeatAutomations
+	f.SMS = def.FeatSMS
+	f.Reports = def.FeatReports
 	return f
 }
 

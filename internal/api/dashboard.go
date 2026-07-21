@@ -1739,7 +1739,8 @@ function renderAssinaturaStatus(d){
     expired:{cor:'#f87171',bg:'rgba(248,113,113,.1)',lbl:'Sem acesso',ic:'⛔'},
     suspended:{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:'Suspenso',ic:'🚫'}
   }[state]||{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:state,ic:'•'};
-  var planNome=d.plan==='pro'?'Pro':d.plan==='basic'?'Básico':'—';
+  // Nome vem do backend (planos configuráveis); fallback pros legados.
+  var planNome=d.plan_name||(d.plan==='pro'?'Pro':d.plan==='basic'?'Básico':d.plan==='trial'?'Trial':'—');
   var dias=(typeof d.days_remaining==='number')?d.days_remaining:null;
 
   var msg='';
