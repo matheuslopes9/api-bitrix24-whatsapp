@@ -2129,32 +2129,39 @@ func (r *Repository) MarkMasterAutoSet(ctx context.Context, domain string) error
 	return err
 }
 
-// EnsureTenantTrial cria um plano trial se o dominio nao tem plano ainda.
-// A duracao vem de billing_config.trial_days (configuravel na UI admin),
-// com fallback 7 dias. Idempotente — se ja existe, nao faz nada.
-// Chamado no /bitrix/auth (apos validar oauth do install) pra garantir
-// que TODO tenant tenha um plano associado.
+// EnsureTenantTrial cria o plano de trial pro dominio se ele ainda nao tem
+// plano. O PLANO e a DURACAO vem da aba Planos: o plano marcado como
+// is_trial_default e o trial_days dele. Fallback: 'basic' com 7 dias.
+// Idempotente. Chamado no /bitrix/auth (apos validar oauth do install).
 func (r *Repository) EnsureTenantTrial(ctx context.Context, domain string) error {
 	if domain == "" {
 		return nil
 	}
-	days := r.TrialDays(ctx)
+	planCode, days := r.TrialPlanAndDays(ctx)
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at)
-		VALUES ($1, 'basic', 'trial', NOW() + make_interval(days => $2))
-		ON CONFLICT (domain) DO NOTHING`, domain, days)
+		VALUES ($1, $2, 'trial', NOW() + make_interval(days => $3))
+		ON CONFLICT (domain) DO NOTHING`, domain, planCode, days)
 	return err
 }
 
-// TrialDays le a duracao do trial da config (fallback 7).
-func (r *Repository) TrialDays(ctx context.Context) int {
-	var d int
-	err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(trial_days, 7) FROM billing_config WHERE id = 1`).Scan(&d)
-	if err != nil || d <= 0 {
-		return 7
+// TrialPlanAndDays devolve (codigo do plano de trial, dias). Le da aba
+// Planos (is_trial_default + trial_days); fallback 'basic'/7.
+func (r *Repository) TrialPlanAndDays(ctx context.Context) (string, int) {
+	var code string
+	var days int
+	err := r.pool.QueryRow(ctx, `
+		SELECT code, COALESCE(NULLIF(trial_days,0), 7)
+		  FROM plan_definitions
+		 WHERE is_trial_default
+		 LIMIT 1`).Scan(&code, &days)
+	if err != nil || code == "" {
+		return "basic", 7
 	}
-	return d
+	if days <= 0 {
+		days = 7
+	}
+	return code, days
 }
 
 // SetTenantPlan atualiza o plano de um tenant. Usado pelo super-admin pra
@@ -2763,13 +2770,17 @@ type PlanDefinition struct {
 	IsPro           bool      `json:"is_pro"`
 	Active          bool      `json:"active"`
 	SortOrder       int       `json:"sort_order"`
+	TrialDays       int       `json:"trial_days"`        // duracao do teste deste plano
+	IsTrialDefault  bool      `json:"is_trial_default"`  // plano dado a novos tenants
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 const planDefCols = `code, name, description, price_cents, max_sessions,
 	feat_templates, feat_automations, feat_sms, feat_reports,
-	is_pro, active, sort_order, created_at, updated_at`
+	is_pro, active, sort_order,
+	COALESCE(trial_days,0), COALESCE(is_trial_default,FALSE),
+	created_at, updated_at`
 
 func scanPlanDef(row interface {
 	Scan(dest ...interface{}) error
@@ -2777,7 +2788,9 @@ func scanPlanDef(row interface {
 	var p PlanDefinition
 	err := row.Scan(&p.Code, &p.Name, &p.Description, &p.PriceCents, &p.MaxSessions,
 		&p.FeatTemplates, &p.FeatAutomations, &p.FeatSMS, &p.FeatReports,
-		&p.IsPro, &p.Active, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
+		&p.IsPro, &p.Active, &p.SortOrder,
+		&p.TrialDays, &p.IsTrialDefault,
+		&p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2821,25 +2834,56 @@ func (r *Repository) ListPlanDefinitions(ctx context.Context, onlyActive bool) (
 	return out, rows.Err()
 }
 
-// UpsertPlanDefinition cria ou atualiza um plano.
+// UpsertPlanDefinition cria ou atualiza um plano. Se o plano vier marcado
+// como is_trial_default, desmarca os outros (so' 1 plano pode ser o de
+// trial dos novos tenants).
 func (r *Repository) UpsertPlanDefinition(ctx context.Context, p *PlanDefinition) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if p.IsTrialDefault {
+		if _, err := tx.Exec(ctx,
+			`UPDATE plan_definitions SET is_trial_default = FALSE WHERE code <> $1`, p.Code); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO plan_definitions
 			(code, name, description, price_cents, max_sessions,
 			 feat_templates, feat_automations, feat_sms, feat_reports,
-			 is_pro, active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+			 is_pro, active, sort_order, trial_days, is_trial_default, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			name=EXCLUDED.name, description=EXCLUDED.description,
 			price_cents=EXCLUDED.price_cents, max_sessions=EXCLUDED.max_sessions,
 			feat_templates=EXCLUDED.feat_templates, feat_automations=EXCLUDED.feat_automations,
 			feat_sms=EXCLUDED.feat_sms, feat_reports=EXCLUDED.feat_reports,
 			is_pro=EXCLUDED.is_pro, active=EXCLUDED.active,
-			sort_order=EXCLUDED.sort_order, updated_at=NOW()`,
+			sort_order=EXCLUDED.sort_order, trial_days=EXCLUDED.trial_days,
+			is_trial_default=EXCLUDED.is_trial_default, updated_at=NOW()`,
 		p.Code, p.Name, p.Description, p.PriceCents, p.MaxSessions,
 		p.FeatTemplates, p.FeatAutomations, p.FeatSMS, p.FeatReports,
-		p.IsPro, p.Active, p.SortOrder)
-	return err
+		p.IsPro, p.Active, p.SortOrder, p.TrialDays, p.IsTrialDefault); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// GetTrialPlan retorna o plano marcado como default de trial (ou nil).
+func (r *Repository) GetTrialPlan(ctx context.Context) (*PlanDefinition, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+planDefCols+` FROM plan_definitions WHERE is_trial_default LIMIT 1`)
+	p, err := scanPlanDef(row)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return p, nil
 }
 
 // DeletePlanDefinition remove um plano. Bloqueia se ha tenants usando.

@@ -340,10 +340,9 @@ const adminHomeHTML = `<!doctype html>
 
           <div style="display:flex;gap:10px;align-items:flex-end">
             <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias liberados por pagamento</label><input class="dominput" id="bc-days" type="number" min="1" value="30" style="margin:2px 0 0"></div>
-            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias de trial (teste grátis)</label><input class="dominput" id="bc-trial" type="number" min="1" value="7" style="margin:2px 0 0"></div>
             <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding-bottom:8px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="bc-enabled" style="width:16px;height:16px"> Habilitar pagamentos</label>
           </div>
-          <div style="font-size:.74em;color:var(--dim);margin-top:6px">O trial vale para novos tenants que instalarem o app. Quem já está em trial mantém a data atual.</div>
+          <div style="font-size:.74em;color:var(--dim);margin-top:6px">O período de teste (trial) é configurado na aba <b>Planos</b> — marque qual plano os novos clientes recebem e por quantos dias.</div>
 
           <div class="row" style="margin-top:16px">
             <button class="btn btn-primary" onclick="salvarGateway()">Salvar</button>
@@ -723,7 +722,6 @@ function carregarGateway(){
     document.getElementById('bc-pix').value=d.processor_pix||'206';
     document.getElementById('bc-card').value=d.processor_card||'1';
     document.getElementById('bc-days').value=d.activate_days||30;
-    document.getElementById('bc-trial').value=d.trial_days||7;
     document.getElementById('bc-enabled').checked=!!d.enabled;
     document.getElementById('bc-postback').value=d.postback_url||'';
     document.getElementById('bc-key').value='';
@@ -740,7 +738,6 @@ function salvarGateway(){
     processor_pix:document.getElementById('bc-pix').value.trim(),
     processor_card:document.getElementById('bc-card').value.trim(),
     activate_days:parseInt(document.getElementById('bc-days').value||'30',10),
-    trial_days:parseInt(document.getElementById('bc-trial').value||'7',10),
     enabled:document.getElementById('bc-enabled').checked
   };
   fetch('/admin/api/billing-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
@@ -786,12 +783,14 @@ function renderPlanDefs(){
   if(!PLANDEFS.length){box.innerHTML='<div class="empty">Nenhum plano. Clique em "Novo plano".</div>';return;}
   box.innerHTML=PLANDEFS.map(function(p){
     var st=p.active?'<span class="badge b-active">ativo</span>':'<span class="badge b-suspended">inativo</span>';
-    return '<div class="toolcard">'+
+    var trialBadge=p.is_trial_default?'<span class="badge b-trial" style="margin-left:4px">TRIAL '+(p.trial_days||0)+'d</span>':'';
+    return '<div class="toolcard"'+(p.is_trial_default?' style="border-color:rgba(251,191,36,.35)"':'')+'>'+
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">'+
-        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+p.name+'</div>'+
+        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+p.name+trialBadge+'</div>'+
         '<div class="mono meta">'+p.code+'</div></div>'+st+'</div>'+
       '<div style="font-size:1.5em;font-weight:800;color:var(--green);margin:6px 0">'+fmtBRL(p.price_cents)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> /mês</span></div>'+
-      '<div class="meta" style="margin-bottom:10px">Até <b>'+p.max_sessions+'</b> sessão(ões) · '+(p.is_pro?'rótulo Pro':'rótulo Básico')+'</div>'+
+      '<div class="meta" style="margin-bottom:10px">Até <b>'+p.max_sessions+'</b> sessão(ões) · '+(p.is_pro?'rótulo Pro':'rótulo Básico')+
+        (p.is_trial_default?' · <span style="color:var(--amber)">novos clientes ganham '+(p.trial_days||0)+' dias grátis</span>':'')+'</div>'+
       '<div style="margin-bottom:12px">'+featChip(p.feat_templates,'Templates')+featChip(p.feat_automations,'Automações')+featChip(p.feat_sms,'SMS')+featChip(p.feat_reports,'Relatórios')+'</div>'+
       '<div class="row"><button class="btn" onclick="editarPlano(\''+p.code+'\')">Editar</button>'+
         '<button class="btn btn-danger" onclick="excluirPlano(\''+p.code+'\')">Excluir</button></div>'+
@@ -801,7 +800,7 @@ function renderPlanDefs(){
 function novoPlano(){ abrirPlanoModal(null); }
 function editarPlano(code){ var p=PLANDEFS.filter(function(x){return x.code===code;})[0]; abrirPlanoModal(p); }
 function abrirPlanoModal(p){
-  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99};
+  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99,trial_days:0,is_trial_default:false};
   var ov=document.createElement('div');
   ov.id='plano-modal';
   ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.8);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
@@ -823,6 +822,12 @@ function abrirPlanoModal(p){
     chk('pd-aut',p.feat_automations,'Automações (robôs BizProc)')+
     chk('pd-sms',p.feat_sms,'Campanhas SMS')+
     chk('pd-rep',p.feat_reports,'Relatórios + histórico longo')+
+    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
+    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 4px;text-transform:uppercase;letter-spacing:.05em">Período de teste (trial)</div>'+
+    chk('pd-trialdef',p.is_trial_default,'Plano padrão dos novos clientes (trial)')+
+    '<label style="font-size:.72em;color:var(--dim)">Dias de teste grátis</label>'+
+    '<input class="dominput" id="pd-trialdays" type="number" min="0" value="'+(p.trial_days||0)+'" style="margin:2px 0 4px">'+
+    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Só vale para o plano marcado acima. 0 = sem teste grátis.</div>'+
     '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
     chk('pd-pro',p.is_pro,'Marcar como plano "Pro" (rótulo)')+
     chk('pd-active',p.active,'Ativo (cliente pode assinar)')+
@@ -847,6 +852,8 @@ function salvarPlano(isNew){
     feat_reports:g('pd-rep').checked,
     is_pro:g('pd-pro').checked,
     active:g('pd-active').checked,
+    trial_days:parseInt(g('pd-trialdays').value||'0',10),
+    is_trial_default:g('pd-trialdef').checked,
     sort_order:99
   };
   if(!body.code||!body.name){toast('Código e nome obrigatórios',false);return;}

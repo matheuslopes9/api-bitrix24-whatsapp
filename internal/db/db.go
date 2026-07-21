@@ -628,6 +628,26 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				 19900, 10, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, 2)
 			ON CONFLICT (code) DO NOTHING;
 		`},
+		{"038_plan_trial", `
+			-- ORDEM IMPORTA: roda DEPOIS da 033 (que cria plan_definitions).
+			-- Trial passa a ser configuracao DO PLANO (aba Planos), nao um
+			-- campo solto no gateway. is_trial_default marca qual plano os
+			-- novos tenants recebem; trial_days e' a duracao desse teste.
+			ALTER TABLE plan_definitions
+				ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 0;
+			ALTER TABLE plan_definitions
+				ADD COLUMN IF NOT EXISTS is_trial_default BOOLEAN NOT NULL DEFAULT FALSE;
+			-- O 'basic' era o plano de trial hardcoded — vira o default com
+			-- 7 dias. So' age se ninguem foi marcado ainda (idempotente).
+			UPDATE plan_definitions
+			   SET is_trial_default = TRUE,
+			       trial_days = 7
+			 WHERE code = 'basic'
+			   AND NOT EXISTS (SELECT 1 FROM plan_definitions WHERE is_trial_default);
+			-- No maximo 1 plano marcado como default de trial.
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_trial_default
+				ON plan_definitions (is_trial_default) WHERE is_trial_default;
+		`},
 		{"032_plan_cancellation", `
 			-- Cancelamento agendado (padrao SaaS): cliente cancela mas usa ate
 			-- o fim do periodo pago (active_until). cancel_at_period_end=TRUE

@@ -42,6 +42,16 @@ func (h *handlers) adminSavePlanDef(c *fiber.Ctx) error {
 	if p.MaxSessions < 1 {
 		p.MaxSessions = 1
 	}
+	// Plano marcado como trial precisa de dias > 0, senao o cliente nasceria
+	// com o teste ja vencido.
+	if p.IsTrialDefault && p.TrialDays <= 0 {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "defina os dias de teste (maior que zero) para o plano de trial",
+		})
+	}
+	if p.TrialDays < 0 {
+		p.TrialDays = 0
+	}
 	if err := h.repo.UpsertPlanDefinition(c.Context(), &p); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -93,7 +103,6 @@ func (h *handlers) adminGetBillingConfig(c *fiber.Ctx) error {
 		"processor_pix":     row.ProcessorPix,
 		"processor_card":    row.ProcessorCard,
 		"activate_days":     row.ActivateDays,
-		"trial_days":        row.TrialDays,
 		"enabled":           row.Enabled,
 		"updated_at":        row.UpdatedAt.Format(time.RFC3339),
 		// Fallback do env (informativo — mostra o que valeria se o banco vazio)
@@ -127,8 +136,14 @@ func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
 	if req.ActivateDays <= 0 {
 		req.ActivateDays = 30
 	}
+	// trial_days saiu desta tela (agora e' por plano, na aba Planos).
+	// Preserva o valor atual do banco pra nao zerar a coluna legada.
 	if req.TrialDays <= 0 {
-		req.TrialDays = 7
+		if cur, _ := h.repo.GetBillingConfig(c.Context()); cur != nil && cur.TrialDays > 0 {
+			req.TrialDays = cur.TrialDays
+		} else {
+			req.TrialDays = 7
+		}
 	}
 	keyChanged := strings.TrimSpace(req.MerchantKey) != ""
 	row := &db.BillingConfigRow{
