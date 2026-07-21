@@ -1837,7 +1837,12 @@ function abrirModalPagamento(plano){
   ov.innerHTML='<div style="max-width:440px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:26px" onclick="event.stopPropagation()">'+
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:1.2em;font-weight:800;color:#f1f5f9">Assinar plano</div>'+
       '<button onclick="fecharModalPagamento()" style="background:none;border:0;color:#64748b;font-size:20px;cursor:pointer">×</button></div>'+
-    '<div style="font-size:13px;color:#94a3b8;margin-bottom:18px">Escolha como pagar. O PIX libera o acesso na hora.</div>'+
+    '<div style="font-size:13px;color:#94a3b8;margin-bottom:14px">Escolha como pagar. O PIX libera o acesso na hora.</div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:14px">'+
+      '<input id="pgto-cupom" placeholder="Tem um cupom? Digite aqui" style="flex:1;padding:.62em .8em;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:9px;color:#e2e8f0;font-size:12.5px;text-transform:uppercase">'+
+      '<button class="btn" onclick="validarCupom(\''+plano+'\')" style="white-space:nowrap">Aplicar</button>'+
+    '</div>'+
+    '<div id="pgto-cupom-msg" style="margin-bottom:12px"></div>'+
     '<div style="display:flex;flex-direction:column;gap:10px">'+
       '<button class="btn btn-primary" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'pix\')">⚡ PIX — liberação imediata</button>'+
       '<button class="btn" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'boleto\')">🧾 Boleto bancário</button>'+
@@ -1847,11 +1852,44 @@ function abrirModalPagamento(plano){
   ov.onclick=function(){ fecharModalPagamento(); };
   document.body.appendChild(ov);
 }
-function fecharModalPagamento(){ var m=document.getElementById('pgto-modal'); if(m)m.remove(); }
+function fecharModalPagamento(){ var m=document.getElementById('pgto-modal'); if(m)m.remove(); _cupomAplicado=''; }
+
+// ── Cupom no modal de pagamento ──
+var _cupomAplicado='';
+function validarCupom(plano){
+  var inp=document.getElementById('pgto-cupom');
+  var msg=document.getElementById('pgto-cupom-msg');
+  var code=(inp.value||'').trim().toUpperCase();
+  if(!code){ msg.innerHTML=''; _cupomAplicado=''; return; }
+  msg.innerHTML='<div style="font-size:12px;color:#94a3b8">Validando…</div>';
+  fetch(apiUrl('/ui/coupon/validate'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,plan:plano})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var c=d.check||{};
+      if(!c.valid){ _cupomAplicado=''; msg.innerHTML='<div style="font-size:12px;color:#f87171">✗ '+(c.reason||'cupom inválido')+'</div>'; return; }
+      if(c.kind==='trial_days'){
+        _cupomAplicado='';
+        msg.innerHTML='<div style="font-size:12px;color:#fbbf24">Este cupom estende seu teste em '+c.trial_days_added+' dia(s). <a href="#" onclick="aplicarCupomTrial(\''+code+'\');return false;" style="color:#25D366">Aplicar agora</a></div>';
+        return;
+      }
+      _cupomAplicado=code;
+      msg.innerHTML='<div style="font-size:12px;color:#25D366;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.25);border-radius:8px;padding:8px">'+
+        '✓ Cupom <b>'+code+'</b> aplicado — de <s style="color:#64748b">'+fmtCentavos(d.original_cents)+'</s> por <b>'+fmtCentavos(c.final_cents)+'</b>'+
+        (c.description?'<div style="color:#94a3b8;margin-top:3px">'+c.description+'</div>':'')+'</div>';
+    })
+    .catch(function(){ msg.innerHTML='<div style="font-size:12px;color:#f87171">Falha ao validar.</div>'; });
+}
+function aplicarCupomTrial(code){
+  fetch(apiUrl('/ui/coupon/apply'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){ alert(res.j.message||res.j.error||'ok'); if(res.ok){fecharModalPagamento();carregarAssinatura();} })
+    .catch(function(){ alert('Falha ao aplicar cupom.'); });
+}
+
 function pagarCom(plano, metodo){
   var box=document.getElementById('pgto-resultado');
   box.innerHTML='<div style="text-align:center;color:#94a3b8;font-size:13px;padding:12px">Gerando '+(metodo==='pix'?'PIX':'boleto')+'…</div>';
-  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:metodo})})
+  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:metodo,coupon:_cupomAplicado})})
     .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
     .then(function(res){
       if(!res.ok){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">'+(res.j.error||'Falha ao gerar cobrança.')+'</div>'; return; }

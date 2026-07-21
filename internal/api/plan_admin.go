@@ -93,6 +93,7 @@ func (h *handlers) adminGetBillingConfig(c *fiber.Ctx) error {
 		"processor_pix":     row.ProcessorPix,
 		"processor_card":    row.ProcessorCard,
 		"activate_days":     row.ActivateDays,
+		"trial_days":        row.TrialDays,
 		"enabled":           row.Enabled,
 		"updated_at":        row.UpdatedAt.Format(time.RFC3339),
 		// Fallback do env (informativo — mostra o que valeria se o banco vazio)
@@ -113,6 +114,7 @@ func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
 		ProcessorPix    string `json:"processor_pix"`
 		ProcessorCard   string `json:"processor_card"`
 		ActivateDays    int    `json:"activate_days"`
+		TrialDays       int    `json:"trial_days"`
 		Enabled         bool   `json:"enabled"`
 	}
 	if err := c.BodyParser(&req); err != nil {
@@ -125,6 +127,9 @@ func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
 	if req.ActivateDays <= 0 {
 		req.ActivateDays = 30
 	}
+	if req.TrialDays <= 0 {
+		req.TrialDays = 7
+	}
 	keyChanged := strings.TrimSpace(req.MerchantKey) != ""
 	row := &db.BillingConfigRow{
 		Provider:        "maxipago",
@@ -135,6 +140,7 @@ func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
 		ProcessorPix:    strings.TrimSpace(req.ProcessorPix),
 		ProcessorCard:   strings.TrimSpace(req.ProcessorCard),
 		ActivateDays:    req.ActivateDays,
+		TrialDays:       req.TrialDays,
 		Enabled:         req.Enabled,
 	}
 	if err := h.repo.SaveBillingConfig(c.Context(), row, keyChanged); err != nil {

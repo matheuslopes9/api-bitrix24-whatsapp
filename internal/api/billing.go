@@ -288,6 +288,7 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		Plan      string `json:"plan"`
 		Method    string `json:"method"`
 		PayerName string `json:"payer_name"`
+		Coupon    string `json:"coupon"`
 	}
 	_ = c.BodyParser(&body)
 	method := strings.ToLower(strings.TrimSpace(body.Method))
@@ -299,27 +300,60 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 			"error": "metodo nao suportado — use boleto ou pix",
 		})
 	}
-	// 2 planos pagos: basic e pro. Trial e' so' o periodo de teste do Basico.
+	// Plano vem do construtor (plan_definitions); fallback pros 2 legados.
 	plan := strings.ToLower(strings.TrimSpace(body.Plan))
-	var amount int64
-	switch plan {
-	case "basic":
-		amount = int64(h.cfg.Billing.BasicPriceCents)
-	case "", "pro":
+	if plan == "" {
 		plan = "pro"
-		amount = int64(h.cfg.Billing.ProPriceCents)
-	default:
+	}
+	planLabel := plan
+	amount := h.planPriceCents(c, plan)
+	if def, _ := h.repo.GetPlanDefinition(c.Context(), plan); def != nil {
+		planLabel = def.Name
+		if !def.Active {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "plano indisponivel para assinatura",
+			})
+		}
+	} else if plan != "basic" && plan != "pro" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "plano invalido — use basic ou pro",
+			"error": "plano invalido",
 		})
 	}
+	if amount <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "plano sem preco configurado",
+		})
+	}
+
+	// CUPOM: aplica desconto sobre o valor (percent/amount). Cupons de
+	// trial_days nao entram aqui — sao aplicados em /ui/coupon/apply.
+	originalAmount := amount
+	couponCode := ""
+	var couponDiscount int64
+	if cp := strings.TrimSpace(body.Coupon); cp != "" {
+		chk := h.validateCoupon(c, cp, domain, plan, amount)
+		if !chk.Valid {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "cupom inválido: " + chk.Reason,
+				"code":  "invalid_coupon",
+			})
+		}
+		if chk.Kind == "trial_days" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "este cupom estende o teste — aplique-o na aba de assinatura, não no pagamento",
+			})
+		}
+		couponCode = chk.Code
+		couponDiscount = chk.DiscountCents
+		amount = chk.FinalCents
+		if amount <= 0 {
+			amount = 100 // minimo simbolico (R$1) — gateway recusa valor zero
+		}
+	}
+
 	payerName := strings.TrimSpace(body.PayerName)
 	if payerName == "" {
 		payerName = domain
-	}
-	planLabel := "Basico"
-	if plan == "pro" {
-		planLabel = "Pro"
 	}
 
 	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
@@ -382,12 +416,29 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		h.log.Error("billing: persistir cobranca falhou", zap.Error(err))
 	}
 
+	// Consome o cupom (best-effort — a cobranca ja existe no gateway).
+	if couponCode != "" {
+		if err := h.repo.RedeemCoupon(ctx, couponCode, domain, plan, couponDiscount, 0); err != nil {
+			h.log.Warn("billing: registrar uso do cupom falhou",
+				zap.String("code", couponCode), zap.Error(err))
+		} else {
+			h.log.Info("billing: cupom aplicado",
+				zap.String("domain", domain), zap.String("code", couponCode),
+				zap.Int64("desconto_cents", couponDiscount))
+		}
+	}
+
 	out := fiber.Map{
 		"ok":            true,
 		"plan":          plan,
 		"method":        method,
 		"reference_num": ref,
 		"amount_cents":  amount,
+	}
+	if couponCode != "" {
+		out["coupon"] = couponCode
+		out["original_cents"] = originalAmount
+		out["discount_cents"] = couponDiscount
 	}
 	if method == "pix" {
 		out["pix_copy_paste"] = pixPayload

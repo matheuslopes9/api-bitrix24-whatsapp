@@ -2129,19 +2129,32 @@ func (r *Repository) MarkMasterAutoSet(ctx context.Context, domain string) error
 	return err
 }
 
-// EnsureTenantTrial cria um plano trial de 7 dias se o dominio nao tem
-// plano ainda. Idempotente — se ja existe, nao faz nada.
+// EnsureTenantTrial cria um plano trial se o dominio nao tem plano ainda.
+// A duracao vem de billing_config.trial_days (configuravel na UI admin),
+// com fallback 7 dias. Idempotente — se ja existe, nao faz nada.
 // Chamado no /bitrix/auth (apos validar oauth do install) pra garantir
 // que TODO tenant tenha um plano associado.
 func (r *Repository) EnsureTenantTrial(ctx context.Context, domain string) error {
 	if domain == "" {
 		return nil
 	}
+	days := r.TrialDays(ctx)
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at)
-		VALUES ($1, 'basic', 'trial', NOW() + INTERVAL '7 days')
-		ON CONFLICT (domain) DO NOTHING`, domain)
+		VALUES ($1, 'basic', 'trial', NOW() + make_interval(days => $2))
+		ON CONFLICT (domain) DO NOTHING`, domain, days)
 	return err
+}
+
+// TrialDays le a duracao do trial da config (fallback 7).
+func (r *Repository) TrialDays(ctx context.Context) int {
+	var d int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(trial_days, 7) FROM billing_config WHERE id = 1`).Scan(&d)
+	if err != nil || d <= 0 {
+		return 7
+	}
+	return d
 }
 
 // SetTenantPlan atualiza o plano de um tenant. Usado pelo super-admin pra
@@ -2851,6 +2864,7 @@ type BillingConfigRow struct {
 	ProcessorPix     string    `json:"processor_pix"`
 	ProcessorCard    string    `json:"processor_card"`
 	ActivateDays     int       `json:"activate_days"`
+	TrialDays        int       `json:"trial_days"`
 	Enabled          bool      `json:"enabled"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
@@ -2861,12 +2875,12 @@ func (r *Repository) GetBillingConfig(ctx context.Context) (*BillingConfigRow, e
 	row := r.pool.QueryRow(ctx, `
 		SELECT provider, environment, merchant_id, merchant_key,
 		       processor_boleto, processor_pix, processor_card,
-		       activate_days, enabled, updated_at
+		       activate_days, COALESCE(trial_days, 7), enabled, updated_at
 		FROM billing_config WHERE id = 1`)
 	var b BillingConfigRow
 	err := row.Scan(&b.Provider, &b.Environment, &b.MerchantID, &b.MerchantKey,
 		&b.ProcessorBoleto, &b.ProcessorPix, &b.ProcessorCard,
-		&b.ActivateDays, &b.Enabled, &b.UpdatedAt)
+		&b.ActivateDays, &b.TrialDays, &b.Enabled, &b.UpdatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return nil, nil
@@ -2884,21 +2898,143 @@ func (r *Repository) SaveBillingConfig(ctx context.Context, b *BillingConfigRow,
 			UPDATE billing_config SET
 				provider=$1, environment=$2, merchant_id=$3, merchant_key=$4,
 				processor_boleto=$5, processor_pix=$6, processor_card=$7,
-				activate_days=$8, enabled=$9, updated_at=NOW()
+				activate_days=$8, trial_days=$9, enabled=$10, updated_at=NOW()
 			WHERE id = 1`,
 			b.Provider, b.Environment, b.MerchantID, b.MerchantKey,
 			b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
-			b.ActivateDays, b.Enabled)
+			b.ActivateDays, b.TrialDays, b.Enabled)
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE billing_config SET
 			provider=$1, environment=$2, merchant_id=$3,
 			processor_boleto=$4, processor_pix=$5, processor_card=$6,
-			activate_days=$7, enabled=$8, updated_at=NOW()
+			activate_days=$7, trial_days=$8, enabled=$9, updated_at=NOW()
 		WHERE id = 1`,
 		b.Provider, b.Environment, b.MerchantID,
 		b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
-		b.ActivateDays, b.Enabled)
+		b.ActivateDays, b.TrialDays, b.Enabled)
+	return err
+}
+
+// ─── Cupons de desconto ────────────────────────────────────────────────────
+
+type Coupon struct {
+	Code        string     `json:"code"`
+	Description string     `json:"description"`
+	Kind        string     `json:"kind"`  // percent | amount | trial_days
+	Value       int        `json:"value"` // % | centavos | dias
+	PlanCode    string     `json:"plan_code"`
+	MaxUses     int        `json:"max_uses"`
+	UsedCount   int        `json:"used_count"`
+	Active      bool       `json:"active"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CreatedBy   string     `json:"created_by"`
+}
+
+const couponCols = `code, description, kind, value, plan_code, max_uses,
+	used_count, active, expires_at, created_at, created_by`
+
+func scanCoupon(row interface {
+	Scan(dest ...interface{}) error
+}) (*Coupon, error) {
+	var c Coupon
+	err := row.Scan(&c.Code, &c.Description, &c.Kind, &c.Value, &c.PlanCode,
+		&c.MaxUses, &c.UsedCount, &c.Active, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (r *Repository) ListCoupons(ctx context.Context) ([]*Coupon, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+couponCols+` FROM coupons ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Coupon
+	for rows.Next() {
+		c, err := scanCoupon(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) GetCoupon(ctx context.Context, code string) (*Coupon, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+couponCols+` FROM coupons WHERE code = $1`, strings.ToUpper(code))
+	c, err := scanCoupon(row)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return c, nil
+}
+
+func (r *Repository) UpsertCoupon(ctx context.Context, c *Coupon) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO coupons (code, description, kind, value, plan_code, max_uses,
+			active, expires_at, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (code) DO UPDATE SET
+			description=EXCLUDED.description, kind=EXCLUDED.kind,
+			value=EXCLUDED.value, plan_code=EXCLUDED.plan_code,
+			max_uses=EXCLUDED.max_uses, active=EXCLUDED.active,
+			expires_at=EXCLUDED.expires_at`,
+		strings.ToUpper(c.Code), c.Description, c.Kind, c.Value, c.PlanCode,
+		c.MaxUses, c.Active, c.ExpiresAt, c.CreatedBy)
+	return err
+}
+
+func (r *Repository) DeleteCoupon(ctx context.Context, code string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM coupons WHERE code = $1`, strings.ToUpper(code))
+	return err
+}
+
+// CouponRedeemedBy indica se o tenant ja usou esse cupom.
+func (r *Repository) CouponRedeemedBy(ctx context.Context, code, domain string) bool {
+	var n int
+	_ = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM coupon_redemptions WHERE code=$1 AND domain=$2`,
+		strings.ToUpper(code), domain).Scan(&n)
+	return n > 0
+}
+
+// RedeemCoupon registra o uso e incrementa o contador. Idempotente por
+// (code, domain) via unique index — segunda tentativa retorna erro.
+func (r *Repository) RedeemCoupon(ctx context.Context, code, domain, planCode string, discountCents int64, trialDaysAdded int) error {
+	code = strings.ToUpper(code)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO coupon_redemptions (code, domain, plan_code, discount_cents, trial_days_added)
+		VALUES ($1,$2,$3,$4,$5)`, code, domain, planCode, discountCents, trialDaysAdded); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE coupons SET used_count = used_count + 1 WHERE code = $1`, code); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ExtendTrial soma dias ao trial vigente do tenant (usado por cupom
+// trial_days). Se nao esta em trial, nao faz nada.
+func (r *Repository) ExtendTrial(ctx context.Context, domain string, days int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tenant_plans
+		   SET trial_ends_at = GREATEST(COALESCE(trial_ends_at, NOW()), NOW())
+		                       + make_interval(days => $2),
+		       updated_at = NOW()
+		 WHERE domain = $1 AND status = 'trial'`, domain, days)
 	return err
 }

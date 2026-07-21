@@ -88,6 +88,8 @@ func New(
 	ui.Get("/plan", h.uiTenantPlan)
 	// Gestao de assinatura pelo CLIENTE (aba Planos & Assinatura do dashboard).
 	ui.Get("/plans", h.uiListPlans) // planos ativos configurados
+	ui.Post("/coupon/validate", h.uiValidateCoupon) // preview do desconto
+	ui.Post("/coupon/apply", h.uiApplyCoupon)       // aplica cupom de trial_days
 	ui.Get("/plan/details", h.uiPlanDetails)
 	ui.Post("/plan/cancel", h.uiPlanCancel)
 	ui.Post("/plan/reactivate", h.uiPlanReactivate)
@@ -272,6 +274,10 @@ func New(
 	admin.Get("/api/billing-config", h.adminGetBillingConfig)
 	admin.Post("/api/billing-config", h.adminSaveBillingConfig)
 	admin.Post("/api/billing-config/test", h.adminTestBillingConfig)
+	// Cupons de desconto / promocao
+	admin.Get("/api/coupons", h.adminListCoupons)
+	admin.Post("/api/coupons", h.adminSaveCoupon)
+	admin.Post("/api/coupons/delete", h.adminDeleteCoupon)
 	admin.Get("/api/debug", h.adminDebug)
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
 	admin.Get("/api/users", h.adminListUsers)

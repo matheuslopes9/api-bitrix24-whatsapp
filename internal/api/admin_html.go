@@ -203,6 +203,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
     <div class="sb-group">Financeiro</div>
     <div class="sb-item" data-page="plandefs" onclick="irPara('plandefs')"><span class="ic">🧩</span> Planos</div>
+    <div class="sb-item" data-page="cupons" onclick="irPara('cupons')"><span class="ic">🎟️</span> Cupons</div>
     <div class="sb-item" data-page="gateway" onclick="irPara('gateway')"><span class="ic">🔌</span> Gateway</div>
     <div class="sb-item" data-page="billing" onclick="irPara('billing')"><span class="ic">💳</span> Pagamentos <span class="badge-count" id="cnt-charges">0</span></div>
     <div class="sb-group">Monitoramento</div>
@@ -280,6 +281,38 @@ const adminHomeHTML = `<!doctype html>
       </div></div>
     </div>
 
+    <!-- CUPONS -->
+    <div class="page" id="page-cupons">
+      <div class="toolcard" style="margin-bottom:16px">
+        <h3>🎟️ Novo cupom</h3>
+        <p>Crie cupons de desconto ou de extensão de teste. O cliente digita o código na aba Assinatura.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end">
+          <div><label style="font-size:.72em;color:var(--dim)">Código</label><input class="dominput" id="cp-code" placeholder="PROMO10" style="margin:2px 0 0;text-transform:uppercase"></div>
+          <div><label style="font-size:.72em;color:var(--dim)">Tipo</label>
+            <select class="filter" id="cp-kind" style="width:100%" onchange="atualizarDicaCupom()">
+              <option value="percent">Desconto %</option>
+              <option value="amount">Desconto R$</option>
+              <option value="trial_days">Dias de teste</option>
+            </select></div>
+          <div><label style="font-size:.72em;color:var(--dim)" id="cp-value-label">Valor (%)</label><input class="dominput" id="cp-value" type="number" min="1" value="10" style="margin:2px 0 0"></div>
+          <div><label style="font-size:.72em;color:var(--dim)">Plano (vazio = todos)</label><input class="dominput" id="cp-plan" placeholder="pro" style="margin:2px 0 0"></div>
+          <div><label style="font-size:.72em;color:var(--dim)">Máx. usos (0 = ilimitado)</label><input class="dominput" id="cp-max" type="number" min="0" value="0" style="margin:2px 0 0"></div>
+          <div><label style="font-size:.72em;color:var(--dim)">Validade (opcional)</label><input class="dominput" id="cp-exp" type="date" style="margin:2px 0 0"></div>
+        </div>
+        <input class="dominput" id="cp-desc" placeholder="Descrição (aparece pro cliente)" style="margin:10px 0 0">
+        <div class="row" style="margin-top:12px;align-items:center">
+          <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;cursor:pointer"><input type="checkbox" id="cp-active" checked style="width:16px;height:16px"> Ativo</label>
+          <button class="btn btn-primary" onclick="salvarCupom()">Criar cupom</button>
+        </div>
+      </div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>Código</th><th>Tipo</th><th>Valor</th><th>Plano</th><th>Usos</th><th>Validade</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody id="cupons-body"><tr><td colspan="8" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
     <!-- GATEWAY (config de pagamento) -->
     <div class="page" id="page-gateway">
       <div style="max-width:640px">
@@ -307,8 +340,10 @@ const adminHomeHTML = `<!doctype html>
 
           <div style="display:flex;gap:10px;align-items:flex-end">
             <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias liberados por pagamento</label><input class="dominput" id="bc-days" type="number" min="1" value="30" style="margin:2px 0 0"></div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding-bottom:8px;cursor:pointer"><input type="checkbox" id="bc-enabled" style="width:16px;height:16px"> Habilitar pagamentos</label>
+            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias de trial (teste grátis)</label><input class="dominput" id="bc-trial" type="number" min="1" value="7" style="margin:2px 0 0"></div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding-bottom:8px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="bc-enabled" style="width:16px;height:16px"> Habilitar pagamentos</label>
           </div>
+          <div style="font-size:.74em;color:var(--dim);margin-top:6px">O trial vale para novos tenants que instalarem o app. Quem já está em trial mantém a data atual.</div>
 
           <div class="row" style="margin-top:16px">
             <button class="btn btn-primary" onclick="salvarGateway()">Salvar</button>
@@ -484,7 +519,8 @@ var PAGES={
   tenants:{title:'Tenants',sub:'Portais Bitrix24 que instalaram o app'},
   usage:{title:'Consumo',sub:'Uso de recursos por tenant'},
   plandefs:{title:'Planos',sub:'Construtor de planos — preço e features'},
-  gateway:{title:'Gateway',sub:'Credenciais do gateway de pagamento'},
+  cupons:{title:'Cupons',sub:'Promoções e descontos'},
+  gateway:{title:'Gateway',sub:'Credenciais do gateway e período de teste'},
   billing:{title:'Pagamentos',sub:'Cobranças e receita via maxiPago'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
@@ -505,6 +541,7 @@ function irPara(p){
   fecharSidebar();
   // Carrega dados sob demanda por secao.
   if(p==='gateway')carregarGateway();
+  if(p==='cupons')carregarCupons();
   if(p==='plandefs')carregarPlanDefs();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
@@ -607,6 +644,76 @@ function toolAction(path,method){var dom=document.getElementById('tool-domain').
 function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
 
+// ── CUPONS ──
+function atualizarDicaCupom(){
+  var k=document.getElementById('cp-kind').value;
+  var lbl=document.getElementById('cp-value-label');
+  lbl.textContent = k==='percent'?'Valor (%)' : k==='amount'?'Valor (R$)' : 'Dias de teste';
+}
+function carregarCupons(){
+  fetch('/admin/api/coupons').then(function(r){return r.json();}).then(function(d){
+    var b=document.getElementById('cupons-body'); var list=d.coupons||[];
+    if(!list.length){b.innerHTML='<tr><td colspan="8" class="empty">Nenhum cupom criado.</td></tr>';return;}
+    b.innerHTML=list.map(function(c){
+      var tipo={percent:'Desconto %',amount:'Desconto R$',trial_days:'Dias de teste'}[c.kind]||c.kind;
+      var val=c.kind==='percent'?(c.value+'%'):c.kind==='amount'?fmtBRL(c.value):(c.value+' dias');
+      var usos=(c.used_count||0)+(c.max_uses>0?(' / '+c.max_uses):' / ∞');
+      var exp=c.expires_at?fmtDate(c.expires_at):'—';
+      var esgotado=c.max_uses>0&&c.used_count>=c.max_uses;
+      var venceu=c.expires_at&&new Date(c.expires_at)<new Date();
+      var st=!c.active?'<span class="badge b-suspended">inativo</span>':
+             esgotado?'<span class="badge b-expired">esgotado</span>':
+             venceu?'<span class="badge b-expired">expirado</span>':
+             '<span class="badge b-active">ativo</span>';
+      return '<tr><td class="mono domain">'+c.code+'</td><td><span class="badge b-basic">'+tipo+'</span></td>'+
+        '<td><b>'+val+'</b></td><td class="meta">'+(c.plan_code||'todos')+'</td><td>'+usos+'</td>'+
+        '<td class="meta">'+exp+'</td><td>'+st+'</td>'+
+        '<td style="text-align:right"><button class="btn" onclick="toggleCupom(\''+c.code+'\','+(!c.active)+')">'+(c.active?'Desativar':'Ativar')+'</button> '+
+        '<button class="btn btn-danger" onclick="excluirCupom(\''+c.code+'\')">Excluir</button></td></tr>';
+    }).join('');
+  }).catch(function(){document.getElementById('cupons-body').innerHTML='<tr><td colspan="8" class="empty">Falha ao carregar.</td></tr>';});
+}
+function salvarCupom(){
+  var kind=document.getElementById('cp-kind').value;
+  var raw=parseFloat(document.getElementById('cp-value').value||'0');
+  // amount vem em reais na UI -> centavos no backend
+  var value=kind==='amount'?Math.round(raw*100):Math.round(raw);
+  var body={
+    code:document.getElementById('cp-code').value.trim().toUpperCase(),
+    description:document.getElementById('cp-desc').value.trim(),
+    kind:kind, value:value,
+    plan_code:document.getElementById('cp-plan').value.trim().toLowerCase(),
+    max_uses:parseInt(document.getElementById('cp-max').value||'0',10),
+    active:document.getElementById('cp-active').checked,
+    expires_at:document.getElementById('cp-exp').value||''
+  };
+  if(!body.code){toast('Informe o código',false);return;}
+  fetch('/admin/api/coupons',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){
+      if(res.ok){toast('✓ cupom salvo',true);document.getElementById('cp-code').value='';document.getElementById('cp-desc').value='';carregarCupons();}
+      else toast('✗ '+(res.j.error||'falha'),false);
+    }).catch(function(){toast('✗ erro de conexão',false);});
+}
+function toggleCupom(code,active){
+  // Recarrega o cupom e regrava com o novo status (upsert por code).
+  var c=null;
+  fetch('/admin/api/coupons').then(function(r){return r.json();}).then(function(d){
+    (d.coupons||[]).forEach(function(x){if(x.code===code)c=x;});
+    if(!c){toast('cupom não encontrado',false);return;}
+    var body={code:c.code,description:c.description,kind:c.kind,value:c.value,
+      plan_code:c.plan_code,max_uses:c.max_uses,active:active,
+      expires_at:c.expires_at?c.expires_at.slice(0,10):''};
+    return fetch('/admin/api/coupons',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  }).then(function(){toast('✓ atualizado',true);carregarCupons();})
+    .catch(function(){toast('✗ falha',false);});
+}
+function excluirCupom(code){
+  if(!confirm('Excluir o cupom '+code+'?'))return;
+  fetch('/admin/api/coupons/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
+    .then(function(){toast('✓ excluído',true);carregarCupons();}).catch(function(){toast('✗ falha',false);});
+}
+
 // ── GATEWAY (config de pagamento) ──
 function carregarGateway(){
   fetch('/admin/api/billing-config').then(function(r){return r.json();}).then(function(d){
@@ -616,6 +723,7 @@ function carregarGateway(){
     document.getElementById('bc-pix').value=d.processor_pix||'206';
     document.getElementById('bc-card').value=d.processor_card||'1';
     document.getElementById('bc-days').value=d.activate_days||30;
+    document.getElementById('bc-trial').value=d.trial_days||7;
     document.getElementById('bc-enabled').checked=!!d.enabled;
     document.getElementById('bc-postback').value=d.postback_url||'';
     document.getElementById('bc-key').value='';
@@ -632,6 +740,7 @@ function salvarGateway(){
     processor_pix:document.getElementById('bc-pix').value.trim(),
     processor_card:document.getElementById('bc-card').value.trim(),
     activate_days:parseInt(document.getElementById('bc-days').value||'30',10),
+    trial_days:parseInt(document.getElementById('bc-trial').value||'7',10),
     enabled:document.getElementById('bc-enabled').checked
   };
   fetch('/admin/api/billing-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})

@@ -541,6 +541,45 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				 '12', '206', '1', 30, FALSE)
 			ON CONFLICT (id) DO NOTHING;
 		`},
+		{"037_coupons", `
+			-- Cupons de desconto configuraveis pelo admin.
+			-- kind: 'percent' (desconto %) | 'amount' (desconto fixo em centavos)
+			--     | 'trial_days' (estende o trial em N dias, sem cobranca)
+			-- plan_code vazio = vale pra qualquer plano.
+			-- max_uses 0 = ilimitado. expires_at NULL = sem validade.
+			CREATE TABLE IF NOT EXISTS coupons (
+				code        TEXT PRIMARY KEY,
+				description TEXT NOT NULL DEFAULT '',
+				kind        TEXT NOT NULL DEFAULT 'percent',
+				value       INT NOT NULL DEFAULT 0,  -- % | centavos | dias
+				plan_code   TEXT NOT NULL DEFAULT '',
+				max_uses    INT NOT NULL DEFAULT 0,
+				used_count  INT NOT NULL DEFAULT 0,
+				active      BOOLEAN NOT NULL DEFAULT TRUE,
+				expires_at  TIMESTAMPTZ,
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				created_by  TEXT NOT NULL DEFAULT ''
+			);
+			-- Registro de uso (auditoria + evita reuso pelo mesmo tenant).
+			CREATE TABLE IF NOT EXISTS coupon_redemptions (
+				id           BIGSERIAL PRIMARY KEY,
+				code         TEXT NOT NULL,
+				domain       TEXT NOT NULL,
+				plan_code    TEXT NOT NULL DEFAULT '',
+				discount_cents BIGINT NOT NULL DEFAULT 0,
+				trial_days_added INT NOT NULL DEFAULT 0,
+				redeemed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_code ON coupon_redemptions (code);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_coupon_once_per_domain
+				ON coupon_redemptions (code, domain);
+		`},
+		{"036_trial_days_config", `
+			-- Dias de trial configuraveis pela UI admin (antes fixo em 7).
+			-- Fica em billing_config por ser config global do produto.
+			ALTER TABLE billing_config
+				ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 7;
+		`},
 		{"035_billing_config_seed", `
 			-- Preenche as credenciais de sandbox SE a config ainda estiver
 			-- vazia. Cobre quem ja rodou a 034 antes deste seed existir (a
