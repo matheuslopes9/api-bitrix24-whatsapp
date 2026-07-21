@@ -312,7 +312,8 @@ const adminHomeHTML = `<!doctype html>
 
           <div class="row" style="margin-top:16px">
             <button class="btn btn-primary" onclick="salvarGateway()">Salvar</button>
-            <button class="btn" onclick="testarGateway()">Testar credenciais (PIX R$0,01)</button>
+            <button class="btn" onclick="testarGateway('pix')">Testar PIX</button>
+            <button class="btn" onclick="testarGateway('boleto')">Testar Boleto</button>
           </div>
           <div id="gateway-test" style="margin-top:12px"></div>
         </div>
@@ -638,14 +639,27 @@ function salvarGateway(){
     .then(function(res){res.ok?(toast('✓ gateway salvo',true),carregarGateway()):toast('✗ '+(res.j.error||'falha'),false);})
     .catch(function(){toast('✗ erro de conexão',false);});
 }
-function testarGateway(){
+function testarGateway(metodo){
+  metodo=metodo||'pix';
   var box=document.getElementById('gateway-test');
-  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando (gerando PIX de R$0,01)…</div>';
-  fetch('/admin/api/billing-config/test',{method:'POST'})
+  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando '+metodo.toUpperCase()+' (cobrança de R$ 1,00)…</div>';
+  fetch('/admin/api/billing-config/test?method='+metodo,{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
-      if(d.ok){ box.innerHTML='<div style="color:var(--green);font-size:.85em;padding:10px;background:rgba(37,211,102,.08);border-radius:8px;border:1px solid rgba(37,211,102,.25)">✅ Credenciais OK — o gateway gerou um PIX de teste com sucesso.</div>'; }
-      else { box.innerHTML='<div style="color:#fca5a5;font-size:.82em;padding:10px;background:rgba(248,113,113,.08);border-radius:8px;border:1px solid rgba(248,113,113,.25)">❌ '+(d.message||d.error||'Falha')+(d.response_code?' (código '+d.response_code+')':'')+'<div style="color:var(--dim);font-size:.9em;margin-top:6px;font-family:monospace;word-break:break-all">'+(d.raw||'').slice(0,300)+'</div></div>'; }
+      if(d.ok){
+        box.innerHTML='<div style="color:var(--green);font-size:.85em;padding:12px;background:rgba(37,211,102,.08);border-radius:10px;border:1px solid rgba(37,211,102,.25)">'+
+          '<b>✅ '+metodo.toUpperCase()+' OK</b> — o gateway gerou a cobrança com sucesso.'+
+          '<div style="color:var(--dim);margin-top:6px">processador '+(d.processor_id||'?')+' · ambiente '+(d.environment||'?')+'</div></div>';
+        return;
+      }
+      box.innerHTML='<div style="font-size:.82em;padding:12px;background:rgba(248,113,113,.08);border-radius:10px;border:1px solid rgba(248,113,113,.25)">'+
+        '<div style="color:#fca5a5;font-weight:700">❌ '+metodo.toUpperCase()+' recusado'+(d.response_code?' (código '+d.response_code+')':'')+'</div>'+
+        (d.message?'<div style="color:#fca5a5;margin-top:4px">'+d.message+'</div>':'')+
+        '<div style="color:var(--muted);margin-top:8px;line-height:1.5">'+(d.hint||'')+'</div>'+
+        '<div style="color:var(--dim);margin-top:8px">processador testado: <b>'+(d.processor_id||'?')+'</b> · ambiente: '+(d.environment||'?')+'</div>'+
+        '<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--dim)">Ver resposta bruta do gateway</summary>'+
+        '<div style="color:var(--dim);font-size:.9em;margin-top:6px;font-family:monospace;word-break:break-all;white-space:pre-wrap;max-height:220px;overflow:auto">'+(d.raw||'').replace(/</g,'&lt;')+'</div></details>'+
+      '</div>';
     })
     .catch(function(){ box.innerHTML='<div style="color:#fca5a5;font-size:.85em">Falha de conexão no teste.</div>'; });
 }

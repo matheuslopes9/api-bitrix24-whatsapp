@@ -145,25 +145,67 @@ func (h *handlers) adminSaveBillingConfig(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
-// POST /admin/api/billing-config/test — testa as credenciais gerando um PIX
-// de teste (R$0,01) e reportando se o gateway respondeu. Nao persiste charge.
+// POST /admin/api/billing-config/test?method=pix|boleto — testa as
+// credenciais gerando uma cobranca real de valor baixo e reportando o que o
+// gateway respondeu. Nao persiste charge. Devolve o XML bruto pra debug.
 func (h *handlers) adminTestBillingConfig(c *fiber.Ctx) error {
 	bc := h.effectiveBilling(c.Context())
 	if bc.MaxiPagoMerchantID == "" || bc.MaxiPagoMerchantKey == "" {
 		return c.Status(400).JSON(fiber.Map{"ok": false, "error": "merchant_id/key nao configurados"})
 	}
-	ref := "test-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
-	mpResp, raw, err := h.maxipagoCreatePix(c.Context(), bc, ref, "Teste UC Talk", 1, 600)
-	if err != nil {
-		return c.JSON(fiber.Map{"ok": false, "error": err.Error(), "raw": truncateStr(raw, 600)})
+	method := strings.ToLower(strings.TrimSpace(c.Query("method")))
+	if method == "" {
+		method = "pix"
 	}
-	ok := mpResp.ResponseCode == "0" && mpResp.pixPayload() != ""
+	ref := "test-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+
+	var mpResp *mpTransactionResponse
+	var raw string
+	var err error
+	// Valor de teste: R$ 1,00 (alguns processadores recusam centavos).
+	const testAmount = int64(100)
+	if method == "boleto" {
+		mpResp, raw, err = h.maxipagoCreateBoleto(c.Context(), bc, ref, "Teste UC Talk", "Teste",
+			testAmount, time.Now().AddDate(0, 0, 3))
+	} else {
+		mpResp, raw, err = h.maxipagoCreatePix(c.Context(), bc, ref, "Teste UC Talk", testAmount, 600)
+	}
+	if err != nil {
+		return c.JSON(fiber.Map{"ok": false, "method": method, "error": err.Error(), "raw": truncateStr(raw, 1500)})
+	}
+
+	payload := mpResp.pixPayload()
+	ok := mpResp.ResponseCode == "0" &&
+		((method == "pix" && payload != "") || (method == "boleto" && mpResp.BoletoURL != ""))
+
+	// Dica interpretando o erro pro admin saber o que fazer.
+	hint := ""
+	switch {
+	case ok:
+		hint = "Credenciais e processador OK."
+	case mpResp.ResponseCode == "1":
+		hint = "O gateway autenticou mas RECUSOU a transação. Normalmente significa que o " +
+			"processador (" + firstNonEmpty(bc.ProcessorPix, "?") + " para PIX) não está habilitado " +
+			"nesta conta, ou o meio de pagamento não está contratado. Confirme com o suporte maxiPago " +
+			"qual processorID usar na sua loja."
+	case strings.Contains(strings.ToLower(raw), "authentication") || mpResp.ResponseCode == "1024":
+		hint = "Falha de autenticação — confira Merchant ID e Merchant Key."
+	default:
+		hint = "Veja a resposta bruta abaixo e confirme com o suporte maxiPago."
+	}
+
 	return c.JSON(fiber.Map{
 		"ok":            ok,
+		"method":        method,
 		"response_code": mpResp.ResponseCode,
 		"message":       firstNonEmpty(mpResp.ResponseMessage, mpResp.ErrorMessage, mpResp.ProcessorMsg),
-		"pix_ok":        mpResp.pixPayload() != "",
-		"raw":           truncateStr(raw, 600),
+		"processor_msg": mpResp.ProcessorMsg,
+		"error_message": mpResp.ErrorMessage,
+		"order_id":      mpResp.OrderID,
+		"processor_id":  map[string]string{"pix": bc.ProcessorPix, "boleto": bc.ProcessorBoleto}[method],
+		"environment":   bc.MaxiPagoEnv,
+		"hint":          hint,
+		"raw":           truncateStr(raw, 1500),
 	})
 }
 
