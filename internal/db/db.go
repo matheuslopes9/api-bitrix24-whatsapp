@@ -639,6 +639,12 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE plan_definitions
 				ADD COLUMN IF NOT EXISTS is_trial_default BOOLEAN NOT NULL DEFAULT FALSE;
 
+			-- Remove o indice ANTES de qualquer INSERT/UPDATE. A versao
+			-- anterior desta migration criava um indice sobre a COLUNA, que
+			-- colide quando 2 planos ficam marcados — e travava o boot com
+			-- "duplicate key". Dropar primeiro deixa os ajustes rodarem.
+			DROP INDEX IF EXISTS idx_plan_trial_default;
+
 			-- Cria o plano Trial. active=FALSE porque ele NAO e' assinavel —
 			-- e' concedido automaticamente no install, nao aparece nos cards
 			-- de compra do cliente. Features iguais ao Basico por padrao;
@@ -652,15 +658,24 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				 0, 1, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 0, 7, TRUE)
 			ON CONFLICT (code) DO NOTHING;
 
-			-- Se ninguem estiver marcado como trial (ex: alguem desmarcou),
-			-- garante o 'trial' como default.
+			-- Corrige estado inconsistente de deploys anteriores: se mais de
+			-- um plano ficou marcado como trial, mantem so' o 'trial'.
+			UPDATE plan_definitions SET is_trial_default = FALSE
+			 WHERE is_trial_default AND code <> 'trial';
+
+			-- Se ninguem estiver marcado (ex: alguem desmarcou), garante o
+			-- 'trial' como default.
 			UPDATE plan_definitions SET is_trial_default = TRUE
 			 WHERE code = 'trial'
 			   AND NOT EXISTS (SELECT 1 FROM plan_definitions WHERE is_trial_default);
 
 			-- No maximo 1 plano marcado como default de trial.
+			-- Indexa uma CONSTANTE com filtro parcial: so' as linhas com
+			-- is_trial_default=TRUE entram no indice, e todas mapeiam pro
+			-- mesmo valor — logo, so' 1 linha pode existir. E' a regra que
+			-- queremos, sem colidir na criacao (ja limpamos duplicados acima).
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_trial_default
-				ON plan_definitions (is_trial_default) WHERE is_trial_default;
+				ON plan_definitions ((true)) WHERE is_trial_default;
 		`},
 		{"039_migrate_trial_tenants", `
 			-- Tenants que estao em trial ainda apontam pro plano 'basic'
