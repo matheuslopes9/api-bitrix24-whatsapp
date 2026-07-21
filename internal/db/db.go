@@ -529,7 +529,32 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 				CONSTRAINT billing_config_single CHECK (id = 1)
 			);
-			INSERT INTO billing_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+			-- Seed com as credenciais de SANDBOX ja conhecidas, pra tela vir
+			-- preenchida e o admin so' revisar/habilitar. enabled=FALSE por
+			-- seguranca: o admin liga conscientemente na tela Gateway.
+			-- ON CONFLICT DO NOTHING: nunca sobrescreve o que o admin ja salvou.
+			INSERT INTO billing_config
+				(id, provider, environment, merchant_id, merchant_key,
+				 processor_boleto, processor_pix, processor_card, activate_days, enabled)
+			VALUES
+				(1, 'maxipago', 'sandbox', '39041', 'e0kpdthr975n3xcv1r9lfg80',
+				 '12', '206', '1', 30, FALSE)
+			ON CONFLICT (id) DO NOTHING;
+		`},
+		{"035_billing_config_seed", `
+			-- Preenche as credenciais de sandbox SE a config ainda estiver
+			-- vazia. Cobre quem ja rodou a 034 antes deste seed existir (a
+			-- linha foi criada em branco). Nunca sobrescreve config existente:
+			-- so' age quando merchant_id esta vazio.
+			UPDATE billing_config
+			   SET merchant_id  = '39041',
+			       merchant_key = 'e0kpdthr975n3xcv1r9lfg80',
+			       environment  = COALESCE(NULLIF(environment,''), 'sandbox'),
+			       processor_boleto = COALESCE(NULLIF(processor_boleto,''), '12'),
+			       processor_pix    = COALESCE(NULLIF(processor_pix,''), '206'),
+			       processor_card   = COALESCE(NULLIF(processor_card,''), '1'),
+			       updated_at   = NOW()
+			 WHERE id = 1 AND COALESCE(merchant_id,'') = '';
 		`},
 		{"033_plan_definitions", `
 			-- Construtor de planos: cada plano e' uma linha configuravel pela
