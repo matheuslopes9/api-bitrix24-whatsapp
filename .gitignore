@@ -5,3 +5,9 @@ sessions/
 media/
 *.db
 *.log
+
+# Artefatos gerados / config local / lixo de build
+graphify-out/
+.claude/
+*.bak
+*.exe
