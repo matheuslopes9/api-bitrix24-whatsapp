@@ -745,6 +745,17 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE plan_definitions
 				ADD COLUMN IF NOT EXISTS accept_pix BOOLEAN NOT NULL DEFAULT TRUE;
 		`},
+		{"041b_bitrix_portals_installed_at", `
+			-- installed_at e' lido pelo código (admin: lista de portais, ORDER BY
+			-- installed_at) mas nunca foi criado em migration — em banco novo
+			-- (homolog) a coluna nao existe e o /admin/api/tenants da 500.
+			-- Adiciona idempotente; backfill com created_at pros registros antigos.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS installed_at TIMESTAMPTZ;
+			UPDATE bitrix_portals SET installed_at = created_at WHERE installed_at IS NULL;
+			ALTER TABLE bitrix_portals
+				ALTER COLUMN installed_at SET DEFAULT NOW();
+		`},
 		{"041_boleto_numeracao", `
 			-- "Nosso numero" do boleto Itau (carteira 109): precisa ser CRESCENTE
 			-- e UNICO por conta, sem repetir nem entre reinicios. Contador unico
