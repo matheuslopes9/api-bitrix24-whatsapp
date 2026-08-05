@@ -8,36 +8,44 @@ produção.
 Vários segredos foram expostos durante o desenvolvimento (chat, envs de
 homolog). **Rotacionar TODOS antes de ir a produção** e nunca commitar:
 
-- [ ] `ADMIN_PASSWORD` (estava `admin`)
-- [ ] `POSTGRES_PASSWORD`
+- [ ] `ADMIN_PASSWORD`
+- [ ] `POSTGRES_PASSWORD`, `REDIS_PASSWORD`
 - [ ] `BITRIX_CLIENT_SECRET`
 - [ ] `APP_SECRET`
-- [ ] MaxiPago `MerchantKey`
-- [ ] Credenciais do Portal Sandbox MaxiPago
-- [ ] Senha do servidor de faturamento (Itaú) — foi exposta; trocar
-      independentemente
+- [ ] `ITAU_CLIENT_SECRET` — foi manuseado no setup; rotacionar via gerente antes de prod
+- [ ] Token GitHub PAT exposto no chat — **revogar** em github.com/settings/tokens
+- [ ] Senha do servidor de faturamento — exposta no chat; trocar independentemente
 
-**Nota:** o `.env` e `CREDENCIAIS.md` **não** devem conter segredos reais em
-commits. Manter em `.gitignore` e usar env do EasyPanel.
+**Nota:** o `.env` e os certificados (`itau.crt`/`itau.key`) **nunca** vão pro
+git — estão no `.gitignore` (`faturamento/`, `*.key`, `*.crt`, `certs/`). Usar
+env do EasyPanel + volume pros certificados.
 
 **Regra do EasyPanel:** senhas **não podem conter `#`** — o EasyPanel interpreta
 como comentário e trunca o valor.
 
-## 🟡 MaxiPago (pagamentos)
+## 🟢 Pagamentos — Itaú (PIX + Boleto)
 
-- [x] IP `187.110.174.122/32` no allowlist (**feito**)
-- [ ] **Testar boleto** — admin → Gateway → Testar gateway. Com o IP liberado,
-      deve sair do `DECLINED (1)`. Este teste valida a integração de ponta.
-- [ ] **Credencial PIX do Itaú** — Chave PIX + Client ID + Token, da aplicação
-      **PIX Recebimentos** (escopo `cob.write`). Processo bancário com o gerente
-      Itaú. Credencial de outro sistema (faturamento/boleto) não serve.
-- [ ] Registrar URL de postback no portal MaxiPago:
-      `https://uctalk-homolog-connector.omva7z.easypanel.host/billing/maxipago/postback`
-- [ ] Confirmar URL do **SmartPage** (checkout hospedado) com o suporte — destrava
-      pagamento por cartão de forma PCI-safe.
+**Estado:** código completo e commitado. Checkout usa Itaú direto pros dois
+métodos. MaxiPago aposentada (código morto, limpeza na fase 2).
 
-**Caminho de venda que já funciona sem essas pendências:** boleto (assim que o
-teste passar).
+### O que falta pra funcionar em homologação
+- [x] Cliente PIX + Boleto Itaú implementados
+- [x] Certificado da empresa já existe (`faturamento/app/certs/`, válido 2027)
+- [x] Produto PIX habilitado pelo gerente
+- [ ] **Copiar** `itau.crt`/`itau.key` pro volume `/app/certs/` do EasyPanel
+- [ ] **Setar** as envs `ITAU_*` (secret vem de `faturamento/app/.env`)
+- [ ] **Cadastrar webhook** no Itaú: `https://SEU-DOMINIO/billing/itau` (SEM `/pix`)
+- [ ] **Validar mTLS do webhook** atrás do Traefik/EasyPanel (pode precisar ajuste)
+- [ ] Confirmar **DNS de homologação** com o gerente (pra `ITAU_ENV=sandbox`);
+      sem ele, teste roda em `producao` — **PIX/boleto reais** (usar R$1 e
+      `ITAU_ETAPA=validacao` pro boleto não emitir de verdade)
+
+### ⚠️ Sobre testar em homologação
+Não há sandbox Itaú configurado (falta o DNS). Então:
+- **Boleto:** `ITAU_ETAPA=validacao` → valida mas não emite real. Seguro.
+- **PIX:** `ITAU_ENV=producao` → **cobrança real**. Testar com R$1, QR não circula.
+
+Ver setup completo em [07-integracao-pix-itau.md](07-integracao-pix-itau.md).
 
 ## 🟡 Bitrix (ambiente de teste)
 
