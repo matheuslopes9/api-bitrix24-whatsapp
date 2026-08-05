@@ -88,5 +88,7 @@ func planDefToClient(p *db.PlanDefinition) map[string]interface{} {
 		"feat_sms":         p.FeatSMS,
 		"feat_reports":     p.FeatReports,
 		"is_pro":           p.IsPro,
+		"accept_boleto":    p.AcceptBoleto,
+		"accept_pix":       p.AcceptPix,
 	}
 }

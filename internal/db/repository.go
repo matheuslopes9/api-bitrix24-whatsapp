@@ -2772,6 +2772,8 @@ type PlanDefinition struct {
 	SortOrder       int       `json:"sort_order"`
 	TrialDays       int       `json:"trial_days"`        // duracao do teste deste plano
 	IsTrialDefault  bool      `json:"is_trial_default"`  // plano dado a novos tenants
+	AcceptBoleto    bool      `json:"accept_boleto"`     // checkout oferece boleto
+	AcceptPix       bool      `json:"accept_pix"`        // checkout oferece PIX
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -2780,6 +2782,7 @@ const planDefCols = `code, name, description, price_cents, max_sessions,
 	feat_templates, feat_automations, feat_sms, feat_reports,
 	is_pro, active, sort_order,
 	COALESCE(trial_days,0), COALESCE(is_trial_default,FALSE),
+	COALESCE(accept_boleto,TRUE), COALESCE(accept_pix,TRUE),
 	created_at, updated_at`
 
 func scanPlanDef(row interface {
@@ -2790,6 +2793,7 @@ func scanPlanDef(row interface {
 		&p.FeatTemplates, &p.FeatAutomations, &p.FeatSMS, &p.FeatReports,
 		&p.IsPro, &p.Active, &p.SortOrder,
 		&p.TrialDays, &p.IsTrialDefault,
+		&p.AcceptBoleto, &p.AcceptPix,
 		&p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -2854,8 +2858,9 @@ func (r *Repository) UpsertPlanDefinition(ctx context.Context, p *PlanDefinition
 		INSERT INTO plan_definitions
 			(code, name, description, price_cents, max_sessions,
 			 feat_templates, feat_automations, feat_sms, feat_reports,
-			 is_pro, active, sort_order, trial_days, is_trial_default, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+			 is_pro, active, sort_order, trial_days, is_trial_default,
+			 accept_boleto, accept_pix, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			name=EXCLUDED.name, description=EXCLUDED.description,
 			price_cents=EXCLUDED.price_cents, max_sessions=EXCLUDED.max_sessions,
@@ -2863,10 +2868,13 @@ func (r *Repository) UpsertPlanDefinition(ctx context.Context, p *PlanDefinition
 			feat_sms=EXCLUDED.feat_sms, feat_reports=EXCLUDED.feat_reports,
 			is_pro=EXCLUDED.is_pro, active=EXCLUDED.active,
 			sort_order=EXCLUDED.sort_order, trial_days=EXCLUDED.trial_days,
-			is_trial_default=EXCLUDED.is_trial_default, updated_at=NOW()`,
+			is_trial_default=EXCLUDED.is_trial_default,
+			accept_boleto=EXCLUDED.accept_boleto, accept_pix=EXCLUDED.accept_pix,
+			updated_at=NOW()`,
 		p.Code, p.Name, p.Description, p.PriceCents, p.MaxSessions,
 		p.FeatTemplates, p.FeatAutomations, p.FeatSMS, p.FeatReports,
-		p.IsPro, p.Active, p.SortOrder, p.TrialDays, p.IsTrialDefault); err != nil {
+		p.IsPro, p.Active, p.SortOrder, p.TrialDays, p.IsTrialDefault,
+		p.AcceptBoleto, p.AcceptPix); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

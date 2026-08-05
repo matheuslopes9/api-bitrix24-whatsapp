@@ -735,6 +735,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			CREATE INDEX IF NOT EXISTS idx_billing_charges_domain ON billing_charges (domain);
 			CREATE INDEX IF NOT EXISTS idx_billing_charges_status ON billing_charges (status);
 		`},
+		{"040_plan_payment_methods", `
+			-- Formas de pagamento aceitas POR PLANO (configuravel no admin).
+			-- Default: boleto ligado (ja funciona), PIX ligado por padrao tambem
+			-- — o checkout so' oferece PIX se o gateway estiver configurado, entao
+			-- ligar aqui e' seguro. O admin desliga por plano se quiser.
+			ALTER TABLE plan_definitions
+				ADD COLUMN IF NOT EXISTS accept_boleto BOOLEAN NOT NULL DEFAULT TRUE;
+			ALTER TABLE plan_definitions
+				ADD COLUMN IF NOT EXISTS accept_pix BOOLEAN NOT NULL DEFAULT TRUE;
+		`},
 	}
 
 	for _, m := range migrations {

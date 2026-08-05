@@ -11,3 +11,14 @@ graphify-out/
 .claude/
 *.bak
 *.exe
+
+# Projeto de faturamento (contém certificados/chaves bancárias reais — NUNCA commitar)
+faturamento/
+# Exemplos de código do Itaú (referência local, não faz parte do app)
+certificado-dinamico/
+# Qualquer material sensível de certificado, onde quer que apareça
+*.key
+*.pfx
+*.crt
+*.pem
+certs/

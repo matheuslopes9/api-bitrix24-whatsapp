@@ -813,7 +813,7 @@ function renderPlanDefs(){
 function novoPlano(){ abrirPlanoModal(null); }
 function editarPlano(code){ var p=PLANDEFS.filter(function(x){return x.code===code;})[0]; abrirPlanoModal(p); }
 function abrirPlanoModal(p){
-  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99,trial_days:0,is_trial_default:false};
+  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99,trial_days:0,is_trial_default:false,accept_boleto:true,accept_pix:true};
   var ov=document.createElement('div');
   ov.id='plano-modal';
   ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.8);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
@@ -842,6 +842,11 @@ function abrirPlanoModal(p){
     '<input class="dominput" id="pd-trialdays" type="number" min="0" value="'+(p.trial_days||0)+'" style="margin:2px 0 4px">'+
     '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Ao marcar acima, todo cliente novo entra neste plano por esses dias. Só um plano pode ser o de teste.</div>'+
     '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
+    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 6px;text-transform:uppercase;letter-spacing:.05em">Formas de pagamento</div>'+
+    chk('pd-boleto',p.accept_boleto!==false,'Aceita Boleto')+
+    chk('pd-pix',p.accept_pix!==false,'Aceita PIX')+
+    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Controla quais métodos aparecem no checkout deste plano. O PIX só é oferecido se o gateway PIX estiver configurado.</div>'+
+    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
     chk('pd-pro',p.is_pro,'Marcar como plano "Pro" (rótulo)')+
     chk('pd-active',p.active,'Disponível para assinatura (aparece nos cards do cliente)')+
     '<div class="row" style="margin-top:18px;justify-content:flex-end">'+
@@ -867,6 +872,8 @@ function salvarPlano(isNew){
     active:g('pd-active').checked,
     trial_days:parseInt(g('pd-trialdays').value||'0',10),
     is_trial_default:g('pd-trialdef').checked,
+    accept_boleto:g('pd-boleto').checked,
+    accept_pix:g('pd-pix').checked,
     sort_order:99
   };
   if(!body.code||!body.name){toast('Código e nome obrigatórios',false);return;}
