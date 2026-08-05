@@ -273,7 +273,9 @@ func (h *handlers) maxipagoCreatePix(ctx context.Context, bc config.BillingConfi
 // Cria a cobranca do plano Pro no maxiPago e devolve a URL do boleto.
 // Requer cookie tenant (requireTenantOrAdmin) — o domain vem do contexto.
 func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
-	if !h.maxipagoConfigured(c.Context()) {
+	// Gateway disponivel se o MaxiPago (boleto/cartao) OU o Itaú (PIX) estao
+	// configurados. So' bloqueia se NENHUM dos dois existe.
+	if !h.maxipagoConfigured(c.Context()) && !h.itauPIXConfigured() {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "gateway de pagamento nao configurado — entre em contato com o comercial UC Technology",
 			"code":  "billing_not_configured",
@@ -358,6 +360,66 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 
 	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	ctx := c.Context()
+
+	// ─── PIX direto Itaú ───────────────────────────────────────────────
+	// Se o método é PIX e o Itaú está configurado, cobra pelo banco direto
+	// (não pelo MaxiPago). Boleto sempre segue pelo MaxiPago abaixo.
+	if method == "pix" && h.itauPIXConfigured() {
+		valorReais := fmt.Sprintf("%d.%02d", amount/100, amount%100)
+		copyPaste, qrBase64, ierr := h.itauPIXCharge(ctx, ref, planLabel, valorReais)
+		if ierr != nil {
+			h.log.Error("billing: itau PIX falhou",
+				zap.String("domain", domain), zap.Error(ierr))
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+				"error": "falha ao gerar PIX no Itaú: " + ierr.Error(),
+			})
+		}
+		if copyPaste == "" {
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+				"error": "Itaú não retornou o copia-e-cola do PIX",
+			})
+		}
+		charge := &db.BillingCharge{
+			ID:              uuid.New(),
+			Domain:          domain,
+			Plan:            plan,
+			Method:          "pix",
+			AmountCents:     amount,
+			ReferenceNum:    ref,
+			MPTransactionID: itauTxidFromRef(ref), // txid — o webhook reconcilia por ele
+			BoletoURL:       copyPaste,            // reaproveita o campo pro copia-e-cola
+		}
+		if err := h.repo.CreateBillingCharge(ctx, charge); err != nil {
+			h.log.Error("billing: persistir cobranca PIX Itaú falhou", zap.Error(err))
+		}
+		if couponCode != "" {
+			if err := h.repo.RedeemCoupon(ctx, couponCode, domain, plan, couponDiscount, 0); err != nil {
+				h.log.Warn("billing: registrar uso do cupom (PIX Itaú) falhou",
+					zap.String("code", couponCode), zap.Error(err))
+			}
+		}
+		h.log.Info("billing: PIX Itaú criado",
+			zap.String("domain", domain), zap.String("reference", ref),
+			zap.Int64("amount_cents", amount))
+		out := fiber.Map{
+			"ok":             true,
+			"plan":           plan,
+			"method":         "pix",
+			"reference_num":  ref,
+			"amount_cents":   amount,
+			"pix_copy_paste": copyPaste,
+			"hint":           "Pague o PIX pelo app do seu banco. A liberação é automática em segundos.",
+		}
+		if qrBase64 != "" {
+			out["pix_qr_base64"] = qrBase64
+		}
+		if couponCode != "" {
+			out["coupon"] = couponCode
+			out["original_cents"] = originalAmount
+			out["discount_cents"] = couponDiscount
+		}
+		return c.JSON(out)
+	}
 
 	var mpResp *mpTransactionResponse
 	var raw string

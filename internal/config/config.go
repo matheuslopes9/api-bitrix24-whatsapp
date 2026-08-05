@@ -31,6 +31,18 @@ type BillingConfig struct {
 	BasicPriceCents     int    // MAXIPAGO_BASIC_PRICE_CENTS: preco do Basico em centavos
 	ProPriceCents       int    // MAXIPAGO_PRO_PRICE_CENTS: preco do Pro em centavos
 	ActivateDays        int    // MAXIPAGO_ACTIVATE_DAYS: dias liberados por pagamento
+
+	// ─── PIX direto Itaú (produto Recebimentos PIX / regulatorio-pix) ───
+	// Quando ITAU_CLIENT_ID esta setado, o metodo "pix" do checkout usa o Itau
+	// direto (mTLS) em vez do MaxiPago. Boleto continua no MaxiPago.
+	ItauClientID     string // ITAU_CLIENT_ID (tambem e' o CN do certificado)
+	ItauClientSecret string // ITAU_CLIENT_SECRET
+	ItauAPIKey       string // ITAU_API_KEY (x-itau-apikey; se vazio, usa o ClientID)
+	ItauChavePIX     string // ITAU_CHAVE_PIX: chave que recebe os pagamentos
+	ItauCertPath     string // ITAU_CERT_PATH (default /app/certs/itau.crt)
+	ItauKeyPath      string // ITAU_KEY_PATH (default /app/certs/itau.key)
+	ItauEnv          string // ITAU_ENV: producao | sandbox (default sandbox)
+	ItauBaseURL      string // ITAU_BASE_URL: override do endpoint (DNS de homolog)
 }
 
 type AppConfig struct {
@@ -151,6 +163,15 @@ func Load() (*Config, error) {
 			BasicPriceCents:     getIntWithDefault("MAXIPAGO_BASIC_PRICE_CENTS", 9900),
 			ProPriceCents:       getIntWithDefault("MAXIPAGO_PRO_PRICE_CENTS", 19900),
 			ActivateDays:        getIntWithDefault("MAXIPAGO_ACTIVATE_DAYS", 30),
+
+			ItauClientID:     viper.GetString("ITAU_CLIENT_ID"),
+			ItauClientSecret: viper.GetString("ITAU_CLIENT_SECRET"),
+			ItauAPIKey:       viper.GetString("ITAU_API_KEY"),
+			ItauChavePIX:     viper.GetString("ITAU_CHAVE_PIX"),
+			ItauCertPath:     getEnvWithDefault("ITAU_CERT_PATH", "/app/certs/itau.crt"),
+			ItauKeyPath:      getEnvWithDefault("ITAU_KEY_PATH", "/app/certs/itau.key"),
+			ItauEnv:          getEnvWithDefault("ITAU_ENV", "sandbox"),
+			ItauBaseURL:      viper.GetString("ITAU_BASE_URL"),
 		},
 	}
 

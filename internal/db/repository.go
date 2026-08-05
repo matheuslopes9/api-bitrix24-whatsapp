@@ -2371,6 +2371,24 @@ func (r *Repository) GetBillingChargeByReference(ctx context.Context, ref string
 	return &c, nil
 }
 
+// GetBillingChargeByTxid busca uma cobranca pelo txid do PIX Itaú, guardado no
+// campo mp_transaction_id (reaproveitado — cobrancas Itaú nao usam MaxiPago).
+// Usado pelo webhook do Itaú, que reconcilia por txid (nao conhece nosso ref).
+func (r *Repository) GetBillingChargeByTxid(ctx context.Context, txid string) (*BillingCharge, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, plan, method, amount_cents, reference_num,
+		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
+		FROM billing_charges WHERE mp_transaction_id = $1 AND method = 'pix'
+		ORDER BY created_at DESC LIMIT 1`, txid)
+	var c BillingCharge
+	if err := row.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
+		&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
+		&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // MarkBillingChargePaid marca a cobranca como paga (idempotente) e grava o
 // payload bruto do postback pra auditoria/tuning.
 func (r *Repository) MarkBillingChargePaid(ctx context.Context, ref, rawPayload string) (bool, error) {

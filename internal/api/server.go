@@ -185,6 +185,9 @@ func New(
 	// Postback do maxiPago (publico — o gateway chama). Configurar no portal
 	// maxiPago: Configuracoes > URL de notificacao apontando pra este path.
 	app.Post("/billing/maxipago/postback", h.billingMaxipagoPostback)
+	// Webhook PIX Itaú: cadastre no Itaú a URL SEM o sufixo /pix
+	// (ex: https://SEU-DOMINIO/billing/itau) — o banco acrescenta /pix.
+	app.Post("/billing/itau/pix", h.billingItauPixWebhook)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
 	bx.Get("/crm/tab", h.bitrixCRMTab)
