@@ -1,11 +1,33 @@
-# Integração PIX direto Itaú (Recebimentos PIX)
+# Integração Itaú — PIX + Boleto (MaxiPago aposentada)
 
-O **PIX** dos planos é cobrado **direto no Itaú** (produto "Recebimentos PIX" /
-API `regulatorio-pix`), não pelo MaxiPago. **Boleto continua no MaxiPago.**
+**Todo o pagamento dos planos passou para o Itaú direto:**
+- **PIX** → produto "Recebimentos PIX" / API `regulatorio-pix`
+- **Boleto** → produto "Cash Management V2" (Emissão de Boletos)
 
-**Decisão:** o PIX pelo MaxiPago nunca funcionou (dependia de credencial Itaú
-que a MaxiPago não repassou). O Itaú direto é melhor: sem intermediário, sem
-taxa da MaxiPago no PIX, e a empresa já tem certificado + conta.
+**A MaxiPago foi aposentada.** O código dela ainda existe (funções `maxipago*`
+em billing.go, usadas só pelo teste de gateway do admin), mas o checkout **não
+a usa mais** — tanto PIX quanto boleto vão pelo Itaú. O postback MaxiPago e sua
+rota foram removidos.
+
+**Decisão:** o Itaú já dá boleto E PIX com o mesmo certificado; o MaxiPago virou
+intermediário redundante (e o PIX dele nunca funcionou). Simplificou tudo.
+
+## Boleto Itaú (Cash Management)
+
+Emissão: `POST api.itau.com.br/cash_management/v2/boletos` (corpo envolto em
+`{data:{...}}`). Código: [internal/itau/boleto.go](../../internal/itau/boleto.go).
+
+**⚠️ "Nosso número" crescente e único (carteira 109):** cada boleto exige um
+número sequencial que nunca se repete, nem entre reinícios. Implementado com a
+tabela `boleto_numeracao` (migration 041) + `ProximoNossoNumero` (UPDATE ...
+RETURNING atômico — serializa concorrência no Postgres).
+
+**Dados da conta** (já conhecidos, defaults no config): agência **1565**, conta
+**0099415** DAC **7**, carteira **109**, espécie **08**. Sobrescrevíveis por env.
+
+---
+
+## PIX Itaú (Recebimentos PIX)
 
 ## Como funciona
 
@@ -63,8 +85,17 @@ ITAU_CHAVE_PIX=<chave PIX que recebe>
 ITAU_CERT_PATH=/app/certs/itau.crt     # default
 ITAU_KEY_PATH=/app/certs/itau.key      # default
 ITAU_ENV=producao                      # ou sandbox
-ITAU_BASE_URL=<DNS de homolog, se sandbox>   # opcional
+ITAU_BASE_URL=<DNS de homolog, se sandbox>   # opcional (PIX)
 ITAU_API_KEY=<x-itau-apikey, se diferente do client_id>  # opcional
+
+# Boleto (defaults já preenchidos com a conta conhecida — só ajustar se mudar):
+ITAU_AGENCIA=1565
+ITAU_CONTA=0099415
+ITAU_CONTA_DAC=7
+ITAU_CARTEIRA=109
+ITAU_ESPECIE=08
+ITAU_ETAPA=efetivacao                  # 'validacao' pra teste que não emite real
+ITAU_BOLETO_URL=<base cash_management, se homolog>   # opcional
 ```
 
 Quando `ITAU_CLIENT_ID` está setado, o método `pix` do checkout usa o Itaú

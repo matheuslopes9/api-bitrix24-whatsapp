@@ -2371,6 +2371,19 @@ func (r *Repository) GetBillingChargeByReference(ctx context.Context, ref string
 	return &c, nil
 }
 
+// ProximoNossoNumero incrementa e devolve o proximo "nosso numero" do boleto
+// Itau (carteira 109 exige crescente e unico). Atomico: UPDATE ... RETURNING
+// serializa concorrencia no proprio Postgres, sem risco de repetir.
+func (r *Repository) ProximoNossoNumero(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE boleto_numeracao
+		   SET ultimo_numero = ultimo_numero + 1, updated_at = NOW()
+		 WHERE id = 1
+		RETURNING ultimo_numero`).Scan(&n)
+	return n, err
+}
+
 // GetBillingChargeByTxid busca uma cobranca pelo txid do PIX Itaú, guardado no
 // campo mp_transaction_id (reaproveitado — cobrancas Itaú nao usam MaxiPago).
 // Usado pelo webhook do Itaú, que reconcilia por txid (nao conhece nosso ref).

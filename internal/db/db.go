@@ -745,6 +745,19 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE plan_definitions
 				ADD COLUMN IF NOT EXISTS accept_pix BOOLEAN NOT NULL DEFAULT TRUE;
 		`},
+		{"041_boleto_numeracao", `
+			-- "Nosso numero" do boleto Itau (carteira 109): precisa ser CRESCENTE
+			-- e UNICO por conta, sem repetir nem entre reinicios. Contador unico
+			-- (id=1) incrementado transacionalmente (UPDATE ... RETURNING).
+			CREATE TABLE IF NOT EXISTS boleto_numeracao (
+				id          INT PRIMARY KEY DEFAULT 1,
+				ultimo_numero BIGINT NOT NULL DEFAULT 0,
+				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				CONSTRAINT boleto_numeracao_single CHECK (id = 1)
+			);
+			INSERT INTO boleto_numeracao (id, ultimo_numero) VALUES (1, 0)
+				ON CONFLICT (id) DO NOTHING;
+		`},
 	}
 
 	for _, m := range migrations {

@@ -25,6 +25,29 @@ func (h *handlers) itauPIXConfigured() bool {
 	return b.ItauClientID != "" && b.ItauClientSecret != "" && b.ItauChavePIX != ""
 }
 
+// itauBoletoConfig monta a config de boleto a partir da config (env).
+func (h *handlers) itauBoletoConfig() itau.BoletoConfig {
+	b := h.cfg.Billing
+	return itau.BoletoConfig{
+		BaseURL:  b.ItauBoletoURL,
+		Agencia:  b.ItauAgencia,
+		Conta:    b.ItauConta,
+		ContaDAC: b.ItauContaDAC,
+		Carteira: b.ItauCarteira,
+		Especie:  b.ItauEspecie,
+		Etapa:    b.ItauEtapa,
+	}
+}
+
+// itauBoletoConfigured — boleto Itau precisa da mesma auth do PIX (client id +
+// secret + certificado) mais os dados de conta. Como conta tem defaults, basta
+// checar auth.
+func (h *handlers) itauBoletoConfigured() bool {
+	b := h.cfg.Billing
+	return b.ItauClientID != "" && b.ItauClientSecret != "" &&
+		b.ItauAgencia != "" && b.ItauConta != ""
+}
+
 // newItauClient monta o cliente Itau a partir da config (env). Retorna erro se
 // o certificado for exigido (producao) e nao existir.
 func (h *handlers) newItauClient() (*itau.Client, error) {
@@ -65,6 +88,51 @@ func (h *handlers) itauPIXCharge(ctx context.Context, ref, planLabel, valorReais
 		}
 	}
 	return copyPaste, qrBase64, nil
+}
+
+// itauBoletoResult reune o retorno util de um boleto pro checkout.
+type itauBoletoResult struct {
+	LinhaDigitavel string
+	CodigoBarras   string
+	NossoNumero    string
+	PixCopiaCola   string // se Bolecode
+}
+
+// itauBoletoCharge emite um boleto no Itau. Gera o "nosso numero" crescente/
+// unico (carteira 109) e registra. payerName/payerDoc identificam o pagador.
+func (h *handlers) itauBoletoCharge(ctx context.Context, ref, planLabel string, amount int64, payerName, payerDoc string, vencimento string) (*itauBoletoResult, error) {
+	cli, err := h.newItauClient()
+	if err != nil {
+		return nil, err
+	}
+	nn, err := h.repo.ProximoNossoNumero(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao gerar nosso numero: %w", err)
+	}
+
+	tipoDoc := "CNPJ"
+	if len(strings.ReplaceAll(payerDoc, ".", "")) <= 11 && payerDoc != "" {
+		tipoDoc = "CPF"
+	}
+
+	bol, err := cli.RegistrarBoleto(ctx, h.itauBoletoConfig(), itau.EntradaBoleto{
+		PagadorTipoDoc: tipoDoc,
+		PagadorDoc:     payerDoc,
+		PagadorNome:    payerName,
+		ValorCentavos:  amount,
+		Vencimento:     vencimento,
+		SeuNumero:      ref,
+		NossoNumero:    fmt.Sprintf("%d", nn),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &itauBoletoResult{
+		LinhaDigitavel: bol.LinhaDigitavel,
+		CodigoBarras:   bol.CodigoBarras,
+		NossoNumero:    bol.NossoNumero,
+		PixCopiaCola:   bol.PixCopiaCola,
+	}, nil
 }
 
 // itauTxidFromRef normaliza um reference "uctalk-<16hex>" num txid valido do

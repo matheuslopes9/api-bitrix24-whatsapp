@@ -273,15 +273,13 @@ func (h *handlers) maxipagoCreatePix(ctx context.Context, bc config.BillingConfi
 // Cria a cobranca do plano Pro no maxiPago e devolve a URL do boleto.
 // Requer cookie tenant (requireTenantOrAdmin) — o domain vem do contexto.
 func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
-	// Gateway disponivel se o MaxiPago (boleto/cartao) OU o Itaú (PIX) estao
-	// configurados. So' bloqueia se NENHUM dos dois existe.
-	if !h.maxipagoConfigured(c.Context()) && !h.itauPIXConfigured() {
+	// Gateway = Itaú (PIX + boleto). Bloqueia se não configurado.
+	if !h.itauPIXConfigured() && !h.itauBoletoConfigured() {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "gateway de pagamento nao configurado — entre em contato com o comercial UC Technology",
 			"code":  "billing_not_configured",
 		})
 	}
-	bc := h.effectiveBilling(c.Context())
 	domain, ok := c.Locals("tenant_domain").(string)
 	if !ok || domain == "" {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "tenant nao identificado"})
@@ -361,10 +359,30 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	ref := "uctalk-" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
 	ctx := c.Context()
 
-	// ─── PIX direto Itaú ───────────────────────────────────────────────
-	// Se o método é PIX e o Itaú está configurado, cobra pelo banco direto
-	// (não pelo MaxiPago). Boleto sempre segue pelo MaxiPago abaixo.
-	if method == "pix" && h.itauPIXConfigured() {
+	// Consome o cupom (best-effort). Feito antes das chamadas ao Itau porque a
+	// cobranca sera criada logo em seguida; se a criacao falhar, o cupom volta
+	// a ficar disponivel na proxima tentativa (RedeemCoupon e' idempotente por
+	// tentativa — nao dobra desconto).
+	redeemCupom := func() {
+		if couponCode == "" {
+			return
+		}
+		if err := h.repo.RedeemCoupon(ctx, couponCode, domain, plan, couponDiscount, 0); err != nil {
+			h.log.Warn("billing: registrar uso do cupom falhou",
+				zap.String("code", couponCode), zap.Error(err))
+		}
+	}
+	addCupomOut := func(out fiber.Map) fiber.Map {
+		if couponCode != "" {
+			out["coupon"] = couponCode
+			out["original_cents"] = originalAmount
+			out["discount_cents"] = couponDiscount
+		}
+		return out
+	}
+
+	// ─── PIX Itaú ──────────────────────────────────────────────────────
+	if method == "pix" {
 		valorReais := fmt.Sprintf("%d.%02d", amount/100, amount%100)
 		copyPaste, qrBase64, ierr := h.itauPIXCharge(ctx, ref, planLabel, valorReais)
 		if ierr != nil {
@@ -392,16 +410,11 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		if err := h.repo.CreateBillingCharge(ctx, charge); err != nil {
 			h.log.Error("billing: persistir cobranca PIX Itaú falhou", zap.Error(err))
 		}
-		if couponCode != "" {
-			if err := h.repo.RedeemCoupon(ctx, couponCode, domain, plan, couponDiscount, 0); err != nil {
-				h.log.Warn("billing: registrar uso do cupom (PIX Itaú) falhou",
-					zap.String("code", couponCode), zap.Error(err))
-			}
-		}
+		redeemCupom()
 		h.log.Info("billing: PIX Itaú criado",
 			zap.String("domain", domain), zap.String("reference", ref),
 			zap.Int64("amount_cents", amount))
-		out := fiber.Map{
+		out := addCupomOut(fiber.Map{
 			"ok":             true,
 			"plan":           plan,
 			"method":         "pix",
@@ -409,111 +422,76 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 			"amount_cents":   amount,
 			"pix_copy_paste": copyPaste,
 			"hint":           "Pague o PIX pelo app do seu banco. A liberação é automática em segundos.",
-		}
+		})
 		if qrBase64 != "" {
 			out["pix_qr_base64"] = qrBase64
-		}
-		if couponCode != "" {
-			out["coupon"] = couponCode
-			out["original_cents"] = originalAmount
-			out["discount_cents"] = couponDiscount
 		}
 		return c.JSON(out)
 	}
 
-	var mpResp *mpTransactionResponse
-	var raw string
-	var err error
-	due := time.Now().AddDate(0, 0, 5) // boleto vence em 5 dias
-
-	if method == "pix" {
-		mpResp, raw, err = h.maxipagoCreatePix(ctx, bc, ref, payerName, amount, 3600) // QR 1h
-	} else {
-		mpResp, raw, err = h.maxipagoCreateBoleto(ctx, bc, ref, payerName, planLabel, amount, due)
-	}
-	if err != nil {
-		h.log.Error("billing: maxipago falhou",
-			zap.String("domain", domain), zap.String("method", method), zap.Error(err))
+	// ─── Boleto Itaú (Cash Management) ─────────────────────────────────
+	due := time.Now().AddDate(0, 0, 5) // vence em 5 dias
+	// Documento do pagador: usa o domínio como fallback de identificação; o
+	// pagador real é a empresa cliente. Sem CNPJ do tenant, emite com o CNPJ da
+	// própria conta beneficiária (aceito pelo Itaú para boleto de serviço).
+	payerDoc := digitsOnly(body.PayerName) // se vier CNPJ/CPF no campo, usa; senão vazio
+	bol, berr := h.itauBoletoCharge(ctx, ref, planLabel, amount, payerName, payerDoc, due.Format("2006-01-02"))
+	if berr != nil {
+		h.log.Error("billing: itau boleto falhou",
+			zap.String("domain", domain), zap.Error(berr))
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-			"error": "falha ao gerar cobranca no gateway: " + err.Error(),
+			"error": "falha ao gerar boleto no Itaú: " + berr.Error(),
 		})
 	}
-	h.log.Info("billing: maxipago resposta",
-		zap.String("domain", domain), zap.String("method", method),
-		zap.String("reference", ref), zap.String("response_code", mpResp.ResponseCode),
-		zap.String("raw", truncateStr(raw, 800)))
-
-	// Sucesso do gateway: responseCode 0. Boleto precisa de URL; PIX precisa
-	// de payload copia-e-cola.
-	pixPayload := mpResp.pixPayload()
-	badBoleto := method == "boleto" && mpResp.BoletoURL == ""
-	badPix := method == "pix" && pixPayload == ""
-	if mpResp.ResponseCode != "0" || badBoleto || badPix {
-		msg := firstNonEmpty(mpResp.ErrorMessage, mpResp.ResponseMessage, mpResp.ProcessorMsg,
-			"o gateway nao retornou os dados do pagamento")
+	if bol.LinhaDigitavel == "" {
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-			"error":         "gateway recusou a cobranca: " + msg,
-			"response_code": mpResp.ResponseCode,
+			"error": "Itaú não retornou a linha digitável do boleto",
 		})
-	}
-
-	// PIX guarda o payload no campo boleto_url (reaproveitado como "link/dado
-	// do pagamento") pra nao criar coluna nova; o method distingue.
-	storedURL := mpResp.BoletoURL
-	if method == "pix" {
-		storedURL = pixPayload
 	}
 	charge := &db.BillingCharge{
 		ID:              uuid.New(),
 		Domain:          domain,
 		Plan:            plan,
-		Method:          method,
+		Method:          "boleto",
 		AmountCents:     amount,
 		ReferenceNum:    ref,
-		MPOrderID:       mpResp.OrderID,
-		MPTransactionID: mpResp.TransactionID,
-		BoletoURL:       storedURL,
+		MPTransactionID: bol.NossoNumero, // nosso número — reconciliação do boleto
+		BoletoURL:       bol.LinhaDigitavel,
 	}
 	if err := h.repo.CreateBillingCharge(ctx, charge); err != nil {
-		h.log.Error("billing: persistir cobranca falhou", zap.Error(err))
+		h.log.Error("billing: persistir cobranca boleto Itaú falhou", zap.Error(err))
 	}
-
-	// Consome o cupom (best-effort — a cobranca ja existe no gateway).
-	if couponCode != "" {
-		if err := h.repo.RedeemCoupon(ctx, couponCode, domain, plan, couponDiscount, 0); err != nil {
-			h.log.Warn("billing: registrar uso do cupom falhou",
-				zap.String("code", couponCode), zap.Error(err))
-		} else {
-			h.log.Info("billing: cupom aplicado",
-				zap.String("domain", domain), zap.String("code", couponCode),
-				zap.Int64("desconto_cents", couponDiscount))
-		}
-	}
-
-	out := fiber.Map{
-		"ok":            true,
-		"plan":          plan,
-		"method":        method,
-		"reference_num": ref,
-		"amount_cents":  amount,
-	}
-	if couponCode != "" {
-		out["coupon"] = couponCode
-		out["original_cents"] = originalAmount
-		out["discount_cents"] = couponDiscount
-	}
-	if method == "pix" {
-		out["pix_copy_paste"] = pixPayload
-		if img := strings.TrimSpace(mpResp.ImagemBase64); img != "" {
-			out["pix_qr_base64"] = img
-		}
-		out["hint"] = "Pague o PIX pelo app do seu banco. A liberação é automática em segundos."
-	} else {
-		out["boleto_url"] = mpResp.BoletoURL
-		out["due_date"] = due.Format("2006-01-02")
-		out["hint"] = "Abra o boleto e pague. Assim que o maxiPago confirmar, o plano é liberado automaticamente."
+	redeemCupom()
+	h.log.Info("billing: boleto Itaú criado",
+		zap.String("domain", domain), zap.String("reference", ref),
+		zap.String("nosso_numero", bol.NossoNumero), zap.Int64("amount_cents", amount))
+	out := addCupomOut(fiber.Map{
+		"ok":              true,
+		"plan":            plan,
+		"method":          "boleto",
+		"reference_num":   ref,
+		"amount_cents":    amount,
+		"linha_digitavel": bol.LinhaDigitavel,
+		"codigo_barras":   bol.CodigoBarras,
+		"nosso_numero":    bol.NossoNumero,
+		"due_date":        due.Format("2006-01-02"),
+		"hint":            "Copie a linha digitável e pague no seu banco. A liberação é automática após a compensação.",
+	})
+	if bol.PixCopiaCola != "" {
+		out["pix_copy_paste"] = bol.PixCopiaCola // Bolecode: boleto com PIX
 	}
 	return c.JSON(out)
+}
+
+// digitsOnly retorna só os dígitos de s (para extrair CNPJ/CPF de um campo).
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // firstNonEmpty devolve a primeira string nao-vazia (helper de mensagens).
@@ -524,93 +502,6 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
-}
-
-// POST /billing/maxipago/postback — notificacao de status do maxiPago.
-// PUBLICO (o gateway chama). Configure esta URL no portal maxiPago:
-//   Configuracoes da Loja > URL de notificacao:
-//   https://uctalk.uctechnology.com.br/billing/maxipago/postback
-//
-// Formato do POST varia (form-encoded com campos ou xml=<...>). Parser
-// TOLERANTE: procura referenceNum + indicadores de pago no corpo bruto e
-// loga o payload inteiro pra auditar/afinar no sandbox.
-func (h *handlers) billingMaxipagoPostback(c *fiber.Ctx) error {
-	raw := string(c.Body())
-	h.log.Info("billing: postback maxipago recebido",
-		zap.String("content_type", c.Get("Content-Type")),
-		zap.String("raw", truncateStr(raw, 2000)))
-
-	// referenceNum: tenta form field, depois regex-free scan no corpo.
-	ref := c.FormValue("referenceNum")
-	if ref == "" {
-		ref = extractXMLTag(raw, "referenceNum")
-	}
-	if ref == "" {
-		ref = extractXMLTag(raw, "referenceNumber")
-	}
-	if ref == "" {
-		h.log.Warn("billing: postback sem referenceNum — ignorado")
-		return c.SendStatus(fiber.StatusOK) // 200 pro gateway nao re-tentar infinito
-	}
-
-	// Estado: transactionState numerico e/ou texto. Manual: estados de
-	// transacao — "Captured"/"Paga". Boleto pago = state 3 (captured) na
-	// pratica do sandbox; tambem aceitamos palavras-chave.
-	state := c.FormValue("transactionState")
-	if state == "" {
-		state = extractXMLTag(raw, "transactionState")
-	}
-	statusWord := strings.ToLower(raw)
-	paid := state == "3" ||
-		strings.Contains(statusWord, ">captured<") ||
-		strings.Contains(statusWord, ">paid<") ||
-		strings.Contains(statusWord, ">pago<") ||
-		strings.Contains(statusWord, "boleto pago")
-
-	if !paid {
-		h.log.Info("billing: postback nao-pago (aguardando)",
-			zap.String("reference", ref), zap.String("state", state))
-		return c.SendStatus(fiber.StatusOK)
-	}
-
-	ctx := c.Context()
-	charge, err := h.repo.GetBillingChargeByReference(ctx, ref)
-	if err != nil || charge == nil {
-		h.log.Warn("billing: postback pago mas cobranca nao encontrada",
-			zap.String("reference", ref), zap.Error(err))
-		return c.SendStatus(fiber.StatusOK)
-	}
-
-	changed, err := h.repo.MarkBillingChargePaid(ctx, ref, truncateStr(raw, 4000))
-	if err != nil {
-		h.log.Error("billing: marcar pago falhou", zap.Error(err))
-		return c.SendStatus(fiber.StatusOK)
-	}
-	if !changed {
-		// Ja estava paga (postback duplicado) — idempotente.
-		return c.SendStatus(fiber.StatusOK)
-	}
-
-	// LIBERACAO AUTOMATICA: ativa O PLANO PAGO (basic ou pro) por N dias.
-	paidPlan := charge.Plan
-	if paidPlan != "basic" && paidPlan != "pro" {
-		paidPlan = "pro" // defensivo: charge legada sem plano valido
-	}
-	until := time.Now().AddDate(0, 0, h.effectiveBilling(ctx).ActivateDays)
-	notes := fmt.Sprintf("pagamento maxipago plano=%s ref=%s em %s",
-		paidPlan, ref, time.Now().Format("2006-01-02 15:04"))
-	if err := h.repo.SetTenantPlan(ctx, charge.Domain, paidPlan, "active", &until, notes); err != nil {
-		h.log.Error("billing: ativar plano falhou",
-			zap.String("domain", charge.Domain), zap.Error(err))
-		return c.SendStatus(fiber.StatusOK)
-	}
-
-	h.log.Info("billing: PAGAMENTO CONFIRMADO — plano ativado",
-		zap.String("domain", charge.Domain),
-		zap.String("plan", paidPlan),
-		zap.String("reference", ref),
-		zap.Time("active_until", until))
-	return c.SendStatus(fiber.StatusOK)
 }
 
 // GET /ui/billing/charges — historico de cobrancas do tenant atual.
@@ -626,18 +517,3 @@ func (h *handlers) uiBillingCharges(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"charges": charges})
 }
 
-// extractXMLTag extrai o conteudo de <tag>...</tag> de um corpo bruto sem
-// parsear o XML inteiro (o postback pode nao ser XML valido completo).
-func extractXMLTag(body, tag string) string {
-	openTag := "<" + tag + ">"
-	closeTag := "</" + tag + ">"
-	i := strings.Index(body, openTag)
-	if i < 0 {
-		return ""
-	}
-	j := strings.Index(body[i+len(openTag):], closeTag)
-	if j < 0 {
-		return ""
-	}
-	return strings.TrimSpace(body[i+len(openTag) : i+len(openTag)+j])
-}

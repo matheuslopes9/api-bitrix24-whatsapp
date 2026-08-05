@@ -42,7 +42,18 @@ type BillingConfig struct {
 	ItauCertPath     string // ITAU_CERT_PATH (default /app/certs/itau.crt)
 	ItauKeyPath      string // ITAU_KEY_PATH (default /app/certs/itau.key)
 	ItauEnv          string // ITAU_ENV: producao | sandbox (default sandbox)
-	ItauBaseURL      string // ITAU_BASE_URL: override do endpoint (DNS de homolog)
+	ItauBaseURL      string // ITAU_BASE_URL: override do endpoint PIX (DNS de homolog)
+
+	// ─── Boleto Itaú (Cash Management V2) ───
+	// Emissao de boleto pela conta PJ. Dados da conta ja' conhecidos (mesma
+	// integracao do faturamento); ficam como default mas sao sobrescreviveis.
+	ItauBoletoURL string // ITAU_BOLETO_URL: base cash_management (vazio => default producao)
+	ItauAgencia   string // ITAU_AGENCIA
+	ItauConta     string // ITAU_CONTA
+	ItauContaDAC  string // ITAU_CONTA_DAC
+	ItauCarteira  string // ITAU_CARTEIRA (109 confirmada pelo Itau)
+	ItauEspecie   string // ITAU_ESPECIE (08)
+	ItauEtapa     string // ITAU_ETAPA: validacao | efetivacao (real)
 }
 
 type AppConfig struct {
@@ -172,6 +183,14 @@ func Load() (*Config, error) {
 			ItauKeyPath:      getEnvWithDefault("ITAU_KEY_PATH", "/app/certs/itau.key"),
 			ItauEnv:          getEnvWithDefault("ITAU_ENV", "sandbox"),
 			ItauBaseURL:      viper.GetString("ITAU_BASE_URL"),
+
+			ItauBoletoURL: viper.GetString("ITAU_BOLETO_URL"),
+			ItauAgencia:   getEnvWithDefault("ITAU_AGENCIA", "1565"),
+			ItauConta:     getEnvWithDefault("ITAU_CONTA", "0099415"),
+			ItauContaDAC:  getEnvWithDefault("ITAU_CONTA_DAC", "7"),
+			ItauCarteira:  getEnvWithDefault("ITAU_CARTEIRA", "109"),
+			ItauEspecie:   getEnvWithDefault("ITAU_ESPECIE", "08"),
+			ItauEtapa:     getEnvWithDefault("ITAU_ETAPA", "efetivacao"),
 		},
 	}
 
