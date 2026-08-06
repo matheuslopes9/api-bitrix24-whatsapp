@@ -186,7 +186,10 @@ func New(
 	// maxiPago: Configuracoes > URL de notificacao apontando pra este path.
 	// Webhook PIX Itaú: cadastre no Itaú a URL SEM o sufixo /pix
 	// (ex: https://SEU-DOMINIO/billing/itau) — o banco acrescenta /pix.
+	// Registramos AS DUAS (com e sem /pix) por robustez: se o Itaú chamar
+	// exatamente a URL cadastrada, ou acrescentar /pix, cai no mesmo handler.
 	app.Post("/billing/itau/pix", h.billingItauPixWebhook)
+	app.Post("/billing/itau", h.billingItauPixWebhook)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
 	bx.Get("/crm/tab", h.bitrixCRMTab)
