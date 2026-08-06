@@ -104,7 +104,8 @@ const adminHomeHTML = `<!doctype html>
   .header .spacer{flex:1}
   .btn{padding:.55em .95em;border-radius:9px;font-size:.83em;font-weight:700;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--txt);cursor:pointer;transition:background .12s}
   .btn:hover{background:rgba(255,255,255,.09)}
-  .content{padding:26px;max-width:1400px;width:100%}
+  .content{padding:26px 34px;max-width:1600px;width:100%;margin:0 auto}
+  @media(min-width:1800px){ .content{max-width:1760px} }
 
   .page{display:none} .page.active{display:block}
 
