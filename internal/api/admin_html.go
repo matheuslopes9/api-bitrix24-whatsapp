@@ -263,6 +263,7 @@ const adminHomeHTML = `<!doctype html>
           <option value="">Todos os planos</option>
           <option value="pro">Pro</option><option value="basic">Básico</option>
         </select>
+        <span id="tenant-count" style="margin-left:auto;font-size:.8em;color:var(--dim);align-self:center"></span>
       </div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
@@ -606,6 +607,8 @@ function renderTenants(){
   var fs=document.getElementById('tenant-filter').value, fp=document.getElementById('tenant-plan-filter').value;
   var body=document.getElementById('tenants-body');
   var list=TENANTS.filter(function(t){if(q&&t.domain.toLowerCase().indexOf(q)<0)return false;if(fs&&(t.plan_status||'no_plan')!==fs)return false;if(fp&&t.plan!==fp)return false;return true;});
+  var cnt=document.getElementById('tenant-count');
+  if(cnt){var filtrando=(q||fs||fp);cnt.textContent=filtrando?(list.length+' de '+TENANTS.length):(TENANTS.length+' tenants');}
   if(!list.length){body.innerHTML='<tr><td colspan="7" class="empty">Nenhum tenant encontrado.</td></tr>';return;}
   body.innerHTML=list.map(function(t){
     var conn=(t.connections_qr||0)+' QR';if(t.connections_cloud)conn+=' · '+t.connections_cloud+' Cloud';
