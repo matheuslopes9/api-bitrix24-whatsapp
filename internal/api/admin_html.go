@@ -857,8 +857,13 @@ function abrirPlanoModal(p){
 function fecharPlanoModal(){var m=document.getElementById('plano-modal');if(m)m.remove();}
 function salvarPlano(isNew){
   var g=function(id){return document.getElementById(id);};
+  var code=g('pd-code').value.trim().toLowerCase();
+  // Preserva a ORDEM: se o plano ja' existe, reusa o sort_order dele em vez de
+  // forcar 99 (que embaralhava a lista a cada save). Plano novo vai pro fim.
+  var existente=PLANDEFS.filter(function(x){return x.code===code;})[0];
+  var ordem=(existente&&typeof existente.sort_order==='number')?existente.sort_order:99;
   var body={
-    code:g('pd-code').value.trim().toLowerCase(),
+    code:code,
     name:g('pd-name').value.trim(),
     description:g('pd-desc').value.trim(),
     price_cents:Math.round(parseFloat(g('pd-price').value||'0')*100),
@@ -873,7 +878,7 @@ function salvarPlano(isNew){
     is_trial_default:g('pd-trialdef').checked,
     accept_boleto:g('pd-boleto').checked,
     accept_pix:g('pd-pix').checked,
-    sort_order:99
+    sort_order:ordem
   };
   if(!body.code||!body.name){toast('Código e nome obrigatórios',false);return;}
   fetch('/admin/api/plan-defs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})

@@ -769,6 +769,22 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			INSERT INTO boleto_numeracao (id, ultimo_numero) VALUES (1, 0)
 				ON CONFLICT (id) DO NOTHING;
 		`},
+		{"042_plan_order_fix", `
+			-- Forca a ORDEM dos planos na aba admin: Trial -> Basico -> Pro.
+			-- Os seeds das migrations 033/038 usam ON CONFLICT DO NOTHING, entao
+			-- se alguem editou os planos pela UI (que reescreve sort_order) a
+			-- ordem fica bagunçada (ex: Pro, Trial, Basico). Aqui e' UPDATE
+			-- direto — idempotente, roda todo boot e sempre deixa a ordem certa.
+			UPDATE plan_definitions SET sort_order = 0 WHERE code = 'trial';
+			UPDATE plan_definitions SET sort_order = 1 WHERE code = 'basic';
+			UPDATE plan_definitions SET sort_order = 2 WHERE code = 'pro';
+
+			-- Garante que o Trial tenha uma duracao valida (>=1 dia). Se por
+			-- engano ficou 0, volta pro padrao de 7 dias. Nao mexe se ja' tem
+			-- um valor positivo (respeita o que o admin configurou, ex: 3).
+			UPDATE plan_definitions SET trial_days = 7
+			 WHERE code = 'trial' AND (trial_days IS NULL OR trial_days < 1);
+		`},
 	}
 
 	for _, m := range migrations {
