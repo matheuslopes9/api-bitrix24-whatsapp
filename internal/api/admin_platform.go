@@ -160,7 +160,7 @@ func boolStr(b bool) string {
 
 // GET /admin/api/audit — ultimas N entradas.
 func (h *handlers) adminAuditLog(c *fiber.Ctx) error {
-	entries, err := h.repo.ListAudit(c.Context(), 150)
+	entries, err := h.repo.ListAudit(c.Context(), 300)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

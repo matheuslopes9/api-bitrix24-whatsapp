@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -1641,6 +1642,8 @@ func (h *handlers) adminTenantPlacementsForceUnbind(c *fiber.Ctx) error {
 	h.log.Info("admin: placements FORCE unbound",
 		zap.String("domain", portal.Domain),
 		zap.Int("attempts", len(results)))
+	h.repo.WriteAudit(ctx, h.adminActor(c), "tenant.placements.rebind", portal.Domain,
+		fmt.Sprintf("force-unbind+rebind %d slots", len(results)), clientIP(c))
 
 	return c.JSON(fiber.Map{
 		"ok":           true,

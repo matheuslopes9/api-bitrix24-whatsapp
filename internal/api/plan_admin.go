@@ -7,6 +7,7 @@ package api
 //      com dias restantes + chamada pra upgrade.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -323,6 +324,9 @@ func (h *handlers) adminTenantSetPlan(c *fiber.Ctx) error {
 		zap.String("domain", req.Domain),
 		zap.String("plan", req.Plan),
 		zap.String("status", req.Status))
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "tenant.plan.set", req.Domain,
+		fmt.Sprintf("plan=%s status=%s until=%s notes=%s", req.Plan, req.Status,
+			timePtrStr(activeUntil), truncateStr(req.Notes, 120)), clientIP(c))
 	return c.JSON(fiber.Map{
 		"ok":     true,
 		"domain": req.Domain,
@@ -436,6 +440,8 @@ func (h *handlers) adminTenantExtendTrial(c *fiber.Ctx) error {
 		zap.String("domain", domain),
 		zap.Int("days_added", req.Days),
 		zap.Time("new_end", newEnd))
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "tenant.trial.extend", domain,
+		fmt.Sprintf("days=%d new_end=%s", req.Days, newEnd.Format("2006-01-02")), clientIP(c))
 	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
 	return c.JSON(fiber.Map{
 		"ok":            true,
@@ -487,6 +493,8 @@ func (h *handlers) adminTenantActivatePro(c *fiber.Ctx) error {
 	h.log.Info("admin: Pro ativado",
 		zap.String("domain", domain),
 		zap.String("until", label))
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "tenant.pro.activate", domain,
+		fmt.Sprintf("until=%s notes=%s", label, truncateStr(req.Notes, 120)), clientIP(c))
 	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
 	return c.JSON(fiber.Map{
 		"ok":     true,
@@ -521,6 +529,8 @@ func (h *handlers) adminTenantSuspend(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.log.Info("admin: tenant suspenso", zap.String("domain", domain))
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "tenant.suspend", domain,
+		truncateStr(req.Notes, 160), clientIP(c))
 	plan2, _ := h.repo.GetTenantPlan(c.Context(), domain)
 	return c.JSON(fiber.Map{"ok": true, "domain": domain, "plan": planSummary(plan2)})
 }
@@ -559,6 +569,15 @@ func (h *handlers) adminTenantReactivate(c *fiber.Ctx) error {
 		}
 	}
 	h.log.Info("admin: tenant reativado", zap.String("domain", domain))
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "tenant.reactivate", domain, "", clientIP(c))
 	plan, _ := h.repo.GetTenantPlan(c.Context(), domain)
 	return c.JSON(fiber.Map{"ok": true, "domain": domain, "plan": planSummary(plan)})
+}
+
+// timePtrStr formata um *time.Time pra auditoria ("—" se nil).
+func timePtrStr(t *time.Time) string {
+	if t == nil {
+		return "—"
+	}
+	return t.Format("2006-01-02")
 }

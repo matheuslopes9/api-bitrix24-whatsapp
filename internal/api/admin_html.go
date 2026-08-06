@@ -317,44 +317,45 @@ const adminHomeHTML = `<!doctype html>
     <div class="page" id="page-gateway">
       <div style="max-width:640px">
         <div class="toolcard">
-          <h3>🔌 Gateway de pagamento (maxiPago)</h3>
-          <p>Configure as credenciais aqui — não precisa mais mexer em variável de ambiente. Valores salvos aqui têm prioridade sobre o env.</p>
+          <h3>🏦 Gateway de pagamento (Itaú)</h3>
+          <p>PIX e Boleto são emitidos direto pelo Itaú (mTLS). As credenciais vêm das variáveis de ambiente <code>ITAU_*</code> no servidor; abaixo é só o status (somente leitura).</p>
 
-          <label style="font-size:.72em;color:var(--dim)">Ambiente</label>
-          <select class="filter" id="bc-env" style="width:100%;margin:2px 0 12px">
-            <option value="sandbox">Sandbox (testes)</option>
-            <option value="production">Produção</option>
-          </select>
-
-          <label style="font-size:.72em;color:var(--dim)">Merchant ID</label>
-          <input class="dominput" id="bc-mid" placeholder="ex: 39041" style="margin:2px 0 12px">
-
-          <label style="font-size:.72em;color:var(--dim)">Merchant Key <span id="bc-key-hint" style="color:var(--dim)"></span></label>
-          <input class="dominput" id="bc-key" type="password" placeholder="deixe em branco pra manter a atual" style="margin:2px 0 12px">
+          <div id="itau-status" style="margin:8px 0 14px"></div>
 
           <div style="display:flex;gap:10px">
-            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. Boleto</label><input class="dominput" id="bc-boleto" value="12" style="margin:2px 0 12px"></div>
-            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. PIX</label><input class="dominput" id="bc-pix" value="206" style="margin:2px 0 12px"></div>
-            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Proc. Cartão</label><input class="dominput" id="bc-card" value="1" style="margin:2px 0 12px"></div>
+            <div style="flex:1">
+              <label style="font-size:.72em;color:var(--dim)">Client ID</label>
+              <input class="dominput" id="itau-clientid" readonly style="margin:2px 0 12px;opacity:.85">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:.72em;color:var(--dim)">Chave PIX</label>
+              <input class="dominput" id="itau-chavepix" readonly style="margin:2px 0 12px;opacity:.85">
+            </div>
           </div>
 
-          <div style="display:flex;gap:10px;align-items:flex-end">
-            <div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Dias liberados por pagamento</label><input class="dominput" id="bc-days" type="number" min="1" value="30" style="margin:2px 0 0"></div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding-bottom:8px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="bc-enabled" style="width:16px;height:16px"> Habilitar pagamentos</label>
+          <div style="display:flex;gap:10px">
+            <div style="flex:1">
+              <label style="font-size:.72em;color:var(--dim)">Ambiente</label>
+              <input class="dominput" id="itau-env" readonly style="margin:2px 0 12px;opacity:.85">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:.72em;color:var(--dim)">Certificado mTLS</label>
+              <input class="dominput" id="itau-cert" readonly style="margin:2px 0 12px;opacity:.85">
+            </div>
           </div>
-          <div style="font-size:.74em;color:var(--dim);margin-top:6px">O período de teste (trial) é configurado na aba <b>Planos</b> — marque qual plano os novos clientes recebem e por quantos dias.</div>
+
+          <div style="font-size:.74em;color:var(--dim);margin-top:2px">O período de teste (trial) é configurado na aba <b>Planos</b>. Para trocar credenciais, ajuste as envs <code>ITAU_*</code> no EasyPanel e redeploy.</div>
 
           <div class="row" style="margin-top:16px">
-            <button class="btn btn-primary" onclick="salvarGateway()">Salvar</button>
-            <button class="btn" onclick="testarGateway('pix')">Testar PIX</button>
-            <button class="btn" onclick="testarGateway('boleto')">Testar Boleto</button>
+            <button class="btn" onclick="testarGateway('pix')">Testar PIX (R$1 real)</button>
+            <button class="btn" onclick="testarGateway('boleto')">Testar Boleto (validação)</button>
           </div>
           <div id="gateway-test" style="margin-top:12px"></div>
         </div>
 
         <div class="toolcard" style="margin-top:14px">
-          <h3>🔔 URL de notificação (postback)</h3>
-          <p>Cadastre esta URL no portal do maxiPago (Configurações → Notificação de status). É por ela que o gateway avisa quando um pagamento é confirmado.</p>
+          <h3>🔔 Webhook PIX (Itaú)</h3>
+          <p>Cadastre esta URL no portal do Itaú — <b>SEM</b> o sufixo <code>/pix</code> (o banco acrescenta sozinho). É por ela que o Itaú avisa quando um PIX é pago, liberando o plano automaticamente.</p>
           <input class="dominput" id="bc-postback" readonly onclick="this.select()" style="margin:0;cursor:pointer">
         </div>
       </div>
@@ -722,58 +723,56 @@ function excluirCupom(code){
     .then(function(){toast('✓ excluído',true);carregarCupons();}).catch(function(){toast('✗ falha',false);});
 }
 
-// ── GATEWAY (config de pagamento) ──
+// ── GATEWAY (Itaú — somente leitura + teste) ──
 function carregarGateway(){
-  fetch('/admin/api/billing-config').then(function(r){return r.json();}).then(function(d){
-    document.getElementById('bc-env').value=d.environment||'sandbox';
-    document.getElementById('bc-mid').value=d.merchant_id||'';
-    document.getElementById('bc-boleto').value=d.processor_boleto||'12';
-    document.getElementById('bc-pix').value=d.processor_pix||'206';
-    document.getElementById('bc-card').value=d.processor_card||'1';
-    document.getElementById('bc-days').value=d.activate_days||30;
-    document.getElementById('bc-enabled').checked=!!d.enabled;
-    document.getElementById('bc-postback').value=d.postback_url||'';
-    document.getElementById('bc-key').value='';
-    var hint=document.getElementById('bc-key-hint');
-    hint.textContent=d.has_merchant_key?'(já configurada — deixe vazio pra manter)':(d.env_has_key?'(usando a do env)':'(não configurada)');
-  }).catch(function(){toast('Falha ao carregar config',false);});
+  fetch('/admin/api/itau-status').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('itau-clientid').value=d.client_id||'(não configurado)';
+    document.getElementById('itau-chavepix').value=d.chave_pix||'(não configurada)';
+    document.getElementById('itau-env').value=d.environment||'sandbox';
+    var cert='';
+    if(d.cert_exists&&d.key_exists){cert='✅ certificado + chave presentes';}
+    else if(d.cert_exists){cert='⚠️ .crt presente, .key faltando';}
+    else{cert='❌ não encontrado ('+(d.cert_path||'?')+')';}
+    document.getElementById('itau-cert').value=cert;
+
+    // badge de status agregado
+    var badges=[];
+    badges.push(pill(d.pix_configured,'PIX'));
+    badges.push(pill(d.boleto_configured,'Boleto'));
+    badges.push(pill(d.cert_exists&&d.key_exists,'Certificado'));
+    document.getElementById('itau-status').innerHTML=badges.join(' ');
+
+    // webhook URL — cadastrar SEM /pix
+    var pb=document.getElementById('bc-postback');
+    if(pb){pb.value=location.origin+'/billing/itau';}
+  }).catch(function(){toast('Falha ao carregar status Itaú',false);});
 }
-function salvarGateway(){
-  var body={
-    environment:document.getElementById('bc-env').value,
-    merchant_id:document.getElementById('bc-mid').value.trim(),
-    merchant_key:document.getElementById('bc-key').value,
-    processor_boleto:document.getElementById('bc-boleto').value.trim(),
-    processor_pix:document.getElementById('bc-pix').value.trim(),
-    processor_card:document.getElementById('bc-card').value.trim(),
-    activate_days:parseInt(document.getElementById('bc-days').value||'30',10),
-    enabled:document.getElementById('bc-enabled').checked
-  };
-  fetch('/admin/api/billing-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-    .then(function(res){res.ok?(toast('✓ gateway salvo',true),carregarGateway()):toast('✗ '+(res.j.error||'falha'),false);})
-    .catch(function(){toast('✗ erro de conexão',false);});
+function pill(ok,label){
+  var c=ok?'rgba(37,211,102,.15)':'rgba(248,113,113,.12)';
+  var b=ok?'rgba(37,211,102,.4)':'rgba(248,113,113,.3)';
+  var t=ok?'var(--green)':'#fca5a5';
+  return '<span style="display:inline-block;padding:3px 10px;border-radius:99px;font-size:.74em;font-weight:600;background:'+c+';border:1px solid '+b+';color:'+t+'">'+(ok?'✓ ':'✗ ')+label+'</span>';
 }
 function testarGateway(metodo){
   metodo=metodo||'pix';
   var box=document.getElementById('gateway-test');
-  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando '+metodo.toUpperCase()+' (cobrança de R$ 1,00)…</div>';
-  fetch('/admin/api/billing-config/test?method='+metodo,{method:'POST'})
+  var acao=metodo==='boleto'?'validando boleto':'gerando cobrança de R$ 1,00';
+  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando '+metodo.toUpperCase()+' ('+acao+')…</div>';
+  fetch('/admin/api/itau-test?method='+metodo,{method:'POST'})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){
         box.innerHTML='<div style="color:var(--green);font-size:.85em;padding:12px;background:rgba(37,211,102,.08);border-radius:10px;border:1px solid rgba(37,211,102,.25)">'+
-          '<b>✅ '+metodo.toUpperCase()+' OK</b> — o gateway gerou a cobrança com sucesso.'+
-          '<div style="color:var(--dim);margin-top:6px">processador '+(d.processor_id||'?')+' · ambiente '+(d.environment||'?')+'</div></div>';
+          '<b>✅ '+metodo.toUpperCase()+' OK</b> — o Itaú aceitou a requisição.'+
+          (d.hint?'<div style="color:var(--muted);margin-top:6px;line-height:1.5">'+d.hint+'</div>':'')+
+          (d.copy_paste?'<div style="color:var(--dim);margin-top:6px;font-family:monospace;word-break:break-all">'+d.copy_paste.replace(/</g,'&lt;')+'</div>':'')+
+          '<div style="color:var(--dim);margin-top:6px">ambiente '+(d.environment||'?')+'</div></div>';
         return;
       }
       box.innerHTML='<div style="font-size:.82em;padding:12px;background:rgba(248,113,113,.08);border-radius:10px;border:1px solid rgba(248,113,113,.25)">'+
-        '<div style="color:#fca5a5;font-weight:700">❌ '+metodo.toUpperCase()+' recusado'+(d.response_code?' (código '+d.response_code+')':'')+'</div>'+
-        (d.message?'<div style="color:#fca5a5;margin-top:4px">'+d.message+'</div>':'')+
+        '<div style="color:#fca5a5;font-weight:700">❌ '+metodo.toUpperCase()+' falhou</div>'+
+        (d.message?'<div style="color:#fca5a5;margin-top:4px;font-family:monospace;word-break:break-all">'+d.message.replace(/</g,'&lt;')+'</div>':'')+
         '<div style="color:var(--muted);margin-top:8px;line-height:1.5">'+(d.hint||'')+'</div>'+
-        '<div style="color:var(--dim);margin-top:8px">processador testado: <b>'+(d.processor_id||'?')+'</b> · ambiente: '+(d.environment||'?')+'</div>'+
-        '<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--dim)">Ver resposta bruta do gateway</summary>'+
-        '<div style="color:var(--dim);font-size:.9em;margin-top:6px;font-family:monospace;word-break:break-all;white-space:pre-wrap;max-height:220px;overflow:auto">'+(d.raw||'').replace(/</g,'&lt;')+'</div></details>'+
       '</div>';
     })
     .catch(function(){ box.innerHTML='<div style="color:#fca5a5;font-size:.85em">Falha de conexão no teste.</div>'; });

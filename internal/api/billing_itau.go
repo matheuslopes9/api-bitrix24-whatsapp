@@ -135,6 +135,30 @@ func (h *handlers) itauBoletoCharge(ctx context.Context, ref, planLabel string, 
 	}, nil
 }
 
+// itauBoletoValidacao registra um boleto em etapa "validacao" — o Itau valida
+// os dados e a auth (cert + token + produto) SEM emitir titulo real. Usado pelo
+// teste do painel. Gera um nosso numero de verdade (a etapa validacao aceita).
+func (h *handlers) itauBoletoValidacao(ctx context.Context, cli *itau.Client, bc itau.BoletoConfig, ref string) (*itau.Boleto, error) {
+	nn, err := h.repo.ProximoNossoNumero(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("falha ao gerar nosso numero: %w", err)
+	}
+	return cli.RegistrarBoleto(ctx, bc, itau.EntradaBoleto{
+		PagadorTipoDoc: "CNPJ",
+		PagadorDoc:     "11620571000145",
+		PagadorNome:    "Teste UC Talk",
+		Logradouro:     "Rua Teste",
+		Bairro:         "Centro",
+		Cidade:         "Sao Paulo",
+		UF:             "SP",
+		CEP:            "01310100",
+		ValorCentavos:  100,
+		Vencimento:     time.Now().AddDate(0, 0, 3).Format("2006-01-02"),
+		SeuNumero:      ref,
+		NossoNumero:    fmt.Sprintf("%d", nn),
+	})
+}
+
 // itauTxidFromRef normaliza um reference "uctalk-<16hex>" num txid valido do
 // Itau (26-35 chars alfanumericos). Remove nao-alfanumericos e completa com
 // zeros se ficar curto.
@@ -207,6 +231,9 @@ func (h *handlers) billingItauPixWebhook(c *fiber.Ctx) error {
 		h.log.Info("billing: PIX Itaú CONFIRMADO — plano ativado",
 			zap.String("domain", charge.Domain), zap.String("plan", paidPlan),
 			zap.String("reference", charge.ReferenceNum), zap.Time("active_until", until))
+		h.repo.WriteAudit(ctx, "sistema:itau-pix", "tenant.pago.pix", charge.Domain,
+			fmt.Sprintf("plano=%s ref=%s e2e=%s ate=%s", paidPlan, charge.ReferenceNum,
+				n.EndToEndID, until.Format("2006-01-02")), "webhook-itau")
 	}
 	return c.SendStatus(fiber.StatusOK)
 }

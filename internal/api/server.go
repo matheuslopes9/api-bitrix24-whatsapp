@@ -272,7 +272,10 @@ func New(
 	admin.Get("/api/plan-defs", h.adminListPlanDefs)
 	admin.Post("/api/plan-defs", h.adminSavePlanDef)
 	admin.Post("/api/plan-defs/delete", h.adminDeletePlanDef)
-	// Config do gateway de pagamento (maxiPago) editavel pela UI
+	// Gateway de pagamento — Itaú (PIX + boleto). Status readonly + teste real.
+	admin.Get("/api/itau-status", h.adminItauStatus)
+	admin.Post("/api/itau-test", h.adminItauTest)
+	// Legado MaxiPago (mantido só pra compat; a UI já não usa)
 	admin.Get("/api/billing-config", h.adminGetBillingConfig)
 	admin.Post("/api/billing-config", h.adminSaveBillingConfig)
 	admin.Post("/api/billing-config/test", h.adminTestBillingConfig)

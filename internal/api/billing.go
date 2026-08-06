@@ -414,6 +414,8 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 		h.log.Info("billing: PIX Itaú criado",
 			zap.String("domain", domain), zap.String("reference", ref),
 			zap.Int64("amount_cents", amount))
+		h.repo.WriteAudit(ctx, "cliente:"+domain, "billing.cobranca.pix", domain,
+			fmt.Sprintf("plano=%s ref=%s valor=%d", plan, ref, amount), clientIP(c))
 		out := addCupomOut(fiber.Map{
 			"ok":             true,
 			"plan":           plan,
@@ -465,6 +467,8 @@ func (h *handlers) uiBillingCheckout(c *fiber.Ctx) error {
 	h.log.Info("billing: boleto Itaú criado",
 		zap.String("domain", domain), zap.String("reference", ref),
 		zap.String("nosso_numero", bol.NossoNumero), zap.Int64("amount_cents", amount))
+	h.repo.WriteAudit(ctx, "cliente:"+domain, "billing.cobranca.boleto", domain,
+		fmt.Sprintf("plano=%s ref=%s nn=%s valor=%d", plan, ref, bol.NossoNumero, amount), clientIP(c))
 	out := addCupomOut(fiber.Map{
 		"ok":              true,
 		"plan":            plan,
