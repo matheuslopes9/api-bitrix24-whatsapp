@@ -101,6 +101,41 @@ func (h *handlers) requireProPlan(c *fiber.Ctx) error {
 	return c.Next()
 }
 
+// tenantAccessAllowed diz se o tenant (por domain) tem acesso liberado — trial
+// dentro do prazo OU plano pago ativo. Base do bloqueio de "trial expirou ->
+// precisa pagar". Nao depende de c.Locals, entao serve pros handlers do CRM
+// (grupo /bitrix) que resolvem o domain internamente via BX24 auth.
+//
+// Fail-OPEN em erro de banco: se GetTenantPlan falhar, NAO bloqueia (melhor
+// deixar passar do que derrubar um cliente pagante por um hiccup no Postgres).
+// O plan==nil (tenant sem row nenhuma) tambem passa: cobre casos de portais
+// legados criados antes do sistema de planos. So bloqueia quando ha um plano e
+// ele esta comprovadamente expirado/suspenso.
+func (h *handlers) tenantAccessAllowed(ctx context.Context, domain string) bool {
+	if domain == "" {
+		return true // sem domain nao da pra checar — deixa o handler tratar
+	}
+	plan, err := h.repo.GetTenantPlan(ctx, normalizePortalDomain(domain))
+	if err != nil {
+		h.log.Warn("plan gate: GetTenantPlan falhou — liberando (fail-open)",
+			zap.String("domain", domain), zap.Error(err))
+		return true
+	}
+	if plan == nil {
+		return true // portal legado sem plano — nao bloqueia
+	}
+	return plan.IsAccessAllowed()
+}
+
+// blockedResponse402 devolve o corpo padrao de "plano expirado" pro CRM.
+func blockedResponse402(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+		"error":   "período de teste encerrado ou plano inativo",
+		"code":    "plan_expired",
+		"upgrade": "Abra a aba do UC Talk e assine um plano (PIX libera na hora) pra continuar usando.",
+	})
+}
+
 // requireBasicAccess bloqueia se o tenant nao tem acesso minimo (trial
 // expirado / suspended). Usado em rotas que TODO plano usa (CRM tab,
 // envio inline, etc).

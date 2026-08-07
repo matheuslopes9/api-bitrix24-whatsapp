@@ -2442,6 +2442,43 @@ func (r *Repository) ListBillingChargesByDomain(ctx context.Context, domain stri
 	return out, rows.Err()
 }
 
+// ListPendingBoletoCharges retorna cobrancas de boleto ainda nao pagas, pra o
+// job de reconciliacao consultar no Itau. Limita a janela pra nao consultar
+// boletos antigos eternamente (vencidos ha muito tempo nao serao pagos).
+// maxAgeDays: so' boletos criados nos ultimos N dias. limit: teto por rodada.
+func (r *Repository) ListPendingBoletoCharges(ctx context.Context, maxAgeDays, limit int) ([]*BillingCharge, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if maxAgeDays <= 0 {
+		maxAgeDays = 10
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, domain, plan, method, amount_cents, reference_num,
+		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
+		FROM billing_charges
+		WHERE method = 'boleto'
+		  AND status = 'pending'
+		  AND created_at > NOW() - ($1 || ' days')::interval
+		ORDER BY created_at ASC
+		LIMIT $2`, maxAgeDays, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BillingCharge
+	for rows.Next() {
+		var c BillingCharge
+		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
+			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
+			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
 // ─── Admin metrics (agregados globais) ─────────────────────────────────────
 
 // AdminMetrics resume o estado do negocio pro painel super-admin.

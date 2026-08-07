@@ -2080,9 +2080,11 @@ function atualizarPlano() {
     .catch(function(){ /* silencioso */ });
 }
 
-// Popup bloqueante quando o trial de 7 dias expira. Mostrado 1x por
-// carregamento de pagina (fechar esconde ate o proximo reload — o acesso
-// continua bloqueado pelo backend de qualquer forma).
+// Popup quando o trial de 7 dias expira. Mostrado 1x por carregamento de
+// pagina. Fechar so' esconde o overlay — o backend BLOQUEIA o envio de verdade
+// (gate de plano em bitrixCRMSend e bitrixConnectorEvent), entao o cliente nao
+// consegue operar ate assinar. O botao principal leva pra aba de assinatura
+// interna (onde PIX/Boleto funcionam), nao pra /planos publica.
 var _popupExpiradoJaMostrado = false;
 function mostrarPopupPlanoExpirado() {
   if (_popupExpiradoJaMostrado) return;
@@ -2095,10 +2097,10 @@ function mostrarPopupPlanoExpirado() {
     '<div style="max-width:480px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(248,113,113,.35);border-radius:20px;padding:34px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);">' +
       '<div style="font-size:44px;margin-bottom:12px;">⏰</div>' +
       '<h2 style="font-size:22px;font-weight:800;color:#f1f5f9;margin:0 0 10px;">Seu período de teste terminou</h2>' +
-      '<p style="font-size:14px;color:#94a3b8;line-height:1.6;margin:0 0 22px;">Os 7 dias de trial gratuito do UC Talk chegaram ao fim. Pra continuar enviando e recebendo mensagens do WhatsApp no seu Bitrix24, escolha um plano.</p>' +
+      '<p style="font-size:14px;color:#94a3b8;line-height:1.6;margin:0 0 22px;">Os 7 dias de trial gratuito do UC Talk chegaram ao fim. Pra continuar enviando e recebendo mensagens do WhatsApp no seu Bitrix24, assine um plano. <b style="color:#cbd5e1;">O PIX libera o acesso na hora.</b></p>' +
       '<div style="display:flex;flex-direction:column;gap:10px;">' +
-        '<a href="/planos" target="_top" style="display:block;padding:14px;border-radius:12px;background:linear-gradient(90deg,#25D366,#10b981);color:#fff;font-weight:700;font-size:15px;text-decoration:none;">Ver planos e assinar</a>' +
-        '<button onclick="document.getElementById(\'plan-expired-overlay\').style.display=\'none\'" style="padding:11px;border-radius:12px;background:rgba(255,255,255,.05);color:#64748b;font-size:13px;border:1px solid rgba(255,255,255,.08);cursor:pointer;">Fechar (acesso continua bloqueado)</button>' +
+        '<button onclick="document.getElementById(\'plan-expired-overlay\').remove();showPage(\'assinatura\');" style="display:block;padding:14px;border-radius:12px;background:linear-gradient(90deg,#25D366,#10b981);color:#fff;font-weight:700;font-size:15px;border:0;cursor:pointer;">Assinar agora (PIX ou Boleto)</button>' +
+        '<button onclick="document.getElementById(\'plan-expired-overlay\').style.display=\'none\'" style="padding:11px;border-radius:12px;background:rgba(255,255,255,.05);color:#64748b;font-size:13px;border:1px solid rgba(255,255,255,.08);cursor:pointer;">Fechar (o acesso segue bloqueado até o pagamento)</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(ov);

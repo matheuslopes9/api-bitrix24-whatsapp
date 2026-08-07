@@ -90,6 +90,82 @@ func (h *handlers) itauPIXCharge(ctx context.Context, ref, planLabel, valorReais
 	return copyPaste, qrBase64, nil
 }
 
+// ReconcileBoletos consulta no Itaú os boletos pendentes e, pros que já foram
+// pagos, marca a cobrança e libera o plano — exatamente como o webhook do PIX
+// faz, mas por POLLING (o boleto não tem webhook de "pago").
+//
+// Retorna quantos foram liberados nesta rodada. Best-effort: erros por boleto
+// são logados e a rodada continua (um boleto problemático não trava os outros).
+func (h *handlers) ReconcileBoletos(ctx context.Context) int {
+	if !h.itauBoletoConfigured() {
+		return 0 // boleto não configurado — nada a fazer
+	}
+	pend, err := h.repo.ListPendingBoletoCharges(ctx, 10, 100)
+	if err != nil {
+		h.log.Warn("reconcile boleto: listar pendentes falhou", zap.Error(err))
+		return 0
+	}
+	if len(pend) == 0 {
+		return 0
+	}
+
+	cli, err := h.newItauClient()
+	if err != nil {
+		h.log.Warn("reconcile boleto: cliente Itaú indisponível", zap.Error(err))
+		return 0
+	}
+	bc := h.itauBoletoConfig()
+
+	liberados := 0
+	for _, charge := range pend {
+		// nosso número foi salvo em MPTransactionID no checkout (billing.go).
+		nn := charge.MPTransactionID
+		if nn == "" {
+			continue
+		}
+		st, err := cli.ConsultarBoleto(ctx, bc, nn)
+		if err != nil {
+			h.log.Warn("reconcile boleto: consulta falhou",
+				zap.String("nosso_numero", nn), zap.String("ref", charge.ReferenceNum), zap.Error(err))
+			continue
+		}
+		if !st.Pago {
+			continue // ainda em aberto
+		}
+
+		changed, err := h.repo.MarkBillingChargePaid(ctx, charge.ReferenceNum,
+			"boleto liquidado (reconciliação) situacao="+st.Situacao)
+		if err != nil {
+			h.log.Error("reconcile boleto: marcar pago falhou", zap.Error(err))
+			continue
+		}
+		if !changed {
+			continue // já estava pago (idempotente)
+		}
+
+		paidPlan := charge.Plan
+		if paidPlan != "basic" && paidPlan != "pro" {
+			paidPlan = "pro"
+		}
+		until := time.Now().AddDate(0, 0, h.cfg.Billing.ActivateDays)
+		note := fmt.Sprintf("pagamento BOLETO Itaú plano=%s ref=%s nn=%s em %s",
+			paidPlan, charge.ReferenceNum, nn, time.Now().Format("2006-01-02 15:04"))
+		if err := h.repo.SetTenantPlan(ctx, charge.Domain, paidPlan, "active", &until, note); err != nil {
+			h.log.Error("reconcile boleto: ativar plano falhou",
+				zap.String("domain", charge.Domain), zap.Error(err))
+			continue
+		}
+		h.repo.WriteAudit(ctx, "sistema:itau-boleto", "tenant.pago.boleto", charge.Domain,
+			fmt.Sprintf("plano=%s ref=%s nn=%s ate=%s", paidPlan, charge.ReferenceNum, nn,
+				until.Format("2006-01-02")), "reconciliacao")
+		h.log.Info("reconcile boleto: BOLETO CONFIRMADO — plano ativado",
+			zap.String("domain", charge.Domain), zap.String("plan", paidPlan),
+			zap.String("reference", charge.ReferenceNum), zap.Time("active_until", until))
+		liberados++
+	}
+	return liberados
+}
+
 // itauBoletoResult reune o retorno util de um boleto pro checkout.
 type itauBoletoResult struct {
 	LinhaDigitavel string

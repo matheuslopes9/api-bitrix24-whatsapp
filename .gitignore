@@ -22,3 +22,7 @@ certificado-dinamico/
 *.crt
 *.pem
 certs/
+
+# Playwright MCP (screenshots/snapshots de teste)
+.playwright-mcp/
+welcome.png

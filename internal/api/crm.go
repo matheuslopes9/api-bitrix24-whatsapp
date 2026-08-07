@@ -1012,6 +1012,13 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message é obrigatório"})
 	}
 
+	// Gate de PLANO — trial expirado / plano inativo NAO envia. E' aqui que o
+	// modelo "usa 7 dias, depois paga" e' realmente enforçado: sem plano ativo,
+	// o operador nao consegue mandar mensagem pelo CRM ate assinar.
+	if !h.tenantAccessAllowed(c.Context(), body.Domain) {
+		return blockedResponse402(c)
+	}
+
 	// Permission guard — operador so envia se a sessao escolhida esta liberada
 	// pra ele. user_id obrigatorio nesse modelo novo. Se vier vazio (JS antigo
 	// que ainda nao foi atualizado), bloqueia com mensagem explicita.

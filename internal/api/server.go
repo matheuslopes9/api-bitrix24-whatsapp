@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -42,6 +43,22 @@ func New(
 	}))
 
 	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
+
+	// ─── Reconciliação de boleto (polling) ───────────────────────────────
+	// O boleto do Itaú NÃO tem webhook de "pago" como o PIX. Este job consulta
+	// periodicamente os boletos pendentes e libera o plano quando pagos. Roda
+	// a cada 30min (o cliente que pagou boleto espera no máximo isso pra ser
+	// liberado). No-op se o boleto não estiver configurado.
+	go func() {
+		bgctx := context.Background()
+		time.Sleep(1 * time.Minute) // espera o warmup/migrations antes da 1a rodada
+		for {
+			if n := h.ReconcileBoletos(bgctx); n > 0 {
+				log.Info("reconcile boleto: rodada concluída", zap.Int("liberados", n))
+			}
+			time.Sleep(30 * time.Minute)
+		}
+	}()
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o

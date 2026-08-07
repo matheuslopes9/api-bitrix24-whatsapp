@@ -220,6 +220,105 @@ func (c *Client) RegistrarBoleto(ctx context.Context, bc BoletoConfig, e Entrada
 	return parseBoletoResp(raw)
 }
 
+// StatusBoleto e' o resultado de uma consulta: se o boleto ja' foi pago/
+// liquidado (Pago=true) e a situacao textual crua do Itau (pra log/debug).
+type StatusBoleto struct {
+	NossoNumero string
+	Pago        bool
+	Situacao    string // texto cru do Itau (ex: "EM ABERTO", "LIQUIDADO", "BAIXADO")
+}
+
+// ConsultarBoleto consulta a situacao de um boleto pelo nosso_numero, pra
+// reconciliar pagamento (o boleto NAO tem webhook como o PIX). Reusa o mesmo
+// mTLS + OAuth.
+//
+// ⚠️ ENDPOINT/CAMPO A CONFIRMAR COM O ITAU: a rota de consulta e o nome do
+// campo de situacao variam conforme a versao do produto Cash Management. O
+// padrao mais comum e' GET /boletos/{id_beneficiario}/{nosso_numero} com um
+// campo "codigo_situacao_geral_boleto" ou "situacao_geral_boleto" no retorno.
+// Ajuste `endpoint` e `situacaoPaga()` abaixo conforme a doc da sua conta.
+func (c *Client) ConsultarBoleto(ctx context.Context, bc BoletoConfig, nossoNumero string) (*StatusBoleto, error) {
+	tok, err := c.obterToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// GET /boletos/{id_beneficiario}/{nosso_numero}  (confirmar com o Itau)
+	endpoint := bc.baseURL() + "/boletos/" + bc.idBeneficiario() + "/" + digits(nossoNumero)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-itau-apikey", c.cfg.apiKey())
+	req.Header.Set("x-itau-correlationID", nossoNumero)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("itau: falha ao consultar boleto: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Boleto ainda nao indexado / nao encontrado — trata como "em aberto".
+		return &StatusBoleto{NossoNumero: nossoNumero, Pago: false, Situacao: "NAO_ENCONTRADO"}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("itau: consulta de boleto HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+	}
+
+	return parseStatusBoleto(raw, nossoNumero), nil
+}
+
+// parseStatusBoleto interpreta o retorno da consulta. Procura o campo de
+// situacao em varios nomes possiveis (o envelope {data:...} do v2 varia) e
+// decide se esta pago via situacaoPaga().
+func parseStatusBoleto(raw []byte, nossoNumero string) *StatusBoleto {
+	st := &StatusBoleto{NossoNumero: nossoNumero}
+
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return st
+	}
+	data := top
+	if d, ok := top["data"]; ok {
+		var inner map[string]json.RawMessage
+		if json.Unmarshal(d, &inner) == nil {
+			data = inner
+		}
+	}
+
+	// Tenta varios nomes de campo de situacao (Itau usa nomes diferentes por versao).
+	for _, key := range []string{
+		"situacao_geral_boleto", "codigo_situacao_geral_boleto",
+		"situacao", "status", "descricao_situacao",
+	} {
+		if v, ok := data[key]; ok {
+			var s string
+			if json.Unmarshal(v, &s) == nil && s != "" {
+				st.Situacao = s
+				break
+			}
+		}
+	}
+	st.Pago = situacaoPaga(st.Situacao)
+	return st
+}
+
+// situacaoPaga decide, a partir do texto/codigo de situacao, se o boleto foi
+// efetivamente pago. Cobre os rotulos mais comuns; ajuste conforme sua conta.
+func situacaoPaga(situacao string) bool {
+	s := strings.ToUpper(strings.TrimSpace(situacao))
+	switch s {
+	case "LIQUIDADO", "PAGO", "BAIXADO_POR_PAGAMENTO", "07", "06":
+		return true
+	}
+	// Heuristica de fallback: qualquer situacao que contenha "LIQUID" ou "PAG".
+	return strings.Contains(s, "LIQUID") || strings.Contains(s, "PAGO")
+}
+
 // parseBoletoResp extrai os dados do retorno v2 do Itau (envelope {data:...}).
 func parseBoletoResp(raw []byte) (*Boleto, error) {
 	var top map[string]json.RawMessage
