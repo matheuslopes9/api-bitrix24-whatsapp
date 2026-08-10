@@ -298,6 +298,8 @@ func New(
 	// Gateway de pagamento — Itaú (PIX + boleto). Status readonly + teste real.
 	admin.Get("/api/itau-status", h.adminItauStatus)
 	admin.Post("/api/itau-test", h.adminItauTest)
+	admin.Get("/api/itau-diag", h.adminItauDiag) // testa hosts candidatos (debug 404)
+	admin.Post("/api/itau-diag", h.adminItauDiag)
 	// Legado MaxiPago (mantido só pra compat; a UI já não usa)
 	admin.Get("/api/billing-config", h.adminGetBillingConfig)
 	admin.Post("/api/billing-config", h.adminSaveBillingConfig)

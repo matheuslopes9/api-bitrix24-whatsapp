@@ -311,6 +311,55 @@ func (c *Client) setHeaders(req *http.Request, token string) {
 	req.Header.Set("Accept", "application/json")
 }
 
+// DiagResultado e' o retorno cru de um teste de diagnostico contra um host.
+type DiagResultado struct {
+	BaseURL    string `json:"base_url"`
+	Endpoint   string `json:"endpoint"`
+	HTTPStatus int    `json:"http_status"`
+	Corpo      string `json:"corpo"`  // resposta crua (truncada)
+	Erro       string `json:"erro"`   // erro de rede/TLS, se houver
+}
+
+// DiagnosticarCob tenta criar uma cobranca PIX contra uma baseURL ESPECIFICA
+// (sobrescrevendo a config) e devolve status + corpo cru, sem mascarar. Serve
+// pra descobrir qual host/rota o produto PIX PJ usa quando a chamada normal da
+// 404. NAO persiste nada. valorReais ex: "1.00".
+func (c *Client) DiagnosticarCob(ctx context.Context, baseURL, txid, valorReais, chave string) DiagResultado {
+	base := strings.TrimRight(baseURL, "/")
+	endpoint := base + "/cob/" + url.PathEscape(txid)
+	res := DiagResultado{BaseURL: base, Endpoint: endpoint}
+
+	tok, err := c.obterToken(ctx)
+	if err != nil {
+		res.Erro = "token: " + err.Error()
+		return res
+	}
+
+	payload := map[string]interface{}{
+		"valor": map[string]string{"original": valorReais},
+		"chave": chave,
+	}
+	bodyBytes, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		res.Erro = err.Error()
+		return res
+	}
+	c.setHeaders(req, tok)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		res.Erro = err.Error() // erro de rede/DNS/TLS — revela host inexistente
+		return res
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	res.HTTPStatus = resp.StatusCode
+	res.Corpo = truncate(string(raw), 500)
+	return res
+}
+
 // mapErro transforma um corpo de erro do Itau numa mensagem util (sem vazar nada).
 func (c *Client) mapErro(status int, raw []byte) error {
 	var pe pixErro

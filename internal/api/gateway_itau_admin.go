@@ -10,7 +10,82 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/itau"
 )
+
+// GET /admin/api/itau-diag — diagnostico do host PIX. Quando o "Testar PIX" da
+// 404 ("Entidade nao encontrada"), a auth esta OK mas o HOST/rota do produto
+// pode ser diferente. Este endpoint tenta criar uma cobranca contra VARIOS
+// hosts candidatos e devolve a resposta crua de cada um — assim da' pra ver
+// qual host responde 201 (certo) e configurar ITAU_BASE_URL de acordo.
+//
+// NAO persiste nada. Usa um txid unico por rodada. Requer PIX configurado.
+func (h *handlers) adminItauDiag(c *fiber.Ctx) error {
+	if !h.itauPIXConfigured() {
+		return c.JSON(fiber.Map{"ok": false, "hint": "PIX nao configurado (faltam ITAU_CLIENT_ID/SECRET/CHAVE_PIX)."})
+	}
+	cli, err := h.newItauClient()
+	if err != nil {
+		return c.JSON(fiber.Map{"ok": false, "message": err.Error(), "hint": itauHint(err)})
+	}
+
+	b := h.cfg.Billing
+	chave := b.ItauChavePIX
+
+	// Hosts candidatos pra API PIX PJ (regulatorio-pix). O primeiro e' o que o
+	// codigo usa por default; os demais vem da doc/collection do Itau.
+	candidatos := []string{
+		firstNonEmpty(b.ItauBaseURL, ""), // se o admin ja' setou um ITAU_BASE_URL, testa primeiro
+		"https://pix-pj.api.itau.com/regulatorio-pix/v2",
+		"https://secure.api.itau/pix_regulatorio-pix/v2",
+		"https://secure.api.itau.com.br/pix_regulatorio-pix/v2",
+		"https://api.itau.com.br/pix_regulatorio-pix/v2",
+		"https://pix-pj.api.itau.com.br/regulatorio-pix/v2",
+	}
+
+	var resultados []itau.DiagResultado
+	vistos := map[string]bool{}
+	for i, base := range candidatos {
+		base = strings.TrimSpace(base)
+		if base == "" || vistos[base] {
+			continue
+		}
+		vistos[base] = true
+		// txid unico por candidato (26-35 alfanumericos).
+		txid := "diag" + strings.Repeat("0", 8) + itauTxidFromRef("diaghost"+itoa(i))
+		if len(txid) > 35 {
+			txid = txid[:35]
+		}
+		resultados = append(resultados, cli.DiagnosticarCob(c.Context(), base, txid, "1.00", chave))
+	}
+
+	// Aponta o melhor candidato (o que deu 200/201).
+	var melhor string
+	for _, r := range resultados {
+		if r.HTTPStatus == 200 || r.HTTPStatus == 201 {
+			melhor = r.BaseURL
+			break
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"ok":          melhor != "",
+		"host_correto": melhor,
+		"resultados":  resultados,
+		"hint": firstNonEmpty(
+			ternaryStr(melhor != "", "Achamos! Configure ITAU_BASE_URL="+melhor+" no EasyPanel e redeploy.", ""),
+			"Nenhum host respondeu 200/201. Veja os corpos abaixo: 404 = rota/produto; erro de rede = host inexistente; 403 = produto nao habilitado.",
+		),
+	})
+}
+
+// ternaryStr — helper minusculo pro diag.
+func ternaryStr(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
 
 // maskTail mostra só os últimos n caracteres, mascarando o resto. Pra exibir
 // client id / chave sem vazar o valor inteiro no painel.
