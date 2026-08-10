@@ -266,100 +266,127 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 <div class="wrap">
   <div class="hero">
     <h1>Escolha seu plano</h1>
-    <p>Comece com o Básico gratuito por 7 dias. Faça upgrade para Pro a qualquer momento e libere todas as features avançadas.</p>
+    <p>Todo cliente começa com 7 dias grátis. Depois, assine por PIX (libera na hora) ou Boleto pra continuar usando o WhatsApp no seu Bitrix24.</p>
   </div>
 
-  <div class="plans">
-    <div class="plan basic">
-      <div class="name">Básico</div>
-      <div class="desc">Para times que só precisam conectar o WhatsApp ao Bitrix24 e atender clientes pelo CRM.</div>
-      <div class="price-row">
-        <span class="price">Básico</span>
-        <span class="period">teste grátis de 7 dias incluso</span>
-      </div>
-      <ul>
-        <li>1 número WhatsApp conectado</li>
-        <li>Aba WhatsApp no Contato/Lead/Deal</li>
-        <li>Envio e recepção inline no CRM</li>
-        <li>Permissões básicas (master user)</li>
-        <li>Histórico de 30 dias</li>
-      </ul>
-      <div class="cta">
-        <button class="btn btn-primary" id="btn-assinar-basic">Assinar Básico — Boleto</button>
-        <a class="btn btn-ghost" href="/dashboard" target="_top">Continuar teste grátis</a>
-      </div>
-    </div>
+  <div class="plans" id="plans"><div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">Carregando planos…</div></div>
 
-    <div class="plan pro">
-      <div class="ribbon">RECOMENDADO</div>
-      <div class="name">Pro</div>
-      <div class="desc">Para empresas que disparam campanhas, automatizam fluxos e operam múltiplos números.</div>
-      <div class="price-row">
-        <span class="price">Fale</span>
-        <span class="period">com o comercial</span>
-      </div>
-      <ul>
-        <li>Até 10 números (QR + Cloud API Meta)</li>
-        <li>Tudo do Básico, mais:</li>
-        <li>Templates Não Oficiais e Meta HSM</li>
-        <li>Importação direta da Meta Graph API</li>
-        <li>Robots BizProc (Oficial + Não Oficial)</li>
-        <li>Campanhas SMS via WhatsApp</li>
-        <li>Relatórios + histórico de 1 ano</li>
-        <li>Suporte prioritário</li>
-      </ul>
-      <div class="cta">
-        <button class="btn btn-primary" id="btn-assinar-pro">Assinar Pro agora — Boleto</button>
-        <a class="btn btn-ghost" href="https://wa.me/551932345030?text=Quero%20o%20plano%20Pro%20do%20UC%20Talk" target="_blank">Falar com comercial (WhatsApp)</a>
-      </div>
-    </div>
-  </div>
+  <div id="pay-note" style="display:none;max-width:640px;margin:0 auto 20px;padding:14px 18px;border-radius:12px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);font-size:13px;color:#93c5fd;line-height:1.5;text-align:center"></div>
 
   <div class="back"><a href="/dashboard" target="_top">← Voltar pro App</a></div>
 </div>
+
+<!-- Modal de pagamento (PIX/Boleto) -->
+<div id="pay-modal" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:9999;align-items:center;justify-content:center;padding:20px">
+  <div style="max-width:420px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(255,255,255,.1);border-radius:18px;padding:26px">
+    <div id="pay-modal-body"></div>
+    <button onclick="fecharPay()" style="width:100%;margin-top:14px;padding:11px;border-radius:11px;background:rgba(255,255,255,.05);color:#94a3b8;border:1px solid rgba(255,255,255,.1);font-size:13px;cursor:pointer">Fechar</button>
+  </div>
+</div>
+
 <script>
 (function(){
-  // 2 planos pagos: Basico e Pro. Cada botao chama o checkout com o plano.
-  function ligarCheckout(btnId, plano, labelOriginal) {
-    var btn = document.getElementById(btnId);
-    if (!btn) return;
-    btn.addEventListener('click', function(){
-      btn.disabled = true;
-      btn.textContent = 'Gerando boleto...';
-      fetch('/ui/billing/checkout', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({plan: plano, method: 'boleto'})
-      })
-      .then(function(r){ return r.json().then(function(j){ return {status: r.status, body: j}; }); })
-      .then(function(res){
-        if (res.status === 200 && res.body && res.body.boleto_url) {
-          btn.textContent = 'Boleto gerado! Abrindo...';
-          window.open(res.body.boleto_url, '_blank');
-          setTimeout(function(){
-            btn.disabled = false;
-            btn.textContent = labelOriginal;
-          }, 3000);
-          return;
-        }
-        // 401 = sem cookie tenant (pagina fora do Bitrix) | 503 = gateway
-        // nao configurado. Fallback: manda pro comercial.
-        var msg = (res.body && res.body.error) ? res.body.error :
-          'Nao foi possivel gerar o boleto agora. Fale com o comercial.';
-        alert(msg);
-        btn.disabled = false;
-        btn.textContent = labelOriginal;
-      })
-      .catch(function(){
-        alert('Falha de conexao ao gerar boleto. Tente novamente ou fale com o comercial.');
-        btn.disabled = false;
-        btn.textContent = labelOriginal;
-      });
-    });
+  var BRL = function(cents){ return 'R$ ' + (Number(cents||0)/100).toLocaleString('pt-BR',{minimumFractionDigits:2}); };
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); };
+
+  // Monta as features visíveis do plano a partir das flags do banco.
+  function feats(p){
+    var f = [ (p.max_sessions||1) + (p.max_sessions>1?' números WhatsApp':' número WhatsApp') + ' conectado' + (p.max_sessions>1?'s':''),
+              'Aba WhatsApp no Contato / Lead / Negócio', 'Envio e recepção inline no CRM' ];
+    if (p.feat_templates)   f.push('Templates de mensagem (inclui Meta HSM)');
+    if (p.feat_automations) f.push('Automações BizProc (robots)');
+    if (p.feat_sms)         f.push('Campanhas via WhatsApp (Marketing)');
+    if (p.feat_reports)     f.push('Relatórios + histórico estendido');
+    return f;
   }
-  ligarCheckout('btn-assinar-basic', 'basic', 'Assinar Básico — Boleto');
-  ligarCheckout('btn-assinar-pro', 'pro', 'Assinar Pro agora — Boleto');
+
+  function cardHTML(p){
+    var cls = p.is_pro ? 'pro' : 'basic';
+    var ribbon = p.is_pro ? '<div class="ribbon">RECOMENDADO</div>' : '';
+    var price = (p.price_cents>0) ? BRL(p.price_cents) : 'Grátis';
+    var li = feats(p).map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('');
+    var metodos = [];
+    if (p.accept_pix !== false)   metodos.push('pix');
+    if (p.accept_boleto !== false) metodos.push('boleto');
+    var botoes = metodos.map(function(m){
+      var lbl = m==='pix' ? '⚡ Assinar com PIX' : '🧾 Assinar com Boleto';
+      return '<button class="btn '+(m==='pix'?'btn-primary':'btn-ghost')+'" onclick="pagar(\''+esc(p.code)+'\',\''+m+'\',this)">'+lbl+'</button>';
+    }).join('');
+    if (!botoes) botoes = '<a class="btn btn-ghost" href="https://wa.me/551932345030" target="_blank">Falar com o comercial</a>';
+    return '<div class="plan '+cls+'">'+ribbon+
+      '<div class="name">'+esc(p.name)+'</div>'+
+      '<div class="desc">'+esc(p.description)+'</div>'+
+      '<div class="price-row"><span class="price">'+price+'</span><span class="period">'+(p.price_cents>0?'/mês':'7 dias de teste')+'</span></div>'+
+      '<ul>'+li+'</ul>'+
+      '<div class="cta">'+botoes+'</div></div>';
+  }
+
+  // Carrega planos reais do banco (ativos, na ordem configurada). Rota pública
+  // (/planos/list) pra funcionar mesmo fora do iframe Bitrix.
+  fetch('/planos/list', {credentials:'include'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var plans = (d && d.plans) || [];
+      var box = document.getElementById('plans');
+      if (!plans.length){ box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">Nenhum plano disponível no momento.</div>'; return; }
+      box.innerHTML = plans.map(cardHTML).join('');
+    })
+    .catch(function(){
+      document.getElementById('plans').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#fca5a5;padding:30px">Não foi possível carregar os planos. Recarregue a página.</div>';
+    });
+
+  function fecharPay(){ document.getElementById('pay-modal').style.display='none'; }
+  window.fecharPay = fecharPay;
+
+  // Gera a cobrança. Fora do Bitrix (sem cookie) o checkout devolve 401 — aí
+  // explicamos que precisa abrir pelo app, em vez de um alert cru.
+  window.pagar = function(plano, metodo, btn){
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Gerando…';
+    fetch('/ui/billing/checkout', {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({plan: plano, method: metodo})
+    })
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status, body:j}; }); })
+    .then(function(res){
+      btn.disabled = false; btn.textContent = orig;
+      if (res.status === 401){
+        // Sem sessão de tenant — página aberta fora do Bitrix.
+        var note = document.getElementById('pay-note');
+        note.style.display = 'block';
+        note.innerHTML = 'Pra assinar, abra o <b>UC Talk dentro do seu Bitrix24</b> (aba do app) e escolha o plano por lá — é onde o pagamento é liberado com segurança pra sua conta.';
+        note.scrollIntoView({behavior:'smooth', block:'center'});
+        return;
+      }
+      var body = res.body || {};
+      if (res.status === 200 && (body.pix_copy_paste || body.linha_digitavel || body.boleto_url)){
+        abrirPay(metodo, body);
+        return;
+      }
+      alert(body.error || 'Não foi possível gerar a cobrança agora. Tente novamente.');
+    })
+    .catch(function(){ btn.disabled=false; btn.textContent=orig; alert('Falha de conexão. Tente novamente.'); });
+  };
+
+  function abrirPay(metodo, body){
+    var el = document.getElementById('pay-modal-body');
+    if (metodo === 'pix'){
+      var img = body.pix_qr_base64 ? '<div style="text-align:center;margin-bottom:12px"><img src="data:image/png;base64,'+body.pix_qr_base64+'" alt="QR PIX" style="width:180px;height:180px;background:#fff;border-radius:10px;padding:8px"></div>' : '';
+      el.innerHTML = '<div style="font-size:16px;font-weight:800;color:#25D366;text-align:center;margin-bottom:10px">⚡ PIX gerado — libera na hora</div>'+img+
+        '<div style="font-size:12px;color:#94a3b8;word-break:break-all;background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px">'+esc(body.pix_copy_paste||'')+'</div>'+
+        '<button class="btn btn-primary" style="width:100%" onclick="navigator.clipboard.writeText('+JSON.stringify(body.pix_copy_paste||'')+');this.textContent=\'✓ Copiado\'">📋 Copiar código PIX</button>';
+    } else {
+      var linha = body.linha_digitavel || '';
+      var venc = body.due_date ? ('<div style="font-size:12px;color:#64748b;text-align:center;margin-bottom:10px">Vence em '+esc(body.due_date)+'</div>') : '';
+      var linhaBox = linha ? ('<div style="font-size:13px;color:#cbd5e1;word-break:break-all;background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px;font-family:monospace">'+esc(linha)+'</div>'+
+        '<button class="btn btn-primary" style="width:100%" onclick="navigator.clipboard.writeText('+JSON.stringify(linha)+');this.textContent=\'✓ Copiado\'">📋 Copiar linha digitável</button>') :
+        '<div style="font-size:13px;color:#94a3b8;text-align:center">Boleto gerado. Consulte na aba de assinatura do app.</div>';
+      el.innerHTML = '<div style="font-size:16px;font-weight:800;color:#93c5fd;text-align:center;margin-bottom:10px">🧾 Boleto gerado</div>'+venc+linhaBox+
+        '<div style="font-size:12px;color:#64748b;line-height:1.5;text-align:center;margin-top:10px">A liberação ocorre em até 30 min após a compensação bancária.</div>';
+    }
+    document.getElementById('pay-modal').style.display = 'flex';
+  }
 })();
 </script>
 </body>

@@ -28,6 +28,22 @@ func (h *handlers) uiListPlans(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"plans": out})
 }
 
+// GET /planos/list — versao PUBLICA (sem cookie) de uiListPlans, pra a pagina
+// /planos montar os cards mesmo aberta fora do iframe Bitrix. So' devolve dados
+// de venda (nome, preco, features) — nada de tenant/assinatura, entao e' seguro
+// expor sem autenticacao.
+func (h *handlers) publicListPlans(c *fiber.Ctx) error {
+	defs, err := h.repo.ListPlanDefinitions(c.Context(), true)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	out := make([]map[string]interface{}, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, planDefToClient(d))
+	}
+	return c.JSON(fiber.Map{"plans": out})
+}
+
 // GET /ui/plan/details — visao completa da assinatura pro cliente:
 // estado, plano, dias restantes, data de vencimento/renovacao, se esta
 // cancelando, e o historico de cobrancas do tenant.

@@ -90,6 +90,9 @@ func New(
 	app.Post("/welcome", h.welcomePage)
 	app.Get("/planos", h.planosPage)
 	app.Post("/planos", h.planosPage)
+	// Lista pública de planos (só dados de venda: nome, preço, features) pra a
+	// página /planos montar os cards mesmo fora do iframe Bitrix. Sem cookie.
+	app.Get("/planos/list", h.publicListPlans)
 	// Grupo /ui/*: protegido por cookie tenant (setado em /bitrix/auth apos
 	// o iframe Bitrix validar com BX24.js) OU cookie admin (super-admin).
 	// SEM o middleware, qualquer um na internet podia ler/escrever dados
