@@ -152,6 +152,10 @@ func (c *Client) obterToken(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	// Headers que a collection oficial do Itau envia na obtencao de token.
+	// Alguns ambientes exigem; enviar sempre nao atrapalha.
+	req.Header.Set("x-itau-flowID", "1")
+	req.Header.Set("x-itau-correlationID", "2")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
