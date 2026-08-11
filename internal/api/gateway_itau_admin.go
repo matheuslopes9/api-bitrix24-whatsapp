@@ -79,6 +79,43 @@ func (h *handlers) adminItauDiag(c *fiber.Ctx) error {
 	})
 }
 
+// GET /admin/api/itau-chave — verifica se a CHAVE PIX configurada esta
+// registrada/reconhecida pelo Itau nesse Client ID. Ajuda a diagnosticar o
+// erro "documento do solicitante divergente": se a chave nao existe (404), ela
+// nao esta vinculada a essa conta no produto Recebimentos PIX.
+func (h *handlers) adminItauChave(c *fiber.Ctx) error {
+	if !h.itauPIXConfigured() {
+		return c.JSON(fiber.Map{"ok": false, "hint": "PIX nao configurado."})
+	}
+	cli, err := h.newItauClient()
+	if err != nil {
+		return c.JSON(fiber.Map{"ok": false, "message": err.Error(), "hint": itauHint(err)})
+	}
+	chave := h.cfg.Billing.ItauChavePIX
+	res := cli.ConsultarChave(c.Context(), chave)
+
+	hint := ""
+	switch res.HTTPStatus {
+	case 200:
+		hint = "A chave EXISTE e esta consultavel. Se o /cob ainda da 'documento divergente', fale com o Itau: a chave pode estar num Client ID diferente do certificado."
+	case 404:
+		hint = "A chave NAO foi encontrada (404). Ela nao esta registrada/vinculada a esse Client ID no produto Recebimentos PIX. Peca ao gerente pra VINCULAR a chave " + maskTail(chave, 6) + " a esse Client ID."
+	case 403:
+		hint = "Acesso negado (403) ao consultar a chave — produto pode nao estar habilitado."
+	default:
+		hint = "Veja o corpo abaixo. Erro de rede/host indica problema de conexao."
+	}
+
+	return c.JSON(fiber.Map{
+		"ok":          res.HTTPStatus == 200,
+		"chave":       maskTail(chave, 6),
+		"http_status": res.HTTPStatus,
+		"corpo":       res.Corpo,
+		"erro":        res.Erro,
+		"hint":        hint,
+	})
+}
+
 // ternaryStr — helper minusculo pro diag.
 func ternaryStr(cond bool, a, b string) string {
 	if cond {

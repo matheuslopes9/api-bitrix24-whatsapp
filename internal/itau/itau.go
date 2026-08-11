@@ -311,6 +311,40 @@ func (c *Client) setHeaders(req *http.Request, token string) {
 	req.Header.Set("Accept", "application/json")
 }
 
+// ConsultarChave verifica se a chave PIX esta registrada/reconhecida pelo Itau
+// nesse Client ID, via GET /webhook/{chave} (endpoint da collection oficial).
+// 200 = chave existe e o webhook esta consultavel; 404 = chave nao encontrada
+// (indicio de que a chave nao esta vinculada a essa conta); outros = ver corpo.
+// Devolve o resultado cru pra diagnostico.
+func (c *Client) ConsultarChave(ctx context.Context, chave string) DiagResultado {
+	base := c.cfg.baseURL()
+	endpoint := base + "/webhook/" + url.PathEscape(chave)
+	res := DiagResultado{BaseURL: base, Endpoint: endpoint}
+
+	tok, err := c.obterToken(ctx)
+	if err != nil {
+		res.Erro = "token: " + err.Error()
+		return res
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		res.Erro = err.Error()
+		return res
+	}
+	c.setHeaders(req, tok)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		res.Erro = err.Error()
+		return res
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	res.HTTPStatus = resp.StatusCode
+	res.Corpo = truncate(string(raw), 500)
+	return res
+}
+
 // DiagResultado e' o retorno cru de um teste de diagnostico contra um host.
 type DiagResultado struct {
 	BaseURL    string `json:"base_url"`

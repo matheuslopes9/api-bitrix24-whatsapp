@@ -300,6 +300,7 @@ func New(
 	admin.Post("/api/itau-test", h.adminItauTest)
 	admin.Get("/api/itau-diag", h.adminItauDiag) // testa hosts candidatos (debug 404)
 	admin.Post("/api/itau-diag", h.adminItauDiag)
+	admin.Get("/api/itau-chave", h.adminItauChave) // verifica se a chave PIX esta registrada
 	// Legado MaxiPago (mantido só pra compat; a UI já não usa)
 	admin.Get("/api/billing-config", h.adminGetBillingConfig)
 	admin.Post("/api/billing-config", h.adminSaveBillingConfig)
