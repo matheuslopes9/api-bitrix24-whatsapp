@@ -460,12 +460,20 @@ const adminHomeHTML = `<!doctype html>
     <div class="page" id="page-preview">
       <div class="toolcard" style="margin-bottom:14px">
         <h3>👁️ Preview do app (como o cliente vê no Bitrix24)</h3>
-        <p>Esta é a interface que o cliente enxerga dentro do Bitrix24. Você acessa via cookie de admin — no cliente real, ela abre no iframe do Marketplace. Use o seletor pra ver as telas de um tenant específico.</p>
-        <div class="row" style="align-items:center">
-          <input class="dominput" id="preview-domain" placeholder="domínio do tenant (opcional) — ex: crm.cliente.bitrix24.com" style="margin:0;max-width:420px">
-          <button class="btn btn-primary" onclick="recarregarPreview()" style="height:38px">Carregar preview</button>
+        <p>Esta é a interface que o cliente enxerga dentro do Bitrix24. Você acessa via cookie de admin — no cliente real, ela abre no iframe do Marketplace. Escolha a tela e (opcional) o domínio de um tenant pra testar qualquer alteração de forma isolada.</p>
+        <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:.72em;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Tela</span>
+          <select class="dominput" id="preview-screen" onchange="recarregarPreview()" style="margin:0;max-width:220px;height:38px">
+            <option value="/dashboard">Dashboard (painel)</option>
+            <option value="/welcome">Welcome (onboarding)</option>
+            <option value="/planos">Planos (vitrine)</option>
+            <option value="/bitrix/crm/tab">CRM Tab (aba no negócio)</option>
+          </select>
+          <input class="dominput" id="preview-domain" placeholder="domínio do tenant (opcional) — ex: crm.cliente.bitrix24.com" style="margin:0;max-width:360px">
+          <button class="btn btn-primary" onclick="recarregarPreview()" style="height:38px">Carregar</button>
           <button class="btn" onclick="abrirPreviewNovaAba()" style="height:38px">Abrir em nova aba ↗</button>
         </div>
+        <p id="preview-hint" style="margin:8px 0 0;font-size:.72em;color:var(--muted)"></p>
       </div>
       <div style="background:#0b1220;border:1px solid var(--border);border-radius:14px;overflow:hidden;height:74vh">
         <iframe id="preview-frame" src="about:blank" style="width:100%;height:100%;border:0;background:#0f172a" title="Preview UC Talk"></iframe>
@@ -555,16 +563,55 @@ function irPara(p){
   if(p==='system'){clearInterval(window._sysT);window._sysT=setInterval(carregarSystem,5000);}else{clearInterval(window._sysT);}
 }
 function previewURL(){
+  var scrEl=document.getElementById('preview-screen');
+  var scr=(scrEl&&scrEl.value)||'/dashboard';
   var dom=(document.getElementById('preview-domain').value||'').trim();
-  var url='/dashboard';
-  if(dom)url+='?domain='+encodeURIComponent(dom);
-  return url;
+  var qs=['preview=1'];                 // marcador: estamos na preview do admin
+  if(dom)qs.push('domain='+encodeURIComponent(dom));
+  // CRM tab precisa de entity_type/entity_id pra montar a aba — usa um exemplo.
+  if(scr==='/bitrix/crm/tab'){qs.push('entity_type=deal');qs.push('entity_id=1');}
+  return scr+'?'+qs.join('&');
+}
+// Dicas por tela: algumas só fazem sentido com domínio de tenant.
+var PREVIEW_HINTS={
+  '/dashboard':'Painel do cliente. Sem domínio mostra o estado vazio; informe um tenant pra ver os dados dele.',
+  '/welcome':'Tela de boas-vindas exibida no 1º acesso (trial de 7 dias).',
+  '/planos':'Vitrine pública de planos (PIX + Boleto). O checkout real só libera dentro do Bitrix24.',
+  '/bitrix/crm/tab':'Aba que aparece no Contato/Lead/Negócio. Informe o domínio do tenant pra carregar de verdade.'
+};
+function atualizarPreviewHint(){
+  var scrEl=document.getElementById('preview-screen');var h=document.getElementById('preview-hint');
+  if(scrEl&&h)h.textContent=PREVIEW_HINTS[scrEl.value]||'';
+}
+// Shim do BX24: fora do iframe do Bitrix, o SDK remoto lança
+// "Unable to initialize Bitrix24 JS library!" no console. Na preview isso e'
+// so ruido — injetamos um BX24 falso ANTES do load pra silenciar. Same-origin
+// (/dashboard e /admin no mesmo host) permite escrever no contentWindow.
+function injetarBX24Shim(f){
+  try{
+    var w=f.contentWindow;if(!w)return;
+    w.BX24={init:function(cb){try{cb&&cb();}catch(e){}},
+      getDomain:function(){return '';},getAuth:function(){return null;},
+      callMethod:function(m,p,cb){try{cb&&cb({error:function(){return 'preview';},data:function(){return null;}});}catch(e){}},
+      resizeWindow:function(){},fitWindow:function(){},install:function(){},installFinish:function(){},
+      isAdmin:function(){return false;},getLang:function(){return 'pt';}};
+  }catch(e){/* cross-origin: ignora, nao ha' o que silenciar */}
+}
+function carregarPreviewFrame(){
+  var f=document.getElementById('preview-frame');if(!f)return;
+  atualizarPreviewHint();
+  // injeta o shim assim que o documento novo existir, antes dos scripts rodarem
+  f.onload=function(){injetarBX24Shim(f);};
+  f.src=previewURL();
+  // tentativa extra: alguns navegadores criam o contentWindow antes do onload
+  setTimeout(function(){injetarBX24Shim(f);},0);
 }
 function abrirPreview(){
   var f=document.getElementById('preview-frame');
-  if(f && (f.src==='about:blank' || f.src.indexOf('about:blank')>=0))f.src=previewURL();
+  if(f && (f.src==='about:blank' || f.src.indexOf('about:blank')>=0)){carregarPreviewFrame();}
+  else{atualizarPreviewHint();}
 }
-function recarregarPreview(){document.getElementById('preview-frame').src=previewURL();}
+function recarregarPreview(){carregarPreviewFrame();}
 function abrirPreviewNovaAba(){window.open(previewURL(),'_blank');}
 function abrirSidebar(){document.getElementById('sidebar').classList.add('open');document.getElementById('backdrop').classList.add('open');}
 function fecharSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('backdrop').classList.remove('open');}

@@ -79,10 +79,11 @@ func (h *handlers) adminItauDiag(c *fiber.Ctx) error {
 	})
 }
 
-// GET /admin/api/itau-chave — verifica se a CHAVE PIX configurada esta
-// registrada/reconhecida pelo Itau nesse Client ID. Ajuda a diagnosticar o
-// erro "documento do solicitante divergente": se a chave nao existe (404), ela
-// nao esta vinculada a essa conta no produto Recebimentos PIX.
+// GET /admin/api/itau-chave — consulta se ha' WEBHOOK cadastrado pra chave PIX
+// (GET /webhook/{chave}). 200 = webhook existe; 404 = sem webhook (o PIX ainda
+// funciona pra cobranca, so' falta o webhook pra liberacao automatica).
+// NAO confunda com "chave nao existe" — a criacao de cobranca (PUT /cob) e' o
+// que valida a chave de verdade, e essa ja' foi confirmada funcionando.
 func (h *handlers) adminItauChave(c *fiber.Ctx) error {
 	if !h.itauPIXConfigured() {
 		return c.JSON(fiber.Map{"ok": false, "hint": "PIX nao configurado."})
@@ -94,14 +95,19 @@ func (h *handlers) adminItauChave(c *fiber.Ctx) error {
 	chave := h.cfg.Billing.ItauChavePIX
 	res := cli.ConsultarChave(c.Context(), chave)
 
+	// IMPORTANTE: este endpoint consulta GET /webhook/{chave}, que so' retorna
+	// 200 se HOUVER UM WEBHOOK cadastrado pra essa chave. Um 404 aqui NAO quer
+	// dizer que o PIX esta quebrado — a criacao de cobranca (PUT /cob) pode
+	// funcionar perfeitamente sem webhook cadastrado. Use este check apenas pra
+	// saber se o webhook de notificacao ja' foi registrado no Itau.
 	hint := ""
 	switch res.HTTPStatus {
 	case 200:
-		hint = "A chave EXISTE e esta consultavel. Se o /cob ainda da 'documento divergente', fale com o Itau: a chave pode estar num Client ID diferente do certificado."
+		hint = "Webhook JA' cadastrado pra esta chave — as notificacoes de PIX pago chegam automaticamente. Tudo certo."
 	case 404:
-		hint = "A chave NAO foi encontrada (404). Ela nao esta registrada/vinculada a esse Client ID no produto Recebimentos PIX. Peca ao gerente pra VINCULAR a chave " + maskTail(chave, 6) + " a esse Client ID."
+		hint = "Sem webhook cadastrado pra esta chave (404). Isso NAO quebra o PIX: gerar cobranca funciona mesmo assim. Mas pra a LIBERACAO AUTOMATICA do plano, cadastre o webhook no portal Itau apontando pra .../billing/itau (SEM /pix)."
 	case 403:
-		hint = "Acesso negado (403) ao consultar a chave — produto pode nao estar habilitado."
+		hint = "Acesso negado (403) ao consultar webhook — produto pode nao estar habilitado."
 	default:
 		hint = "Veja o corpo abaixo. Erro de rede/host indica problema de conexao."
 	}

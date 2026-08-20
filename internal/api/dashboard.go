@@ -65,7 +65,24 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")
 	c.Set("Expires", "0")
-	return c.SendString(dashboardHTML)
+	html := dashboardHTML
+	// Preview do admin (?preview=1): o dashboard roda fora do iframe do
+	// Bitrix, entao o SDK remoto (api.bitrix24.com/api/v1) lanca
+	// "Unable to initialize Bitrix24 JS library!" no console — puro ruido.
+	// Removemos o <script> do SDK so' nesse modo; o codigo ja' trata
+	// typeof BX24==='undefined' (acesso direto), entao nada quebra.
+	if c.Query("preview") == "1" {
+		html = stripBitrixSDK(html)
+	}
+	return c.SendString(html)
+}
+
+// stripBitrixSDK remove a tag <script> do SDK remoto do Bitrix da pagina.
+// Usado so' no modo preview do admin pra evitar o erro de console do SDK
+// quando o dashboard roda fora do iframe do Marketplace.
+func stripBitrixSDK(html string) string {
+	return strings.Replace(html,
+		`<script src="https://api.bitrix24.com/api/v1/"></script>`, "", 1)
 }
 
 // dashboardCallerAllowed: caller e' super-admin (cookie) OU tenant
