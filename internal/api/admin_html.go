@@ -173,6 +173,16 @@ const adminHomeHTML = `<!doctype html>
   .toolcard .row{display:flex;gap:8px;flex-wrap:wrap}
   input.dominput{padding:.58em .85em;background:var(--panel2);border:1px solid var(--border);border-radius:10px;color:var(--txt);font-size:.85em;width:100%;margin-bottom:11px}
 
+  /* barra de controles da preview */
+  .preview-controls{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+  .preview-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .preview-field label{font-size:.68em;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .preview-field .dominput{margin:0;height:40px;box-sizing:border-box}
+  .preview-field select.dominput{padding:.55em .7em;background:var(--panel2);border:1px solid var(--border);border-radius:10px;color:var(--txt);font-size:.85em;width:100%;height:40px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right .7em center;padding-right:2em}
+  .preview-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .preview-actions .btn{height:40px;white-space:nowrap}
+  @media(max-width:720px){.preview-field{flex:1 1 100%!important}.preview-actions{width:100%}.preview-actions .btn{flex:1}}
+
   /* toast */
   #toast{position:fixed;bottom:24px;left:calc(50% + var(--sbw)/2);transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);color:var(--txt);padding:.85em 1.4em;border-radius:12px;font-size:.88em;box-shadow:0 14px 44px rgba(0,0,0,.55);z-index:9999;display:none;max-width:80vw}
   #toast.ok{border-color:rgba(37,211,102,.4)} #toast.err{border-color:rgba(248,113,113,.4)}
@@ -461,19 +471,26 @@ const adminHomeHTML = `<!doctype html>
       <div class="toolcard" style="margin-bottom:14px">
         <h3>👁️ Preview do app (como o cliente vê no Bitrix24)</h3>
         <p>Esta é a interface que o cliente enxerga dentro do Bitrix24. Você acessa via cookie de admin — no cliente real, ela abre no iframe do Marketplace. Escolha a tela e (opcional) o domínio de um tenant pra testar qualquer alteração de forma isolada.</p>
-        <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:.72em;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Tela</span>
-          <select class="dominput" id="preview-screen" onchange="recarregarPreview()" style="margin:0;max-width:220px;height:38px">
-            <option value="/dashboard">Dashboard (painel)</option>
-            <option value="/welcome">Welcome (onboarding)</option>
-            <option value="/planos">Planos (vitrine)</option>
-            <option value="/bitrix/crm/tab">CRM Tab (aba no negócio)</option>
-          </select>
-          <input class="dominput" id="preview-domain" placeholder="domínio do tenant (opcional) — ex: crm.cliente.bitrix24.com" style="margin:0;max-width:360px">
-          <button class="btn btn-primary" onclick="recarregarPreview()" style="height:38px">Carregar</button>
-          <button class="btn" onclick="abrirPreviewNovaAba()" style="height:38px">Abrir em nova aba ↗</button>
+        <div class="preview-controls">
+          <div class="preview-field" style="flex:0 0 220px">
+            <label for="preview-screen">Tela</label>
+            <select class="dominput" id="preview-screen" onchange="recarregarPreview()">
+              <option value="/dashboard">Dashboard (painel)</option>
+              <option value="/welcome">Welcome (onboarding)</option>
+              <option value="/planos">Planos (vitrine)</option>
+              <option value="/bitrix/crm/tab">CRM Tab (aba no negócio)</option>
+            </select>
+          </div>
+          <div class="preview-field" style="flex:1 1 280px">
+            <label for="preview-domain">Domínio do tenant <span style="text-transform:none;opacity:.7">(opcional)</span></label>
+            <input class="dominput" id="preview-domain" placeholder="ex: crm.cliente.bitrix24.com">
+          </div>
+          <div class="preview-actions">
+            <button class="btn btn-primary" onclick="recarregarPreview()">Carregar</button>
+            <button class="btn" onclick="abrirPreviewNovaAba()">Abrir em nova aba ↗</button>
+          </div>
         </div>
-        <p id="preview-hint" style="margin:8px 0 0;font-size:.72em;color:var(--muted)"></p>
+        <p id="preview-hint" style="margin:10px 0 0;font-size:.75em;color:var(--muted)"></p>
       </div>
       <div style="background:#0b1220;border:1px solid var(--border);border-radius:14px;overflow:hidden;height:74vh">
         <iframe id="preview-frame" src="about:blank" style="width:100%;height:100%;border:0;background:#0f172a" title="Preview UC Talk"></iframe>
