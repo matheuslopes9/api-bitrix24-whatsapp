@@ -499,7 +499,10 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Relatórios
   </div>
-  <div class="nav-item" id="nav-assinatura" onclick="showPage('assinatura')">
+  <!-- Oculto: entrada de Planos e Assinatura desativada no dashboard do cliente.
+       display:none inline porque .nav-item define display:flex (o atributo hidden
+       perderia pro CSS do autor). Pra reexibir, remova o style abaixo. -->
+  <div class="nav-item" id="nav-assinatura" style="display:none;" onclick="showPage('assinatura')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
     Planos &amp; Assinatura
   </div>
@@ -1710,6 +1713,11 @@ function apiUrl(base) {
 var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios', assinatura: 'Planos & Assinatura' };
 
 function showPage(nome) {
+  // Planos & Assinatura desativado no dashboard do cliente. O guard vive aqui,
+  // e nao so no item de menu, porque o popup de plano expirado tambem chamava
+  // showPage("assinatura") — qualquer chamador futuro cairia no mesmo furo.
+  // Isto e UI apenas: a pagina segue no DOM e as rotas /ui/plan/* seguem abertas.
+  if (nome === "assinatura") return;
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
   document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('page-' + nome).classList.add('active');
