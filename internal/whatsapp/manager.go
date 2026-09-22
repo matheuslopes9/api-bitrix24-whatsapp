@@ -152,10 +152,32 @@ func (m *Manager) CleanupOrphanSessionFiles(ctx context.Context) (removed []stri
 	if err != nil {
 		return nil, 0, err
 	}
-	activeQRPhones := map[string]bool{}
+	// Conjunto de BASENAMES a preservar (nome do arquivo sem extensao).
+	//
+	// ATENCAO: nao dava pra usar so' o s.Phone. O arquivo em disco recebe o
+	// nome do numero DIGITADO no pareamento (AddSession monta
+	// "<phone>.db"), enquanto o s.Phone do banco passou a ser derivado do
+	// JID real do device. Quando os dois divergem — exatamente o caso que
+	// motivou a migration 044, onde o phone era "81996807479" e o numero
+	// real e' "558196807479" — o arquivo da sessao VIVA nao casaria com
+	// nenhum phone ativo e esta funcao o apagaria, derrubando a sessao e
+	// forcando QR novo.
+	//
+	// Por isso preserva por DOIS criterios: o basename do session_file
+	// (a fonte da verdade sobre onde o store realmente esta) e o phone
+	// (compatibilidade com linhas antigas sem session_file preenchido).
+	// Numa funcao que APAGA arquivo, preservar demais e' o erro barato.
+	preservar := map[string]bool{}
 	for _, s := range allSessions {
-		if s.Type != db.SessionTypeCloudAPI && s.Status == db.SessionActive {
-			activeQRPhones[s.Phone] = true
+		if s.Type == db.SessionTypeCloudAPI || s.Status != db.SessionActive {
+			continue
+		}
+		if s.Phone != "" {
+			preservar[s.Phone] = true
+		}
+		if s.SessionFile != "" {
+			base := filepath.Base(s.SessionFile)
+			preservar[strings.TrimSuffix(base, ".db")] = true
 		}
 	}
 
@@ -198,8 +220,9 @@ func (m *Manager) CleanupOrphanSessionFiles(ctx context.Context) (removed []stri
 			continue
 		}
 
-		// se phone nao bate com nenhuma sessao QR ativa, remove
-		if !activeQRPhones[phone] {
+		// se nao bate com nenhuma sessao QR ativa (nem por phone, nem pelo
+		// basename do session_file), remove
+		if !preservar[phone] {
 			if info, _ := e.Info(); info != nil {
 				bytesFreed += info.Size()
 			}
