@@ -885,6 +885,127 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				RAISE WARNING 'idx_whatsapp_sessions_numero_base nao criado (duplicatas remanescentes); boot segue';
 			END $$;
 		`},
+		{"046_licencas", `
+			-- MODELO NOVO: instalacao local com licenca manual.
+			--
+			-- O UC Talk deixou de ser SaaS de marketplace (trial de 7 dias,
+			-- planos Basico/Pro, cupons, cobranca online). Agora quem instala
+			-- e' a UC Technology, e o cliente paga pelo comercial. O que o
+			-- contrato libera fica AQUI, na licenca do proprio cliente.
+			--
+			-- Por que nao reaproveitar tenant_plans + plan_definitions: o
+			-- modelo antigo guardava o CODIGO do plano no tenant e as FLAGS
+			-- num catalogo separado. Bastava o catalogo dessincronizar pro
+			-- cliente ficar rotulado "Pro" e sem nenhuma feature — foi
+			-- exatamente o bug relatado. Sem catalogo intermediario, nao ha'
+			-- o que dessincronizar.
+			CREATE TABLE IF NOT EXISTS tenant_licenses (
+				domain             TEXT PRIMARY KEY,
+
+				-- Beneficios contratados, marcados um a um na ativacao.
+				max_sessions       INT     NOT NULL DEFAULT 1,
+				feat_cloud_api     BOOLEAN NOT NULL DEFAULT FALSE, -- Cloud API + Templates
+				feat_automations   BOOLEAN NOT NULL DEFAULT FALSE, -- robos BizProc
+				feat_reports       BOOLEAN NOT NULL DEFAULT FALSE,
+				feat_sms           BOOLEAN NOT NULL DEFAULT FALSE, -- oculto na UI por ora
+
+				-- Vigencia. NULL = sem prazo (nao vence).
+				-- Vencer NAO bloqueia o app: so' mostra aviso e notifica o
+				-- financeiro. Ninguem fica sem atendimento por boleto atrasado.
+				valid_until        DATE,
+
+				notes              TEXT NOT NULL DEFAULT '',
+
+				-- Onboarding, herdado de tenant_plans. NAO e' cobranca: sao as
+				-- flags de "ja' mostrei as boas-vindas" e "ja' defini o master
+				-- automaticamente". Vem junto porque a tabela de origem sera'
+				-- removida na 047 e estas duas colunas precisam sobreviver.
+				welcome_shown      BOOLEAN NOT NULL DEFAULT FALSE,
+				master_auto_set_at TIMESTAMPTZ,
+
+				created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_tenant_licenses_valid_until
+				ON tenant_licenses (valid_until) WHERE valid_until IS NOT NULL;
+
+			-- Historico de pagamentos, lancado a mao pelo suporte.
+			-- paid_at      = quando o cliente pagou (pra conciliar com extrato)
+			-- covers_until = ate quando aquele pagamento libera o uso
+			-- recorded_by  = quem lancou, pra auditoria
+			CREATE TABLE IF NOT EXISTS license_payments (
+				id           UUID PRIMARY KEY,
+				domain       TEXT   NOT NULL,
+				paid_at      DATE   NOT NULL,
+				covers_until DATE   NOT NULL,
+				amount_cents BIGINT NOT NULL DEFAULT 0,
+				method       TEXT   NOT NULL DEFAULT '',
+				notes        TEXT   NOT NULL DEFAULT '',
+				recorded_by  TEXT   NOT NULL DEFAULT '',
+				created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_license_payments_domain
+				ON license_payments (domain, paid_at DESC);
+
+			-- Avisos ja' enviados pro financeiro. Serve pra NAO repetir o
+			-- mesmo aviso todo dia enquanto a licenca segue vencida.
+			CREATE TABLE IF NOT EXISTS license_notifications (
+				id         BIGSERIAL PRIMARY KEY,
+				domain     TEXT NOT NULL,
+				kind       TEXT NOT NULL,          -- 'vencendo' | 'vencida'
+				ref_date   DATE NOT NULL,          -- valid_until que originou o aviso
+				sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				UNIQUE (domain, kind, ref_date)
+			);
+
+			-- MIGRACAO DOS DADOS — roda ANTES da 047 dropar tenant_plans.
+			--
+			-- Todo portal instalado ganha licenca. Sem isto, na virada o
+			-- cliente ficaria sem linha e perderia os beneficios.
+			--
+			-- Traduz o plano antigo pro modelo novo, respeitando o que cada
+			-- um ja' tinha: quem estava em 'pro' com acesso valido leva os
+			-- beneficios; os demais entram no minimo (1 sessao) e o suporte
+			-- ajusta conforme contrato. valid_until herda o active_until (ou
+			-- o fim do trial), entao ninguem e' marcado como vencido a toa.
+			INSERT INTO tenant_licenses (
+				domain, max_sessions,
+				feat_cloud_api, feat_automations, feat_reports,
+				valid_until, notes, welcome_shown, master_auto_set_at
+			)
+			SELECT
+				p.domain,
+				CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
+				COALESCE(tp.plan = 'pro', FALSE),
+				COALESCE(tp.plan = 'pro', FALSE),
+				COALESCE(tp.plan = 'pro', FALSE),
+				COALESCE(tp.active_until::date, tp.trial_ends_at::date),
+				COALESCE(tp.notes, ''),
+				COALESCE(tp.welcome_shown, FALSE),
+				tp.master_auto_set_at
+			  FROM bitrix_portals p
+			  LEFT JOIN tenant_plans tp ON tp.domain = p.domain
+			 WHERE p.domain <> p.member_id          -- ignora placeholders de install
+			ON CONFLICT (domain) DO NOTHING;
+
+			-- Tenants que tinham plano mas cujo portal ja' sumiu da
+			-- bitrix_portals: entram tambem, pra nao perder historico.
+			INSERT INTO tenant_licenses (
+				domain, max_sessions,
+				feat_cloud_api, feat_automations, feat_reports,
+				valid_until, notes, welcome_shown, master_auto_set_at
+			)
+			SELECT
+				tp.domain,
+				CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
+				tp.plan = 'pro', tp.plan = 'pro', tp.plan = 'pro',
+				COALESCE(tp.active_until::date, tp.trial_ends_at::date),
+				COALESCE(tp.notes, ''),
+				COALESCE(tp.welcome_shown, FALSE),
+				tp.master_auto_set_at
+			  FROM tenant_plans tp
+			ON CONFLICT (domain) DO NOTHING;
+		`},
 	}
 
 	for _, m := range migrations {
