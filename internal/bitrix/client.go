@@ -653,9 +653,10 @@ func (c *Client) ConnectorSetDelivery(ctx context.Context, creds TenantCreds, co
 // ConnectorSetOutboundDelivery confirma entrega de mensagem outbound ao operador.
 // Ref: https://apidocs.bitrix24.com/api-reference/imopenlines/imconnector/imconnector-send-status-delivery.html
 // Campos obrigatórios conforme doc:
-//   im.chat_id e im.message_id → integers
-//   message.id → array de strings (mesmo para mensagem única)
-//   message.date → unix timestamp integer
+//
+//	im.chat_id e im.message_id → integers
+//	message.id → array de strings (mesmo para mensagem única)
+//	message.date → unix timestamp integer
 func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, waMessageID, chatExtID string) error {
 	// Converte chat_id e message_id para int — a API exige integer, não string
 	chatIDInt, _ := strconv.Atoi(imChatID)
@@ -701,11 +702,11 @@ func (c *Client) ConnectorSetOutboundDelivery(ctx context.Context, creds TenantC
 // delivery sintético gera falsa confirmação ("viewed by"), que é pior.
 //
 // Estratégia:
-//   1) imconnector.delete.messages — remove a bolha original do operador
-//      (o nome do .bak some da conversa, não vira "entregue");
-//   2) imconnector.send.messages — injeta uma msg inbound de sistema com
-//      o motivo da falha. Operador vê notificação clara, cliente real
-//      no WhatsApp não recebe nada.
+//  1. imconnector.delete.messages — remove a bolha original do operador
+//     (o nome do .bak some da conversa, não vira "entregue");
+//  2. imconnector.send.messages — injeta uma msg inbound de sistema com
+//     o motivo da falha. Operador vê notificação clara, cliente real
+//     no WhatsApp não recebe nada.
 func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCreds, connectorID string, lineID int, imChatID, imMsgID, chatExtID, errorMsg string) error {
 	chatIDInt, _ := strconv.Atoi(imChatID)
 	msgIDInt, _ := strconv.Atoi(imMsgID)
@@ -1190,9 +1191,9 @@ func (c *Client) GetChatMessages(ctx context.Context, creds TenantCreds, chatID 
 // BindPlacement registra um widget de aba customizada no CRM.
 func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement, handlerURL, title string) error {
 	_, err := c.call(ctx, creds, "placement.bind", map[string]interface{}{
-		"PLACEMENT": placement,
-		"HANDLER":   handlerURL,
-		"TITLE":     title,
+		"PLACEMENT":   placement,
+		"HANDLER":     handlerURL,
+		"TITLE":       title,
 		"DESCRIPTION": "Enviar mensagem WhatsApp diretamente do CRM",
 	})
 	return err
@@ -1202,8 +1203,8 @@ func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement
 // nosso app. Cada item normalizado pra { "placement": "...", "handler": "..." }.
 //
 // Bitrix24 tem 2 formatos historicos pra esse endpoint:
-//   1. Array de objetos: [{ placement, handler, title, ... }] (antigo)
-//   2. Array de strings: ["PLACEMENT_NAME_1", "PLACEMENT_NAME_2", ...] (novo)
+//  1. Array de objetos: [{ placement, handler, title, ... }] (antigo)
+//  2. Array de strings: ["PLACEMENT_NAME_1", "PLACEMENT_NAME_2", ...] (novo)
 //
 // Quando vem como array de strings, o Bitrix retorna so' OS NOMES dos
 // placements DISPONIVEIS no portal (nao os ja' registrados pelo nosso
@@ -1304,7 +1305,79 @@ type BitrixUser struct {
 // As chamadas sao feitas em paralelo (10 goroutines simultaneas) com pequeno
 // rate limit interno. Usuarios inexistentes/inativos sao silenciosamente
 // omitidos pelo Bitrix. Retorno: lista deduplicada e ordenada por nome.
+// listarViaUserGet lista usuarios pelo metodo PROPRIO de listagem do Bitrix,
+// com paginacao real — sem precisar adivinhar ID nenhum.
+//
+// Exige o scope `user`. Quando o app era publicado no Marketplace esse scope
+// nao estava disponivel, e por isso a versao antiga sondava IDs. Com a
+// instalacao local (a UC Technology instala e controla os scopes) ele passa a
+// ser possivel. Se o portal ainda nao concedeu, devolve erro e o caller cai
+// no modo de sondagem.
+func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]BitrixUser, error) {
+	var todos []BitrixUser
+	start := 0
+	for pagina := 0; pagina < 200; pagina++ { // teto de sanidade: 200*50 = 10k
+		raw, err := c.call(ctx, creds, "user.get", map[string]interface{}{
+			"FILTER": map[string]interface{}{"ACTIVE": true},
+			"start":  start,
+		})
+		if err != nil {
+			return nil, err
+		}
+		var linhas []map[string]interface{}
+		if err := json.Unmarshal(raw, &linhas); err != nil {
+			return nil, err
+		}
+		if len(linhas) == 0 {
+			break
+		}
+		for _, r := range linhas {
+			tipo := strings.ToLower(stringField(r, "USER_TYPE"))
+			todos = append(todos, BitrixUser{
+				ID:       stringField(r, "ID"),
+				Name:     stringField(r, "NAME"),
+				LastName: stringField(r, "LAST_NAME"),
+				Email:    stringField(r, "EMAIL"),
+				Position: stringField(r, "WORK_POSITION"),
+				Active:   boolField(r, "ACTIVE"),
+				Extranet: tipo == "extranet",
+				Bot:      tipo == "bot",
+			})
+		}
+		// user.get devolve 50 por pagina; menos que isso significa fim.
+		if len(linhas) < 50 {
+			break
+		}
+		start += 50
+	}
+	if len(todos) == 0 {
+		return nil, fmt.Errorf("user.get nao devolveu usuarios")
+	}
+	return todos, nil
+}
+
+// ListAllUsers devolve os colaboradores internos ativos do portal.
+//
+// BUG QUE ISTO CORRIGE: a versao antiga NAO listava usuarios — ela SONDAVA
+// os IDs de 1 ate maxID (1000), 50 por chamada, porque im.user.list.get
+// exige IDs explicitos. Quem tivesse ID acima do teto simplesmente nunca era
+// consultado, e usuario novo de portal antigo cai justamente ai: o ID do
+// Bitrix e' sequencial por portal e conta tambem usuarios excluidos,
+// externos e bots, entao passa de 1000 rapido. Sintoma: "usuario novo nao
+// aparece nas permissoes, mesmo atualizando".
+//
+// Agora tenta primeiro o metodo de listagem de verdade (user.get, paginado).
+// So' cai na sondagem se o portal nao tiver concedido o scope `user` — e
+// nesse caso a sondagem passou a ser ADAPTATIVA em vez de parar num teto
+// fixo (ver comentario abaixo).
 func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int) ([]BitrixUser, error) {
+	if users, err := c.listarViaUserGet(ctx, creds); err == nil {
+		c.log.Info("ListAllUsers via user.get", zap.Int("total", len(users)))
+		return filtrarInternosAtivos(users), nil
+	} else {
+		c.log.Info("user.get indisponivel — sondando IDs (conceda o scope `user` no app pra ficar completo e rapido)",
+			zap.Error(err))
+	}
 	if maxID <= 0 {
 		maxID = 500
 	}
@@ -1316,66 +1389,102 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 		err   error
 	}
 
-	// Monta lista de chunks: [1..50], [51..100], ...
-	var chunks [][]string
-	for start := 1; start <= maxID; start += chunkSize {
-		end := start + chunkSize - 1
-		if end > maxID {
-			end = maxID
+	// Sondagem ADAPTATIVA, em ondas.
+	//
+	// A versao antiga montava os chunks de 1 ate maxID e parava. Usuario com
+	// ID acima do teto nunca era consultado — o bug relatado. Elevar o teto
+	// resolveria, mas nao de graca: o rate limiter e' de 2 req/s por metodo,
+	// entao varrer 5000 IDs levaria quase um minuto em TODA chamada.
+	//
+	// Aqui a varredura continua enquanto a onda anterior ainda estiver
+	// achando gente. Portal pequeno para na primeira onda (rapido como
+	// antes); portal com IDs altos continua ate' esgotar. O limite duro
+	// existe so' pra nao varrer pra sempre.
+	const idMaximoAbsoluto = 20000
+	var brutos []BitrixUser
+	inicioOnda := 1
+	for inicioOnda <= idMaximoAbsoluto {
+		fimOnda := inicioOnda + maxID - 1
+		if fimOnda > idMaximoAbsoluto {
+			fimOnda = idMaximoAbsoluto
 		}
-		ids := make([]string, 0, end-start+1)
-		for id := start; id <= end; id++ {
-			ids = append(ids, fmt.Sprintf("%d", id))
+
+		var chunks [][]string
+		for start := inicioOnda; start <= fimOnda; start += chunkSize {
+			end := start + chunkSize - 1
+			if end > fimOnda {
+				end = fimOnda
+			}
+			ids := make([]string, 0, end-start+1)
+			for id := start; id <= end; id++ {
+				ids = append(ids, fmt.Sprintf("%d", id))
+			}
+			chunks = append(chunks, ids)
 		}
-		chunks = append(chunks, ids)
-	}
 
-	sem := make(chan struct{}, concurrency)
-	results := make(chan chunkResult, len(chunks))
-	var wg sync.WaitGroup
-	for _, ch := range chunks {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(ids []string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			users, err := c.GetUserByIDs(ctx, creds, ids)
-			results <- chunkResult{users: users, err: err}
-		}(ch)
-	}
-	wg.Wait()
-	close(results)
+		sem := make(chan struct{}, concurrency)
+		results := make(chan chunkResult, len(chunks))
+		var wg sync.WaitGroup
+		for _, ch := range chunks {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(ids []string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				users, err := c.GetUserByIDs(ctx, creds, ids)
+				results <- chunkResult{users: users, err: err}
+			}(ch)
+		}
+		wg.Wait()
+		close(results)
 
+		achadosNaOnda := 0
+		for r := range results {
+			if r.err != nil {
+				c.log.Warn("ListAllUsers chunk failed", zap.Error(r.err))
+				continue
+			}
+			brutos = append(brutos, r.users...)
+			achadosNaOnda += len(r.users)
+		}
+		// Onda vazia = nao ha' mais ninguem acima disso. Para.
+		if achadosNaOnda == 0 {
+			break
+		}
+		inicioOnda = fimOnda + 1
+	}
+	c.log.Info("ListAllUsers via sondagem de IDs",
+		zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicioOnda-1))
+	return filtrarInternosAtivos(brutos), nil
+}
+
+// filtrarInternosAtivos deixa so' quem pode operar atendimento, e ordena por
+// nome. Compartilhado pelos dois caminhos (user.get e sondagem) pra que a
+// regra de quem aparece no painel nao possa divergir entre eles.
+func filtrarInternosAtivos(brutos []BitrixUser) []BitrixUser {
 	seen := map[string]bool{}
-	var all []BitrixUser
-	for r := range results {
-		if r.err != nil {
-			c.log.Warn("ListAllUsers chunk failed", zap.Error(r.err))
+	all := make([]BitrixUser, 0, len(brutos))
+	for _, u := range brutos {
+		if u.ID == "" || seen[u.ID] {
 			continue
 		}
-		for _, u := range r.users {
-			if u.ID == "" || seen[u.ID] {
-				continue
-			}
-			// So colaboradores INTERNOS ATIVOS aparecem no painel de permissoes:
-			// - !Active: usuario demitido/desativado, nao deve operar atendimento.
-			// - Extranet: convidados externos (parceiros, clientes), nao sao
-			//   atendentes — Bitrix mistura na mesma lista mas separa pelo flag.
-			// - Bot: usuarios sinteticos (chatbots, integracoes do proprio Bitrix).
-			if !u.Active || u.Extranet || u.Bot {
-				continue
-			}
-			seen[u.ID] = true
-			all = append(all, u)
+		// So colaboradores INTERNOS ATIVOS aparecem no painel de permissoes:
+		// - !Active: usuario demitido/desativado, nao deve operar atendimento.
+		// - Extranet: convidados externos (parceiros, clientes), nao sao
+		//   atendentes — Bitrix mistura na mesma lista mas separa pelo flag.
+		// - Bot: usuarios sinteticos (chatbots, integracoes do proprio Bitrix).
+		if !u.Active || u.Extranet || u.Bot {
+			continue
 		}
+		seen[u.ID] = true
+		all = append(all, u)
 	}
-	// Ordena por nome
 	sort.SliceStable(all, func(i, j int) bool {
 		ni := strings.ToLower(all[i].Name + " " + all[i].LastName)
 		nj := strings.ToLower(all[j].Name + " " + all[j].LastName)
 		return ni < nj
 	})
-	return all, nil
+	return all
 }
 
 // GetUserByIDs busca informacoes de usuarios pelo ID via im.user.list.get
@@ -1494,9 +1603,9 @@ func stringField(m map[string]interface{}, key string) string {
 // Idempotente: chamar de novo so' atualiza o registro existente (Bitrix
 // trata como upsert pelo CODE).
 //
-//   code: identificador unico do sender (ex: "uctalk_whatsapp")
-//   name: nome exibido no menu (pode ser localizado via map em vez de string)
-//   handlerURL: URL HTTPS publica do nosso endpoint que recebe os envios
+//	code: identificador unico do sender (ex: "uctalk_whatsapp")
+//	name: nome exibido no menu (pode ser localizado via map em vez de string)
+//	handlerURL: URL HTTPS publica do nosso endpoint que recebe os envios
 func (c *Client) RegisterSMSSender(ctx context.Context, creds TenantCreds, code, name, handlerURL string) error {
 	_, err := c.call(ctx, creds, "messageservice.sender.add", map[string]interface{}{
 		"CODE":    code,
