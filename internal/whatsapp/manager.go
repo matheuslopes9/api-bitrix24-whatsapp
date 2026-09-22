@@ -368,9 +368,26 @@ func (m *Manager) AddSession(_ context.Context, phone string) error {
 	return nil
 }
 
+// storeURI monta a connection string do SQLite do whatsmeow.
+func storeURI(dbPath string) string {
+	return "file:" + dbPath + "?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"
+}
+
+// removerArquivosStore apaga o .db e os sidecars do WAL.
+func removerArquivosStore(dbPath string) {
+	for _, suf := range []string{"", "-shm", "-wal"} {
+		_ = os.Remove(dbPath + suf)
+	}
+}
+
 func (m *Manager) initSession(phone, dbPath string) {
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite3", "file:"+dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000", waLog.Noop)
+
+	// O arquivo ja' existia antes desta abertura? Importa pro descarte abaixo.
+	_, errStat := os.Stat(dbPath)
+	arquivoJaExistia := errStat == nil
+
+	container, err := sqlstore.New(ctx, "sqlite3", storeURI(dbPath), waLog.Noop)
 	if err != nil {
 		m.log.Error("open sqlite store", zap.String("phone", phone), zap.Error(err))
 		return
@@ -380,6 +397,45 @@ func (m *Manager) initSession(phone, dbPath string) {
 	if err != nil {
 		m.log.Error("get device", zap.String("phone", phone), zap.Error(err))
 		return
+	}
+
+	// PAREAMENTO NOVO SOBRE STORE USADO — descarta o store antes do QR.
+	//
+	// Store.ID == nil significa que nao ha' device valido: o proximo passo e'
+	// mostrar QR e parear do zero. Mas o ARQUIVO pode ser de um pareamento
+	// anterior do mesmo numero — o AddSession monta o caminho como
+	// "<numero>.db", entao repare o mesmo numero e cai no mesmo arquivo.
+	//
+	// O device foi limpo, mas o resto do store NAO: ficam as sessoes Signal
+	// de cada contato (whatsmeow_sessions, sender keys, ratchet state). O
+	// device novo tem chaves novas e herda o ratchet do device velho, entao a
+	// mensagem que chega nao descriptografa:
+	//
+	//   SessionCipher: Unable to get or create message keys:
+	//   received message with old counter (index: 1, count: 0)
+	//
+	// Sem descriptografar, events.Message NUNCA dispara — nao ha'
+	// ProcessInbound, e a mensagem simplesmente nao aparece na Linha Aberta.
+	// Parece problema do Bitrix e nao e': morre antes, dentro do whatsmeow.
+	//
+	// Nao ha' o que preservar: store sem device e' inutilizavel de qualquer
+	// forma, e o estado Signal remanescente e' ativamente nocivo.
+	if deviceStore.ID == nil && arquivoJaExistia {
+		m.log.Warn("pareamento novo sobre store usado — descartando estado Signal antigo",
+			zap.String("phone", phone), zap.String("db", dbPath))
+		_ = container.Close()
+		removerArquivosStore(dbPath)
+
+		container, err = sqlstore.New(ctx, "sqlite3", storeURI(dbPath), waLog.Noop)
+		if err != nil {
+			m.log.Error("recriar store limpo falhou", zap.String("phone", phone), zap.Error(err))
+			return
+		}
+		deviceStore, err = container.GetFirstDevice(ctx)
+		if err != nil {
+			m.log.Error("get device (store limpo)", zap.String("phone", phone), zap.Error(err))
+			return
+		}
 	}
 
 	client := whatsmeow.NewClient(deviceStore, waLog.Noop)
