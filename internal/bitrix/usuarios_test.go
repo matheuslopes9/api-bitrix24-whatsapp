@@ -35,3 +35,41 @@ func TestFiltrarInternosAtivosVazio(t *testing.T) {
 		t.Errorf("entrada vazia deve devolver vazio, veio %+v", got)
 	}
 }
+
+// A parada da sondagem por EVIDENCIA e' a parte facil de errar: parar cedo
+// demais perde usuario (o bug original), e nunca parar trava a tela. Este
+// teste exercita a regra isolada da chamada HTTP.
+func TestParadaPorOndasVazias(t *testing.T) {
+	const desistirApos = 3
+
+	// Simula ondas: cada valor e' quantos usuarios aquela onda achou.
+	// O buraco de 2 ondas no meio representa um portal com muita exclusao —
+	// a varredura NAO pode parar ali.
+	casos := []struct {
+		nome           string
+		ondas          []int
+		ondasEsperadas int
+	}{
+		{"acha sempre", []int{5, 5, 5, 0, 0, 0}, 6},
+		{"buraco no meio nao para", []int{5, 0, 0, 7, 0, 0, 0}, 7},
+		{"vazio desde o inicio", []int{0, 0, 0, 9, 9}, 3},
+	}
+
+	for _, c := range casos {
+		vazias, processadas := 0, 0
+		for _, achados := range c.ondas {
+			processadas++
+			if achados == 0 {
+				vazias++
+				if vazias >= desistirApos {
+					break
+				}
+			} else {
+				vazias = 0
+			}
+		}
+		if processadas != c.ondasEsperadas {
+			t.Errorf("%s: processou %d ondas, esperava %d", c.nome, processadas, c.ondasEsperadas)
+		}
+	}
+}

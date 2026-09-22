@@ -1316,7 +1316,13 @@ type BitrixUser struct {
 func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]BitrixUser, error) {
 	var todos []BitrixUser
 	start := 0
-	for pagina := 0; pagina < 200; pagina++ { // teto de sanidade: 200*50 = 10k
+	vistos := map[string]bool{}
+	// Pagina ate' o Bitrix parar de devolver gente. Sem teto de usuarios: o
+	// criterio e' "ativo", nao uma quantidade que alguem chutou. O limite de
+	// voltas abaixo existe so' pra nao girar pra sempre se a API repetir
+	// pagina — e' guarda contra loop, nao contra portal grande (10 mil
+	// voltas = 500 mil usuarios).
+	for volta := 0; volta < 10000; volta++ {
 		raw, err := c.call(ctx, creds, "user.get", map[string]interface{}{
 			"FILTER": map[string]interface{}{"ACTIVE": true},
 			"start":  start,
@@ -1331,7 +1337,14 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 		if len(linhas) == 0 {
 			break
 		}
+		novos := 0
 		for _, r := range linhas {
+			id := stringField(r, "ID")
+			if id == "" || vistos[id] {
+				continue
+			}
+			vistos[id] = true
+			novos++
 			tipo := strings.ToLower(stringField(r, "USER_TYPE"))
 			todos = append(todos, BitrixUser{
 				ID:       stringField(r, "ID"),
@@ -1344,7 +1357,12 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 				Bot:      tipo == "bot",
 			})
 		}
-		// user.get devolve 50 por pagina; menos que isso significa fim.
+		// Pagina que nao trouxe ninguem novo = a API esta repetindo. Para,
+		// senao o laco giraria ate' o limite de voltas.
+		if novos == 0 {
+			break
+		}
+		// Pagina menor que o tamanho padrao significa que acabou.
 		if len(linhas) < 50 {
 			break
 		}
@@ -1400,14 +1418,17 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 	// achando gente. Portal pequeno para na primeira onda (rapido como
 	// antes); portal com IDs altos continua ate' esgotar. O limite duro
 	// existe so' pra nao varrer pra sempre.
-	const idMaximoAbsoluto = 20000
+	// Para por EVIDENCIA, nao por teto: segue varrendo enquanto estiver
+	// achando gente, e so' desiste depois de ondas seguidas vazias. Uma onda
+	// vazia sozinha nao basta — portal com muita exclusao tem buracos longos
+	// na numeracao, e parar no primeiro buraco perderia quem vem depois.
+	const ondasVaziasParaDesistir = 3
+	const idMaximoAbsoluto = 1000000 // guarda contra loop, nao limite de portal
 	var brutos []BitrixUser
+	ondasVazias := 0
 	inicioOnda := 1
 	for inicioOnda <= idMaximoAbsoluto {
 		fimOnda := inicioOnda + maxID - 1
-		if fimOnda > idMaximoAbsoluto {
-			fimOnda = idMaximoAbsoluto
-		}
 
 		var chunks [][]string
 		for start := inicioOnda; start <= fimOnda; start += chunkSize {
@@ -1447,9 +1468,13 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 			brutos = append(brutos, r.users...)
 			achadosNaOnda += len(r.users)
 		}
-		// Onda vazia = nao ha' mais ninguem acima disso. Para.
 		if achadosNaOnda == 0 {
-			break
+			ondasVazias++
+			if ondasVazias >= ondasVaziasParaDesistir {
+				break
+			}
+		} else {
+			ondasVazias = 0
 		}
 		inicioOnda = fimOnda + 1
 	}
