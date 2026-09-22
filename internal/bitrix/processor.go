@@ -22,6 +22,61 @@ func normalizeChatID(jid string) string {
 	return jid
 }
 
+// telefoneLegivel formata o numero pra exibicao: "558199809595" vira
+// "+55 81 9980-9595". Usado como ultimo recurso de nome — melhor o cliente
+// aparecer pelo numero do que como "Guest".
+func telefoneLegivel(fone string) string {
+	d := make([]rune, 0, len(fone))
+	for _, r := range fone {
+		if r >= '0' && r <= '9' {
+			d = append(d, r)
+		}
+	}
+	n := string(d)
+	if n == "" {
+		return ""
+	}
+	// LID (LinkedID) nao e' telefone. O whatsmeow resolve a maioria via
+	// SenderAlt, mas quando nao ha' alt sobra o LID cru — 15+ digitos.
+	// Formatar isso como "+1275862..." inventaria um numero que nao existe
+	// e o atendente tentaria ligar. Mostra os ultimos digitos so' pra
+	// distinguir um contato do outro na lista.
+	// A regra de 15 digitos vem da migration 009, que ja' usava esse corte.
+	if len(n) > 15 {
+		return "Contato WhatsApp (…" + n[len(n)-4:] + ")"
+	}
+	// Brasil: 55 + DDD(2) + numero(8 ou 9)
+	if strings.HasPrefix(n, "55") && (len(n) == 12 || len(n) == 13) {
+		ddd := n[2:4]
+		resto := n[4:]
+		meio := len(resto) - 4
+		return "+55 " + ddd + " " + resto[:meio] + "-" + resto[meio:]
+	}
+	return "+" + n
+}
+
+// nomeDoContato decide o nome que vai aparecer no Contact Center.
+//
+// BUG: antes era so' job.FromName, que e' o PushName do WhatsApp. Esse campo
+// vem VAZIO com frequencia — remetente @lid, contato que nunca mandou push
+// name, ou store recem-pareado (o cache de contatos nasce vazio). Com nome
+// vazio, o Bitrix rotula a conversa como "Guest", e o atendente nao sabe com
+// quem esta falando nem consegue diferenciar dois "Guest" na lista.
+//
+// Ordem: push name do WhatsApp -> nome que ja' gravamos do contato ->
+// telefone formatado. So' cai pra vazio se nao houver nem numero.
+func nomeDoContato(pushName string, contato *db.ContactMapping, fone string) string {
+	if n := strings.TrimSpace(pushName); n != "" {
+		return n
+	}
+	if contato != nil {
+		if n := strings.TrimSpace(contato.WAName); n != "" {
+			return n
+		}
+	}
+	return telefoneLegivel(fone)
+}
+
 // Processor implementa a lógica de negócio: inbound WA → Bitrix, outbound Bitrix → WA.
 // É multi-tenant: busca a BitrixAccount vinculada ao sessionJID de cada job.
 type Processor struct {
@@ -113,6 +168,9 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	if job.IsGroup && job.GroupJID != "" {
 		chatExtID = normalizeChatID(job.GroupJID)
 		chatName = job.GroupName
+		if strings.TrimSpace(chatName) == "" {
+			chatName = "Grupo WhatsApp"
+		}
 		chatPhone = "" // grupo nao tem telefone individual
 		sender := job.FromName
 		if sender == "" {
@@ -128,7 +186,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		}
 	} else {
 		chatExtID = normalizeChatID(job.FromJID)
-		chatName = job.FromName
+		chatName = nomeDoContato(job.FromName, contact, job.FromPhone)
 		chatPhone = job.FromPhone
 		msgText = job.Text
 	}
@@ -206,18 +264,28 @@ func (p *Processor) ensureContact(ctx context.Context, job *queue.InboundJob) (*
 
 	existing, err := p.repo.GetContactByJID(ctx, jid, job.SessionID)
 	if err == nil {
-		// Atualiza nome do grupo se mudou (grupo renomeado no WhatsApp).
-		if job.IsGroup && name != "" && existing.WAName != name {
+		// Grava o nome quando ele MUDA ou quando finalmente chega.
+		//
+		// Antes isto valia so' pra grupo. Num contato 1-a-1 cujo primeiro
+		// PushName veio vazio, o nome nunca mais era preenchido, mesmo que
+		// mensagens seguintes trouxessem — o contato ficava "Guest" pra
+		// sempre. Nunca sobrescreve nome existente com vazio.
+		if name != "" && existing.WAName != name {
 			existing.WAName = name
+			if existing.WAPhone == "" && phone != "" {
+				existing.WAPhone = phone
+			}
 			_ = p.repo.UpsertContact(ctx, existing)
 		}
 		return existing, nil
 	}
 	contact := &db.ContactMapping{
-		ID:           uuid.New(),
-		WAJID:        jid,
-		WAPhone:      phone,
-		WAName:       name,
+		ID:      uuid.New(),
+		WAJID:   jid,
+		WAPhone: phone,
+		// Sem PushName, guarda o telefone formatado: e' o que vai aparecer
+		// pro atendente ate' o WhatsApp informar o nome de perfil.
+		WAName:       nomeDoContato(name, nil, phone),
 		BitrixEntity: "chat",
 		BitrixID:     "", // nunca lido: o vinculo real do chat e o BitrixChatID
 		SessionID:    &job.SessionID,
