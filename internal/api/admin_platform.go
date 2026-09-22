@@ -39,25 +39,36 @@ func (h *handlers) adminActor(c *fiber.Ctx) string {
 	if a, ok := c.Locals("admin_actor").(string); ok && a != "" {
 		return a
 	}
-	return h.cfg.App.AdminUser
+	// Fallback: sessao aberta com cookie do formato antigo (sem identidade),
+	// ou login pelo root do .env. Ambos sao o operador raiz.
+	if h.cfg.App.AdminUser != "" {
+		return h.cfg.App.AdminUser
+	}
+	return "root"
 }
 
 // tryDBAdminLogin valida credenciais contra os admins do banco (bcrypt).
 // Retorna true se um usuario ATIVO bateu email+senha. Atualiza last_login.
-func (h *handlers) tryDBAdminLogin(c *fiber.Ctx, email, password string) bool {
+// Devolve (email normalizado, papel, ok). O papel sai daqui e vai pro
+// cookie — e' o que permite a auditoria registrar QUEM agiu.
+func (h *handlers) tryDBAdminLogin(c *fiber.Ctx, email, password string) (string, string, bool) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || password == "" {
-		return false
+		return "", "", false
 	}
 	u, err := h.repo.GetAdminUserByEmail(c.Context(), email)
 	if err != nil || u == nil || !u.Active {
-		return false
+		return "", "", false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) != nil {
-		return false
+		return "", "", false
 	}
 	_ = h.repo.TouchAdminUserLogin(c.Context(), u.ID)
-	return true
+	papel := u.Role
+	if papel != roleAdmin {
+		papel = roleSupport
+	}
+	return email, papel, true
 }
 
 // GET /admin/api/users — lista admins do banco (sem hash).

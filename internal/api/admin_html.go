@@ -219,11 +219,9 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item active" data-page="overview" onclick="irPara('overview')"><span class="ic">📊</span> Visão geral</div>
     <div class="sb-item" data-page="tenants" onclick="irPara('tenants')"><span class="ic">🏢</span> Tenants <span class="badge-count" id="cnt-tenants">0</span></div>
     <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
-    <div class="sb-group">Financeiro</div>
-    <div class="sb-item" data-page="plandefs" onclick="irPara('plandefs')"><span class="ic">🧩</span> Planos</div>
-    <div class="sb-item" data-page="cupons" onclick="irPara('cupons')"><span class="ic">🎟️</span> Cupons</div>
-    <div class="sb-item" data-page="gateway" onclick="irPara('gateway')"><span class="ic">🔌</span> Gateway</div>
-    <div class="sb-item" data-page="billing" onclick="irPara('billing')"><span class="ic">💳</span> Pagamentos <span class="badge-count" id="cnt-charges">0</span></div>
+    <div class="sb-item" data-page="health" onclick="irPara('health')"><span class="ic">🩺</span> Saúde do cliente</div>
+    <div class="sb-group">Contratos</div>
+    <div class="sb-item" data-page="licencas" onclick="irPara('licencas')"><span class="ic">📄</span> Licenças <span class="badge-count" id="cnt-vencendo">0</span></div>
     <div class="sb-group">Monitoramento</div>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
     <div class="sb-item" data-page="logs" onclick="irPara('logs')"><span class="ic">📜</span> Logs ao vivo</div>
@@ -257,11 +255,11 @@ const adminHomeHTML = `<!doctype html>
     <!-- OVERVIEW -->
     <div class="page active" id="page-overview">
       <div class="kpis" id="kpis"><div class="loading">Carregando métricas…</div></div>
-      <div class="section-title">💳 Últimos pagamentos</div>
+      <div class="section-title">⏰ Renovações a vencer</div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
-          <thead><tr><th>Referência</th><th>Tenant</th><th>Plano</th><th>Valor</th><th>Status</th><th>Data</th></tr></thead>
-          <tbody id="recent-charges"><tr><td colspan="6" class="loading">Carregando…</td></tr></tbody>
+          <thead><tr><th>Cliente</th><th>Vence em</th><th>Situação</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody id="renovacoes"><tr><td colspan="4" class="loading">Carregando…</td></tr></tbody>
         </table>
       </div></div>
     </div>
@@ -271,132 +269,54 @@ const adminHomeHTML = `<!doctype html>
       <div class="toolbar">
         <input class="search" id="tenant-search" placeholder="🔎 Buscar por domínio…" oninput="renderTenants()">
         <select class="filter" id="tenant-filter" onchange="renderTenants()">
-          <option value="">Todos os status</option>
-          <option value="trial">Trial</option><option value="active">Ativo</option>
-          <option value="expired">Expirado</option><option value="suspended">Suspenso</option>
-          <option value="no_plan">Sem plano</option>
-        </select>
-        <select class="filter" id="tenant-plan-filter" onchange="renderTenants()">
-          <option value="">Todos os planos</option>
-          <option value="pro">Pro</option><option value="basic">Básico</option>
+          <option value="">Todas as situações</option>
+          <option value="vencendo">Vencendo (7 dias)</option>
+          <option value="vencida">Vencida</option>
+          <option value="sem_licenca">Sem licença</option>
         </select>
         <span id="tenant-count" style="margin-left:auto;font-size:.8em;color:var(--dim);align-self:center"></span>
       </div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
-          <thead><tr><th>Portal</th><th>Plano</th><th>Status</th><th>Conexões</th><th>Msgs 24h</th><th>Token</th><th style="text-align:right">Ações</th></tr></thead>
-          <tbody id="tenants-body"><tr><td colspan="7" class="loading">Carregando tenants…</td></tr></tbody>
+          <thead><tr><th>Cliente</th><th>Contrato</th><th>Licença</th><th>Conexões</th><th>Msgs 24h</th><th>Token</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody id="tenants-body"><tr><td colspan="7" class="loading">Carregando clientes…</td></tr></tbody>
         </table>
       </div></div>
     </div>
 
-    <!-- BILLING -->
-    <div class="page" id="page-billing">
-      <div class="tablewrap"><div class="tablescroll">
-        <table>
-          <thead><tr><th>Tenant</th><th>Plano</th><th>Método</th><th>Valor</th><th>Status</th><th>Referência</th><th>Criado</th><th>Boleto</th></tr></thead>
-          <tbody id="billing-body"><tr><td colspan="8" class="loading">Carregando cobranças…</td></tr></tbody>
-        </table>
-      </div></div>
-    </div>
-
-    <!-- CUPONS -->
-    <div class="page" id="page-cupons">
-      <div class="toolcard" style="margin-bottom:16px">
-        <h3>🎟️ Novo cupom</h3>
-        <p>Crie cupons de desconto ou de extensão de teste. O cliente digita o código na aba Assinatura.</p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end">
-          <div><label style="font-size:.72em;color:var(--dim)">Código</label><input class="dominput" id="cp-code" placeholder="PROMO10" style="margin:2px 0 0;text-transform:uppercase"></div>
-          <div><label style="font-size:.72em;color:var(--dim)">Tipo</label>
-            <select class="filter" id="cp-kind" style="width:100%" onchange="atualizarDicaCupom()">
-              <option value="percent">Desconto %</option>
-              <option value="amount">Desconto R$</option>
-              <option value="trial_days">Dias de teste</option>
-            </select></div>
-          <div><label style="font-size:.72em;color:var(--dim)" id="cp-value-label">Valor (%)</label><input class="dominput" id="cp-value" type="number" min="1" value="10" style="margin:2px 0 0"></div>
-          <div><label style="font-size:.72em;color:var(--dim)">Plano (vazio = todos)</label><input class="dominput" id="cp-plan" placeholder="pro" style="margin:2px 0 0"></div>
-          <div><label style="font-size:.72em;color:var(--dim)">Máx. usos (0 = ilimitado)</label><input class="dominput" id="cp-max" type="number" min="0" value="0" style="margin:2px 0 0"></div>
-          <div><label style="font-size:.72em;color:var(--dim)">Validade (opcional)</label><input class="dominput" id="cp-exp" type="date" style="margin:2px 0 0"></div>
-        </div>
-        <input class="dominput" id="cp-desc" placeholder="Descrição (aparece pro cliente)" style="margin:10px 0 0">
-        <div class="row" style="margin-top:12px;align-items:center">
-          <label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;cursor:pointer"><input type="checkbox" id="cp-active" checked style="width:16px;height:16px"> Ativo</label>
-          <button class="btn btn-primary" onclick="salvarCupom()">Criar cupom</button>
-        </div>
-      </div>
-      <div class="tablewrap"><div class="tablescroll">
-        <table>
-          <thead><tr><th>Código</th><th>Tipo</th><th>Valor</th><th>Plano</th><th>Usos</th><th>Validade</th><th>Status</th><th style="text-align:right">Ações</th></tr></thead>
-          <tbody id="cupons-body"><tr><td colspan="8" class="loading">Carregando…</td></tr></tbody>
-        </table>
-      </div></div>
-    </div>
-
-    <!-- GATEWAY (config de pagamento) -->
-    <div class="page" id="page-gateway">
-      <div style="max-width:640px">
-        <div class="toolcard">
-          <h3>🏦 Gateway de pagamento (Itaú)</h3>
-          <p>PIX e Boleto são emitidos direto pelo Itaú (mTLS). As credenciais vêm das variáveis de ambiente <code>ITAU_*</code> no servidor; abaixo é só o status (somente leitura).</p>
-
-          <div id="itau-status" style="margin:8px 0 14px"></div>
-
-          <div style="display:flex;gap:10px">
-            <div style="flex:1">
-              <label style="font-size:.72em;color:var(--dim)">Client ID</label>
-              <input class="dominput" id="itau-clientid" readonly style="margin:2px 0 12px;opacity:.85">
-            </div>
-            <div style="flex:1">
-              <label style="font-size:.72em;color:var(--dim)">Chave PIX</label>
-              <input class="dominput" id="itau-chavepix" readonly style="margin:2px 0 12px;opacity:.85">
-            </div>
-          </div>
-
-          <div style="display:flex;gap:10px">
-            <div style="flex:1">
-              <label style="font-size:.72em;color:var(--dim)">Ambiente</label>
-              <input class="dominput" id="itau-env" readonly style="margin:2px 0 12px;opacity:.85">
-            </div>
-            <div style="flex:1">
-              <label style="font-size:.72em;color:var(--dim)">Certificado mTLS</label>
-              <input class="dominput" id="itau-cert" readonly style="margin:2px 0 12px;opacity:.85">
-            </div>
-          </div>
-
-          <div style="font-size:.74em;color:var(--dim);margin-top:2px">O período de teste (trial) é configurado na aba <b>Planos</b>. Para trocar credenciais, ajuste as envs <code>ITAU_*</code> no EasyPanel e redeploy.</div>
-
-          <div class="row" style="margin-top:16px">
-            <button class="btn" onclick="testarGateway('pix')">Testar PIX (R$1 real)</button>
-            <button class="btn" onclick="testarGateway('boleto')">Testar Boleto (validação)</button>
-          </div>
-          <div id="gateway-test" style="margin-top:12px"></div>
-        </div>
-
-        <div class="toolcard" style="margin-top:14px">
-          <h3>🔔 Webhook PIX (Itaú)</h3>
-          <p>Cadastre esta URL no portal do Itaú — <b>SEM</b> o sufixo <code>/pix</code> (o banco acrescenta sozinho). É por ela que o Itaú avisa quando um PIX é pago, liberando o plano automaticamente.</p>
-          <input class="dominput" id="bc-postback" readonly onclick="this.select()" style="margin:0;cursor:pointer">
-        </div>
-      </div>
-    </div>
-
-    <!-- PLAN DEFS (construtor de planos) -->
-    <div class="page" id="page-plandefs">
+    <!-- LICENCAS -->
+    <div class="page" id="page-licencas">
       <div class="toolbar">
-        <div style="flex:1;font-size:.85em;color:var(--muted)">Configure preço e features de cada plano. Alterações valem na hora para novos gates e para os cards que o cliente vê.</div>
-        <button class="btn btn-primary" onclick="novoPlano()">➕ Novo plano</button>
+        <input class="search" id="lic-search" placeholder="Filtrar por domínio…" oninput="renderLicencas()">
+        <select class="filter" id="lic-filter" onchange="renderLicencas()">
+          <option value="">Todas</option>
+          <option value="vencendo">Vencendo (7 dias)</option>
+          <option value="vencida">Vencidas</option>
+          <option value="sem_prazo">Sem prazo</option>
+        </select>
       </div>
-      <div id="plandefs-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">
-        <div class="loading">Carregando planos…</div>
-      </div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>Cliente</th><th>Números</th><th>Benefícios</th><th>Vigência</th><th>Situação</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody id="licencas-body"><tr><td colspan="6" class="loading">Carregando licenças…</td></tr></tbody>
+        </table>
+      </div></div>
     </div>
 
-    <!-- USAGE -->
+    <!-- SAUDE DO CLIENTE -->
+    <div class="page" id="page-health">
+      <div class="toolbar">
+        <input class="dominput" id="health-domain" placeholder="cliente.bitrix24.com.br" style="flex:1">
+        <button class="btn" onclick="carregarHealth()">🩺 Diagnosticar</button>
+      </div>
+      <div id="health-out"><div class="empty">Informe o domínio do cliente para ver o estado do app dele.</div></div>
+    </div>
+
     <div class="page" id="page-usage">
       <div class="section-title">📈 Consumo por tenant</div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
-          <thead><tr><th>Tenant</th><th>Msgs 24h</th><th>Msgs 7d</th><th>Msgs 30d</th><th>Sessões</th><th>Pagamentos</th><th>Receita</th></tr></thead>
+          <thead><tr><th>Tenant</th><th>Msgs 24h</th><th>Msgs 7d</th><th>Msgs 30d</th><th>Sessões</th><th>Contrato</th><th>Vigência</th></tr></thead>
           <tbody id="usage-body"><tr><td colspan="7" class="loading">Carregando consumo…</td></tr></tbody>
         </table>
       </div></div>
@@ -431,7 +351,7 @@ const adminHomeHTML = `<!doctype html>
           <div style="flex:1;min-width:120px"><label style="font-size:.72em;color:var(--dim)">Nome</label><input class="dominput" id="u-name" placeholder="Nome" style="margin:0"></div>
           <div style="min-width:140px"><label style="font-size:.72em;color:var(--dim)">Senha (8+)</label><input class="dominput" id="u-pass" type="password" placeholder="senha" style="margin:0"></div>
           <div style="min-width:120px"><label style="font-size:.72em;color:var(--dim)">Papel</label>
-            <select class="filter" id="u-role" style="width:100%"><option value="support">Suporte</option><option value="superadmin">Superadmin</option></select></div>
+            <select class="filter" id="u-role" style="width:100%"><option value="support">Suporte</option><option value="superadmin">Administrador</option></select></div>
           <button class="btn btn-primary" onclick="criarUser()" style="height:38px">Criar</button>
         </div>
       </div>
@@ -552,10 +472,8 @@ var PAGES={
   overview:{title:'Visão geral',sub:'Métricas e saúde do sistema'},
   tenants:{title:'Tenants',sub:'Portais Bitrix24 que instalaram o app'},
   usage:{title:'Consumo',sub:'Uso de recursos por tenant'},
-  plandefs:{title:'Planos',sub:'Construtor de planos — preço e features'},
-  cupons:{title:'Cupons',sub:'Promoções e descontos'},
-  gateway:{title:'Gateway',sub:'Credenciais do gateway e período de teste'},
-  billing:{title:'Pagamentos',sub:'Cobranças e receita via maxiPago'},
+  health:{title:'Saúde do cliente',sub:'Estado real do app de um cliente, num lugar só'},
+  licencas:{title:'Licenças',sub:'Benefícios contratados, vigência e pagamentos'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
   users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
@@ -574,9 +492,7 @@ function irPara(p){
   if(PAGES[p]){document.getElementById('page-title').textContent=PAGES[p].title;document.getElementById('page-sub').textContent=PAGES[p].sub;}
   fecharSidebar();
   // Carrega dados sob demanda por secao.
-  if(p==='gateway')carregarGateway();
-  if(p==='cupons')carregarCupons();
-  if(p==='plandefs')carregarPlanDefs();
+  if(p==='licencas')carregarLicencas();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
   if(p==='users')carregarUsers();
@@ -642,64 +558,66 @@ function fecharSidebar(){document.getElementById('sidebar').classList.remove('op
 
 function fmtBRL(cents){return 'R$ '+((cents||0)/100).toFixed(2).replace('.',',');}
 function fmtDate(s){if(!s)return '—';try{return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return s;}}
-function planBadge(plan,status){var s=status||'no_plan';var cls={trial:'b-trial',active:'b-active',expired:'b-expired',suspended:'b-suspended',no_plan:'b-none'}[s]||'b-none';var lbl={trial:'Trial',active:'Ativo',expired:'Expirado',suspended:'Suspenso',no_plan:'Sem plano'}[s]||s;return '<span class="badge '+cls+'">'+lbl+'</span>';}
-// planTag usa os planos configurados (PLANDEFS) pra rotular; cai nos
-// legados se ainda nao carregou a lista.
-function planTag(plan){
-  if(!plan||plan==='none')return '<span class="badge b-none">—</span>';
-  var def=(PLANDEFS||[]).filter(function(x){return x.code===plan;})[0];
-  var nome=def?def.name:(plan==='pro'?'Pro':plan==='basic'?'Básico':plan==='trial'?'Trial':plan);
-  var cls=(def&&def.is_trial_default)||plan==='trial'?'b-trial':
-          (def?(def.is_pro?'b-pro':'b-basic'):(plan==='pro'?'b-pro':'b-basic'));
-  return '<span class="badge '+cls+'">'+nome.toUpperCase()+'</span>';
+function licBadge(t){
+  if(!t.licenca_configurada) return '<span class="badge b-none">Sem licença</span>';
+  if(t.expirada) return '<span class="badge b-expired">Vencida</span>';
+  if(typeof t.dias_restantes==='number'&&t.dias_restantes<=7) return '<span class="badge b-trial">Vence em '+t.dias_restantes+'d</span>';
+  if(!t.valid_until) return '<span class="badge b-active">Sem prazo</span>';
+  return '<span class="badge b-active">Em vigor</span>';
 }
-function chargeStatus(s){return s==='paid'?'<span class="badge b-active">pago</span>':s==='pending'?'<span class="badge b-trial">pendente</span>':'<span class="badge b-none">'+s+'</span>';}
+function featTags(t){
+  var f=[];
+  if(t.feat_cloud_api)   f.push('Cloud/Templates');
+  if(t.feat_automations) f.push('Automações');
+  if(t.feat_reports)     f.push('Relatórios');
+  if(!f.length) return '<span class="meta">básico</span>';
+  return f.map(function(x){return '<span class="badge b-pro">'+x+'</span>';}).join(' ');
+}
+function fmtDia(s){if(!s)return '—';try{return new Date(s+'T12:00:00').toLocaleDateString('pt-BR');}catch(e){return s;}}
 
 function renderKpis(m){
   var box=document.getElementById('kpis');
   function k(cls,label,val,foot){return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+val+'</div><div class="foot">'+(foot||'')+'</div></div>';}
   box.innerHTML=
-    k('blue','Tenants',m.tenants_total,(m.tenants_pro||0)+' Pro · '+(m.tenants_basic||0)+' Básico')+
-    k('amber','Em trial',m.tenants_trial,'período de teste')+
-    k('green','Ativos (pagos)',m.tenants_active,'assinatura em dia')+
-    k('red','Expirados',m.tenants_expired,(m.tenants_suspended||0)+' suspensos')+
-    k('green','Receita recebida',fmtBRL(m.revenue_cents_paid),(m.charges_paid||0)+' pagamentos')+
-    k('purple','Sessões ativas',m.sessions_active,(m.msgs_24h||0)+' msgs 24h');
+    k('blue','Clientes',m.tenants_total||0,'portais com o app instalado')+
+    k('green','Licenças em vigor',m.licencas_em_vigor||0,'sem prazo ou dentro dele')+
+    k('amber','Vencendo',m.licencas_vencendo||0,'nos próximos 7 dias')+
+    k('red','Vencidas',m.licencas_vencidas||0,'renovação em atraso')+
+    k('purple','Sessões ativas',m.sessions_active||0,(m.msgs_24h||0)+' msgs 24h');
   document.getElementById('cnt-tenants').textContent=m.tenants_total||0;
-  document.getElementById('cnt-charges').textContent=(m.charges_paid||0)+(m.charges_pending||0);
-}
-function renderRecentCharges(charges){
-  var b=document.getElementById('recent-charges');
-  if(!charges||!charges.length){b.innerHTML='<tr><td colspan="6" class="empty">Nenhum pagamento ainda.</td></tr>';return;}
-  b.innerHTML=charges.slice(0,8).map(function(c){return '<tr><td class="mono meta">'+(c.reference_num||'').slice(0,18)+'</td><td class="domain">'+c.domain+'</td><td>'+planTag(c.plan)+'</td><td>'+fmtBRL(c.amount_cents)+'</td><td>'+chargeStatus(c.status)+'</td><td class="meta">'+fmtDate(c.created_at)+'</td></tr>';}).join('');
+  var cv=document.getElementById('cnt-vencendo');
+  if(cv) cv.textContent=(m.licencas_vencendo||0)+(m.licencas_vencidas||0);
 }
 function renderTenants(){
   var q=(document.getElementById('tenant-search').value||'').toLowerCase();
-  var fs=document.getElementById('tenant-filter').value, fp=document.getElementById('tenant-plan-filter').value;
+  var fs=document.getElementById('tenant-filter').value;
   var body=document.getElementById('tenants-body');
-  var list=TENANTS.filter(function(t){if(q&&t.domain.toLowerCase().indexOf(q)<0)return false;if(fs&&(t.plan_status||'no_plan')!==fs)return false;if(fp&&t.plan!==fp)return false;return true;});
+  var list=TENANTS.filter(function(t){
+    if(q&&t.domain.toLowerCase().indexOf(q)<0)return false;
+    if(fs==='vencida'&&!t.expirada)return false;
+    if(fs==='vencendo'&&!(typeof t.dias_restantes==='number'&&t.dias_restantes>=0&&t.dias_restantes<=7))return false;
+    if(fs==='sem_licenca'&&t.licenca_configurada)return false;
+    return true;
+  });
   var cnt=document.getElementById('tenant-count');
-  if(cnt){var filtrando=(q||fs||fp);cnt.textContent=filtrando?(list.length+' de '+TENANTS.length):(TENANTS.length+' tenants');}
-  if(!list.length){body.innerHTML='<tr><td colspan="7" class="empty">Nenhum tenant encontrado.</td></tr>';return;}
+  if(cnt){cnt.textContent=(q||fs)?(list.length+' de '+TENANTS.length):(TENANTS.length+' clientes');}
+  if(!list.length){body.innerHTML='<tr><td colspan="7" class="empty">Nenhum cliente encontrado.</td></tr>';return;}
   body.innerHTML=list.map(function(t){
     var conn=(t.connections_qr||0)+' QR';if(t.connections_cloud)conn+=' · '+t.connections_cloud+' Cloud';
     var tokCls={valid:'tok-valid',expiring:'tok-expiring',expired:'tok-expired'}[t.token_status]||'tok-expired';
     var tokLbl={valid:'válido',expiring:'expirando',expired:'expirado'}[t.token_status]||t.token_status;
-    var trial=t.plan_status==='trial'?'<div class="meta">'+(t.trial_days_remaining||0)+'d restantes</div>':'';
+    var vig=t.valid_until?'<div class="meta">até '+fmtDia(t.valid_until)+'</div>':'';
     var d=encodeURIComponent(t.domain);
     return '<tr><td><div class="domain">'+t.domain+'</div><div class="meta">Linha '+(t.open_line_id||'—')+' · desde '+fmtDate(t.installed_at)+'</div></td>'+
-      '<td>'+planTag(t.plan)+'</td><td>'+planBadge(t.plan,t.plan_status)+trial+'</td>'+
+      '<td>'+featTags(t)+'<div class="meta">'+(t.max_sessions||1)+' número(s)</div></td>'+
+      '<td>'+licBadge(t)+vig+'</td>'+
       '<td>'+conn+'</td><td>'+(t.msgs_24h||0)+'<div class="meta">'+(t.msgs_inbound_24h||0)+'↓ '+(t.msgs_outbound_24h||0)+'↑</div></td>'+
       '<td class="'+tokCls+'">● '+tokLbl+'</td>'+
       '<td style="text-align:right"><div class="actions"><button class="btn" onclick="toggleMenu(this)">⋯</button><div class="menu">'+
-        '<button onclick="planAct(\''+d+'\',\'activate-pro\')">✅ Ativar Pro</button>'+
-        '<button onclick="planActBasic(\''+d+'\')">🔵 Ativar Básico</button>'+
-        '<button onclick="planAct(\''+d+'\',\'extend-trial\')">⏰ +7 dias de trial</button>'+
+        '<button onclick="abrirLicenca(''+d+'')">📄 Licença e pagamentos</button>'+
+        '<button onclick="verSaude(''+d+'')">🩺 Diagnosticar</button>'+
         '<div class="sep"></div>'+
-        '<button onclick="planAct(\''+d+'\',\'reactivate\')">↻ Reativar</button>'+
-        '<button class="danger" onclick="planAct(\''+d+'\',\'suspend\')">⛔ Suspender</button>'+
-        '<div class="sep"></div>'+
-        '<button onclick="setToolDomain(\''+d+'\')">🔧 Abrir em Ferramentas</button>'+
+        '<button onclick="setToolDomain(''+d+'')">🔧 Abrir em Ferramentas</button>'+
       '</div></div></td></tr>';
   }).join('');
 }
@@ -735,267 +653,189 @@ document.addEventListener('click',function(e){if(!e.target.closest('.actions'))f
 window.addEventListener('resize',fechaMenus);
 window.addEventListener('scroll',fechaMenus,true);
 
-function renderBilling(charges){
-  var b=document.getElementById('billing-body');
-  if(!charges||!charges.length){b.innerHTML='<tr><td colspan="8" class="empty">Nenhuma cobrança registrada.</td></tr>';return;}
-  b.innerHTML=charges.map(function(c){var bol=c.boleto_url?'<a href="'+c.boleto_url+'" target="_blank">abrir ↗</a>':'—';return '<tr><td class="domain">'+c.domain+'</td><td>'+planTag(c.plan)+'</td><td class="meta">'+(c.method||'—')+'</td><td>'+fmtBRL(c.amount_cents)+'</td><td>'+chargeStatus(c.status)+'</td><td class="mono meta">'+(c.reference_num||'').slice(0,20)+'</td><td class="meta">'+fmtDate(c.created_at)+'</td><td>'+bol+'</td></tr>';}).join('');
-}
-
-function planAct(domain,action){
-  var dom=decodeURIComponent(domain);
-  var map={'activate-pro':{url:'/admin/api/tenant/plan/activate-pro',body:{domain:dom},confirm:'Ativar plano Pro para '+dom+'?'},'extend-trial':{url:'/admin/api/tenant/plan/extend-trial',body:{domain:dom,days:7},confirm:'Adicionar 7 dias de trial?'},'suspend':{url:'/admin/api/tenant/plan/suspend',body:{domain:dom},confirm:'SUSPENDER o acesso deste tenant?'},'reactivate':{url:'/admin/api/tenant/plan/reactivate',body:{domain:dom},confirm:'Reativar acesso?'}};
-  var a=map[action];if(!a||!confirm(a.confirm))return;
-  fetch(a.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(a.body)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});}).then(function(res){res.ok?(toast('✓ '+action+' aplicado',true),carregarTudo()):toast('✗ '+(res.j.error||'falha'),false);}).catch(function(){toast('✗ erro de conexão',false);});
-}
-function planActBasic(domain){
-  var dom=decodeURIComponent(domain);if(!confirm('Ativar plano Básico (pago) para '+dom+'?'))return;
-  fetch('/admin/api/tenant/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:dom,plan:'basic',status:'active'})}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});}).then(function(res){res.ok?(toast('✓ Básico ativado',true),carregarTudo()):toast('✗ '+(res.j.error||'falha'),false);}).catch(function(){toast('✗ erro de conexão',false);});
-}
-
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
 function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
 
-// ── CUPONS ──
-function atualizarDicaCupom(){
-  var k=document.getElementById('cp-kind').value;
-  var lbl=document.getElementById('cp-value-label');
-  lbl.textContent = k==='percent'?'Valor (%)' : k==='amount'?'Valor (R$)' : 'Dias de teste';
+// ── LICENCAS ──
+var LICENCAS=[];
+function carregarLicencas(){
+  fetch('/admin/api/licenses').then(function(r){return r.json();}).then(function(d){
+    LICENCAS=d.licenses||[]; renderLicencas();
+  }).catch(function(){document.getElementById('licencas-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
 }
-function carregarCupons(){
-  fetch('/admin/api/coupons').then(function(r){return r.json();}).then(function(d){
-    var b=document.getElementById('cupons-body'); var list=d.coupons||[];
-    if(!list.length){b.innerHTML='<tr><td colspan="8" class="empty">Nenhum cupom criado.</td></tr>';return;}
-    b.innerHTML=list.map(function(c){
-      var tipo={percent:'Desconto %',amount:'Desconto R$',trial_days:'Dias de teste'}[c.kind]||c.kind;
-      var val=c.kind==='percent'?(c.value+'%'):c.kind==='amount'?fmtBRL(c.value):(c.value+' dias');
-      var usos=(c.used_count||0)+(c.max_uses>0?(' / '+c.max_uses):' / ∞');
-      var exp=c.expires_at?fmtDate(c.expires_at):'—';
-      var esgotado=c.max_uses>0&&c.used_count>=c.max_uses;
-      var venceu=c.expires_at&&new Date(c.expires_at)<new Date();
-      var st=!c.active?'<span class="badge b-suspended">inativo</span>':
-             esgotado?'<span class="badge b-expired">esgotado</span>':
-             venceu?'<span class="badge b-expired">expirado</span>':
-             '<span class="badge b-active">ativo</span>';
-      return '<tr><td class="mono domain">'+c.code+'</td><td><span class="badge b-basic">'+tipo+'</span></td>'+
-        '<td><b>'+val+'</b></td><td class="meta">'+(c.plan_code||'todos')+'</td><td>'+usos+'</td>'+
-        '<td class="meta">'+exp+'</td><td>'+st+'</td>'+
-        '<td style="text-align:right"><button class="btn" onclick="toggleCupom(\''+c.code+'\','+(!c.active)+')">'+(c.active?'Desativar':'Ativar')+'</button> '+
-        '<button class="btn btn-danger" onclick="excluirCupom(\''+c.code+'\')">Excluir</button></td></tr>';
-    }).join('');
-  }).catch(function(){document.getElementById('cupons-body').innerHTML='<tr><td colspan="8" class="empty">Falha ao carregar.</td></tr>';});
-}
-function salvarCupom(){
-  var kind=document.getElementById('cp-kind').value;
-  var raw=parseFloat(document.getElementById('cp-value').value||'0');
-  // amount vem em reais na UI -> centavos no backend
-  var value=kind==='amount'?Math.round(raw*100):Math.round(raw);
-  var body={
-    code:document.getElementById('cp-code').value.trim().toUpperCase(),
-    description:document.getElementById('cp-desc').value.trim(),
-    kind:kind, value:value,
-    plan_code:document.getElementById('cp-plan').value.trim().toLowerCase(),
-    max_uses:parseInt(document.getElementById('cp-max').value||'0',10),
-    active:document.getElementById('cp-active').checked,
-    expires_at:document.getElementById('cp-exp').value||''
-  };
-  if(!body.code){toast('Informe o código',false);return;}
-  fetch('/admin/api/coupons',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-    .then(function(res){
-      if(res.ok){toast('✓ cupom salvo',true);document.getElementById('cp-code').value='';document.getElementById('cp-desc').value='';carregarCupons();}
-      else toast('✗ '+(res.j.error||'falha'),false);
-    }).catch(function(){toast('✗ erro de conexão',false);});
-}
-function toggleCupom(code,active){
-  // Recarrega o cupom e regrava com o novo status (upsert por code).
-  var c=null;
-  fetch('/admin/api/coupons').then(function(r){return r.json();}).then(function(d){
-    (d.coupons||[]).forEach(function(x){if(x.code===code)c=x;});
-    if(!c){toast('cupom não encontrado',false);return;}
-    var body={code:c.code,description:c.description,kind:c.kind,value:c.value,
-      plan_code:c.plan_code,max_uses:c.max_uses,active:active,
-      expires_at:c.expires_at?c.expires_at.slice(0,10):''};
-    return fetch('/admin/api/coupons',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  }).then(function(){toast('✓ atualizado',true);carregarCupons();})
-    .catch(function(){toast('✗ falha',false);});
-}
-function excluirCupom(code){
-  if(!confirm('Excluir o cupom '+code+'?'))return;
-  fetch('/admin/api/coupons/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
-    .then(function(){toast('✓ excluído',true);carregarCupons();}).catch(function(){toast('✗ falha',false);});
-}
-
-// ── GATEWAY (Itaú — somente leitura + teste) ──
-function carregarGateway(){
-  fetch('/admin/api/itau-status').then(function(r){return r.json();}).then(function(d){
-    document.getElementById('itau-clientid').value=d.client_id||'(não configurado)';
-    document.getElementById('itau-chavepix').value=d.chave_pix||'(não configurada)';
-    document.getElementById('itau-env').value=d.environment||'sandbox';
-    var cert='';
-    if(d.cert_exists&&d.key_exists){cert='✅ certificado + chave presentes';}
-    else if(d.cert_exists){cert='⚠️ .crt presente, .key faltando';}
-    else{cert='❌ não encontrado ('+(d.cert_path||'?')+')';}
-    document.getElementById('itau-cert').value=cert;
-
-    // badge de status agregado
-    var badges=[];
-    badges.push(pill(d.pix_configured,'PIX'));
-    badges.push(pill(d.boleto_configured,'Boleto'));
-    badges.push(pill(d.cert_exists&&d.key_exists,'Certificado'));
-    document.getElementById('itau-status').innerHTML=badges.join(' ');
-
-    // webhook URL — cadastrar SEM /pix
-    var pb=document.getElementById('bc-postback');
-    if(pb){pb.value=location.origin+'/billing/itau';}
-  }).catch(function(){toast('Falha ao carregar status Itaú',false);});
-}
-function pill(ok,label){
-  var c=ok?'rgba(37,211,102,.15)':'rgba(248,113,113,.12)';
-  var b=ok?'rgba(37,211,102,.4)':'rgba(248,113,113,.3)';
-  var t=ok?'var(--green)':'#fca5a5';
-  return '<span style="display:inline-block;padding:3px 10px;border-radius:99px;font-size:.74em;font-weight:600;background:'+c+';border:1px solid '+b+';color:'+t+'">'+(ok?'✓ ':'✗ ')+label+'</span>';
-}
-function testarGateway(metodo){
-  metodo=metodo||'pix';
-  var box=document.getElementById('gateway-test');
-  var acao=metodo==='boleto'?'validando boleto':'gerando cobrança de R$ 1,00';
-  box.innerHTML='<div style="color:var(--muted);font-size:.85em">Testando '+metodo.toUpperCase()+' ('+acao+')…</div>';
-  fetch('/admin/api/itau-test?method='+metodo,{method:'POST'})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      if(d.ok){
-        box.innerHTML='<div style="color:var(--green);font-size:.85em;padding:12px;background:rgba(37,211,102,.08);border-radius:10px;border:1px solid rgba(37,211,102,.25)">'+
-          '<b>✅ '+metodo.toUpperCase()+' OK</b> — o Itaú aceitou a requisição.'+
-          (d.hint?'<div style="color:var(--muted);margin-top:6px;line-height:1.5">'+d.hint+'</div>':'')+
-          (d.copy_paste?'<div style="color:var(--dim);margin-top:6px;font-family:monospace;word-break:break-all">'+d.copy_paste.replace(/</g,'&lt;')+'</div>':'')+
-          '<div style="color:var(--dim);margin-top:6px">ambiente '+(d.environment||'?')+'</div></div>';
-        return;
-      }
-      box.innerHTML='<div style="font-size:.82em;padding:12px;background:rgba(248,113,113,.08);border-radius:10px;border:1px solid rgba(248,113,113,.25)">'+
-        '<div style="color:#fca5a5;font-weight:700">❌ '+metodo.toUpperCase()+' falhou</div>'+
-        (d.message?'<div style="color:#fca5a5;margin-top:4px;font-family:monospace;word-break:break-all">'+d.message.replace(/</g,'&lt;')+'</div>':'')+
-        '<div style="color:var(--muted);margin-top:8px;line-height:1.5">'+(d.hint||'')+'</div>'+
-      '</div>';
-    })
-    .catch(function(){ box.innerHTML='<div style="color:#fca5a5;font-size:.85em">Falha de conexão no teste.</div>'; });
-}
-
-// ── PLAN DEFS (construtor de planos) ──
-var PLANDEFS=[];
-function carregarPlanDefs(){
-  fetch('/admin/api/plan-defs').then(function(r){return r.json();}).then(function(d){
-    PLANDEFS=d.plans||[]; renderPlanDefs();
-  }).catch(function(){document.getElementById('plandefs-list').innerHTML='<div class="empty">Falha ao carregar.</div>';});
-}
-function featChip(on,label){return '<span class="badge '+(on?'b-active':'b-none')+'" style="margin:2px 3px 0 0">'+(on?'✓ ':'✕ ')+label+'</span>';}
-function renderPlanDefs(){
-  var box=document.getElementById('plandefs-list');
-  if(!PLANDEFS.length){box.innerHTML='<div class="empty">Nenhum plano. Clique em "Novo plano".</div>';return;}
-  box.innerHTML=PLANDEFS.map(function(p){
-    var isTrial=p.is_trial_default;
-    var st=isTrial?'<span class="badge b-trial">plano de teste</span>':
-           (p.active?'<span class="badge b-active">à venda</span>':'<span class="badge b-suspended">não listado</span>');
-    var preco=isTrial
-      ? '<div style="font-size:1.5em;font-weight:800;color:var(--amber);margin:6px 0">'+(p.trial_days||0)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> dias grátis</span></div>'
-      : '<div style="font-size:1.5em;font-weight:800;color:var(--green);margin:6px 0">'+fmtBRL(p.price_cents)+'<span style="font-size:.5em;color:var(--dim);font-weight:500"> /mês</span></div>';
-    return '<div class="toolcard"'+(isTrial?' style="border-color:rgba(251,191,36,.4);background:linear-gradient(160deg,rgba(251,191,36,.05),transparent)"':'')+'>'+
-      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px">'+
-        '<div><div style="font-size:1.05em;font-weight:800;color:#f1f5f9">'+(isTrial?'⏳ ':'')+p.name+'</div>'+
-        '<div class="mono meta">'+p.code+'</div></div>'+st+'</div>'+
-      preco+
-      '<div class="meta" style="margin-bottom:10px">Até <b>'+p.max_sessions+'</b> sessão(ões) · '+(p.is_pro?'rótulo Pro':'rótulo Básico')+
-        (isTrial?' · <span style="color:var(--amber)">concedido automaticamente no install</span>':'')+'</div>'+
-      '<div style="margin-bottom:12px">'+featChip(p.feat_templates,'Templates')+featChip(p.feat_automations,'Automações')+featChip(p.feat_sms,'SMS')+featChip(p.feat_reports,'Relatórios')+'</div>'+
-      '<div class="row"><button class="btn" onclick="editarPlano(\''+p.code+'\')">Editar</button>'+
-        '<button class="btn btn-danger" onclick="excluirPlano(\''+p.code+'\')">Excluir</button></div>'+
-    '</div>';
+function renderLicencas(){
+  var q=(document.getElementById('lic-search').value||'').toLowerCase();
+  var f=document.getElementById('lic-filter').value;
+  var b=document.getElementById('licencas-body');
+  var list=LICENCAS.filter(function(l){
+    if(q&&(l.domain||'').toLowerCase().indexOf(q)<0)return false;
+    if(f==='vencida'&&!l.expirada)return false;
+    if(f==='vencendo'&&!(typeof l.dias_restantes==='number'&&l.dias_restantes>=0&&l.dias_restantes<=7))return false;
+    if(f==='sem_prazo'&&l.valid_until)return false;
+    return true;
+  });
+  if(!list.length){b.innerHTML='<tr><td colspan="6" class="empty">Nenhuma licenca encontrada.</td></tr>';return;}
+  b.innerHTML=list.map(function(l){
+    var d=encodeURIComponent(l.domain);
+    return '<tr><td class="domain">'+l.domain+'</td>'+
+      '<td>'+(l.max_sessions||1)+'</td>'+
+      '<td>'+featTags(l)+'</td>'+
+      '<td>'+(l.valid_until?fmtDia(l.valid_until):'<span class="meta">sem prazo</span>')+'</td>'+
+      '<td>'+licBadge(l)+'</td>'+
+      '<td style="text-align:right"><div class="actions"><button class="btn" onclick="toggleMenu(this)">&#8943;</button><div class="menu">'+
+        '<button onclick="abrirLicenca(&#39;'+d+'&#39;)">Editar contrato</button>'+
+        '<button onclick="abrirPagamento(&#39;'+d+'&#39;)">Registrar pagamento</button>'+
+        '<div class="sep"></div>'+
+        '<button onclick="verSaude(&#39;'+d+'&#39;)">Diagnosticar</button>'+
+      '</div></div></td></tr>';
   }).join('');
 }
-function novoPlano(){ abrirPlanoModal(null); }
-function editarPlano(code){ var p=PLANDEFS.filter(function(x){return x.code===code;})[0]; abrirPlanoModal(p); }
-function abrirPlanoModal(p){
-  var isNew=!p; p=p||{code:'',name:'',description:'',price_cents:0,max_sessions:1,feat_templates:false,feat_automations:false,feat_sms:false,feat_reports:false,is_pro:false,active:true,sort_order:99,trial_days:0,is_trial_default:false,accept_boleto:true,accept_pix:true};
-  var ov=document.createElement('div');
-  ov.id='plano-modal';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.8);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
-  function chk(id,on,lbl){return '<label style="display:flex;align-items:center;gap:8px;font-size:.86em;color:#cbd5e1;padding:6px 0;cursor:pointer"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' style="width:16px;height:16px">'+lbl+'</label>';}
-  ov.innerHTML='<div style="max-width:460px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid var(--border);border-radius:18px;padding:26px">'+
-    '<div style="font-size:1.15em;font-weight:800;margin-bottom:16px">'+(isNew?'Novo plano':'Editar plano')+'</div>'+
-    '<label style="font-size:.72em;color:var(--dim)">Código (id) '+(isNew?'':'— fixo')+'</label>'+
-    '<input class="dominput" id="pd-code" value="'+p.code+'" '+(isNew?'':'disabled')+' placeholder="ex: starter" style="margin:2px 0 10px">'+
-    '<label style="font-size:.72em;color:var(--dim)">Nome</label>'+
-    '<input class="dominput" id="pd-name" value="'+(p.name||'')+'" placeholder="ex: Starter" style="margin:2px 0 10px">'+
-    '<label style="font-size:.72em;color:var(--dim)">Descrição</label>'+
-    '<input class="dominput" id="pd-desc" value="'+(p.description||'')+'" placeholder="uma frase" style="margin:2px 0 10px">'+
-    '<div style="display:flex;gap:10px">'+
-      '<div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Preço (R$)</label><input class="dominput" id="pd-price" type="number" step="0.01" value="'+((p.price_cents||0)/100).toFixed(2)+'" style="margin:2px 0 10px"></div>'+
-      '<div style="flex:1"><label style="font-size:.72em;color:var(--dim)">Máx. sessões</label><input class="dominput" id="pd-max" type="number" min="1" value="'+(p.max_sessions||1)+'" style="margin:2px 0 10px"></div>'+
-    '</div>'+
-    '<div style="font-size:.72em;color:var(--dim);margin:6px 0 2px;text-transform:uppercase;letter-spacing:.05em">Features liberadas</div>'+
-    chk('pd-tpl',p.feat_templates,'Templates + Cloud API Meta')+
-    chk('pd-aut',p.feat_automations,'Automações (robôs BizProc)')+
-    chk('pd-sms',p.feat_sms,'Campanhas SMS')+
-    chk('pd-rep',p.feat_reports,'Relatórios + histórico longo')+
-    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
-    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 6px;text-transform:uppercase;letter-spacing:.05em">Período de teste</div>'+
-    chk('pd-trialdef',p.is_trial_default,'Este é o plano de teste (novos clientes recebem)')+
-    '<label style="font-size:.72em;color:var(--dim)">Duração do teste (dias)</label>'+
-    '<input class="dominput" id="pd-trialdays" type="number" min="0" value="'+(p.trial_days||0)+'" style="margin:2px 0 4px">'+
-    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Ao marcar acima, todo cliente novo entra neste plano por esses dias. Só um plano pode ser o de teste.</div>'+
-    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
-    '<div style="font-size:.72em;color:var(--dim);margin:2px 0 6px;text-transform:uppercase;letter-spacing:.05em">Formas de pagamento</div>'+
-    chk('pd-boleto',p.accept_boleto!==false,'Aceita Boleto')+
-    chk('pd-pix',p.accept_pix!==false,'Aceita PIX')+
-    '<div style="font-size:.72em;color:var(--dim);margin-bottom:8px">Controla quais métodos aparecem no checkout deste plano. O PIX só é oferecido se o gateway PIX estiver configurado.</div>'+
-    '<div style="height:1px;background:var(--border);margin:10px 0"></div>'+
-    chk('pd-pro',p.is_pro,'Marcar como plano "Pro" (rótulo)')+
-    chk('pd-active',p.active,'Disponível para assinatura (aparece nos cards do cliente)')+
-    '<div class="row" style="margin-top:18px;justify-content:flex-end">'+
-      '<button class="btn" onclick="fecharPlanoModal()">Cancelar</button>'+
-      '<button class="btn btn-primary" onclick="salvarPlano('+(isNew?'true':'false')+')">Salvar</button>'+
-    '</div></div>';
-  document.body.appendChild(ov);
+function _modal(html){
+  var ov=document.createElement('div'); ov.id='lic-modal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.8);backdrop-filter:blur(6px);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
+  ov.innerHTML='<div style="background:var(--panel);border:1px solid var(--border);border-radius:15px;padding:22px;max-width:580px;width:100%">'+html+'</div>';
+  document.body.appendChild(ov); return ov;
 }
-function fecharPlanoModal(){var m=document.getElementById('plano-modal');if(m)m.remove();}
-function salvarPlano(isNew){
-  var g=function(id){return document.getElementById(id);};
-  var code=g('pd-code').value.trim().toLowerCase();
-  // Preserva a ORDEM: se o plano ja' existe, reusa o sort_order dele em vez de
-  // forcar 99 (que embaralhava a lista a cada save). Plano novo vai pro fim.
-  var existente=PLANDEFS.filter(function(x){return x.code===code;})[0];
-  var ordem=(existente&&typeof existente.sort_order==='number')?existente.sort_order:99;
-  var body={
-    code:code,
-    name:g('pd-name').value.trim(),
-    description:g('pd-desc').value.trim(),
-    price_cents:Math.round(parseFloat(g('pd-price').value||'0')*100),
-    max_sessions:parseInt(g('pd-max').value||'1',10),
-    feat_templates:g('pd-tpl').checked,
-    feat_automations:g('pd-aut').checked,
-    feat_sms:g('pd-sms').checked,
-    feat_reports:g('pd-rep').checked,
-    is_pro:g('pd-pro').checked,
-    active:g('pd-active').checked,
-    trial_days:parseInt(g('pd-trialdays').value||'0',10),
-    is_trial_default:g('pd-trialdef').checked,
-    accept_boleto:g('pd-boleto').checked,
-    accept_pix:g('pd-pix').checked,
-    sort_order:ordem
-  };
-  if(!body.code||!body.name){toast('Código e nome obrigatórios',false);return;}
-  fetch('/admin/api/plan-defs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-    .then(function(res){res.ok?(toast('✓ plano salvo',true),fecharPlanoModal(),carregarPlanDefs()):toast('✗ '+(res.j.error||'falha'),false);})
-    .catch(function(){toast('✗ erro de conexão',false);});
+function fecharModalLic(){var m=document.getElementById('lic-modal');if(m)m.remove();}
+function abrirLicenca(domEnc){
+  var dom=decodeURIComponent(domEnc);
+  fetch('/admin/api/license?domain='+encodeURIComponent(dom)).then(function(r){return r.json();}).then(function(d){
+    var l=d.license||{};
+    function ck(id,lbl,on){return '<label style="display:block;margin:7px 0"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+'> '+lbl+'</label>';}
+    _modal('<h3 style="margin:0 0 4px">Contrato de '+dom+'</h3>'+
+      '<div class="meta" style="margin-bottom:14px">Marque o que o contrato deste cliente inclui.</div>'+
+      '<label class="meta">Numeros WhatsApp</label>'+
+      '<input class="dominput" id="lic-max" type="number" min="1" value="'+(l.max_sessions||1)+'">'+
+      '<div style="margin:12px 0 4px" class="meta">Beneficios</div>'+
+      ck('lic-cloud','WhatsApp Cloud API (Meta) + Templates',l.feat_cloud_api)+
+      ck('lic-auto','Automacoes (robos BizProc)',l.feat_automations)+
+      ck('lic-rep','Relatorios',l.feat_reports)+
+      '<label class="meta" style="display:block;margin-top:12px">Valido ate (vazio = sem prazo)</label>'+
+      '<input class="dominput" id="lic-ate" type="date" value="'+(l.valid_until||'')+'">'+
+      '<label class="meta" style="display:block;margin-top:12px">Observacoes</label>'+
+      '<input class="dominput" id="lic-notes" value="'+String(l.notes||'').replace(/"/g,'&quot;')+'">'+
+      '<div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">'+
+        '<button class="btn" onclick="fecharModalLic()">Cancelar</button>'+
+        '<button class="btn" onclick="salvarLicenca(&#39;'+domEnc+'&#39;)">Salvar contrato</button>'+
+      '</div>');
+  }).catch(function(){toast('falha ao carregar licenca',false);});
 }
-function excluirPlano(code){
-  if(!confirm('Excluir o plano "'+code+'"? (bloqueado se houver tenants usando)'))return;
-  fetch('/admin/api/plan-defs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
+function salvarLicenca(domEnc){
+  var body={domain:decodeURIComponent(domEnc),
+    max_sessions:parseInt(document.getElementById('lic-max').value,10)||1,
+    feat_cloud_api:document.getElementById('lic-cloud').checked,
+    feat_automations:document.getElementById('lic-auto').checked,
+    feat_reports:document.getElementById('lic-rep').checked,
+    valid_until:document.getElementById('lic-ate').value,
+    notes:document.getElementById('lic-notes').value};
+  fetch('/admin/api/license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-    .then(function(res){res.ok?(toast('✓ excluído',true),carregarPlanDefs()):toast('✗ '+(res.j.error||'falha'),false);})
-    .catch(function(){toast('✗ falha',false);});
+    .then(function(res){if(res.ok){toast('contrato salvo',true);fecharModalLic();carregarLicencas();carregarTudo();}else{toast(res.j.error||'falha',false);}})
+    .catch(function(){toast('erro de conexao',false);});
+}
+function abrirPagamento(domEnc){
+  var dom=decodeURIComponent(domEnc);
+  fetch('/admin/api/license?domain='+encodeURIComponent(dom)).then(function(r){return r.json();}).then(function(d){
+    var hoje=new Date().toISOString().slice(0,10);
+    var pags=(d.pagamentos||[]).map(function(p){
+      return '<tr><td class="meta">'+fmtDia(p.paid_at)+'</td><td class="meta">'+fmtDia(p.covers_until)+'</td><td>'+fmtBRL(p.amount_cents)+'</td><td class="meta">'+(p.recorded_by||'-')+'</td></tr>';
+    }).join('')||'<tr><td colspan="4" class="empty">Nenhum pagamento registrado.</td></tr>';
+    _modal('<h3 style="margin:0 0 4px">Registrar pagamento - '+dom+'</h3>'+
+      '<div class="meta" style="margin-bottom:14px">O pagamento estende a vigencia da licenca automaticamente.</div>'+
+      '<label class="meta">Pago em</label><input class="dominput" id="pg-pago" type="date" value="'+hoje+'">'+
+      '<label class="meta" style="display:block;margin-top:10px">Libera o uso ate</label><input class="dominput" id="pg-ate" type="date">'+
+      '<label class="meta" style="display:block;margin-top:10px">Valor (R$)</label><input class="dominput" id="pg-valor" type="number" step="0.01" min="0" placeholder="0,00">'+
+      '<label class="meta" style="display:block;margin-top:10px">Forma</label><input class="dominput" id="pg-forma" placeholder="pix, transferencia, boleto...">'+
+      '<label class="meta" style="display:block;margin-top:10px">Observacoes</label><input class="dominput" id="pg-notes">'+
+      '<div class="section-title" style="margin-top:18px">Historico</div>'+
+      '<div class="tablewrap"><div class="tablescroll"><table><thead><tr><th>Pago em</th><th>Cobre ate</th><th>Valor</th><th>Registrado por</th></tr></thead><tbody>'+pags+'</tbody></table></div></div>'+
+      '<div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">'+
+        '<button class="btn" onclick="fecharModalLic()">Cancelar</button>'+
+        '<button class="btn" onclick="salvarPagamento(&#39;'+domEnc+'&#39;)">Registrar</button>'+
+      '</div>');
+  }).catch(function(){toast('falha ao carregar',false);});
+}
+function salvarPagamento(domEnc){
+  var ate=document.getElementById('pg-ate').value;
+  if(!ate){toast('Informe ate quando o pagamento libera o uso',false);return;}
+  var reais=parseFloat(document.getElementById('pg-valor').value||'0');
+  var body={domain:decodeURIComponent(domEnc),
+    paid_at:document.getElementById('pg-pago').value,
+    covers_until:ate,
+    amount_cents:Math.round(reais*100),
+    method:document.getElementById('pg-forma').value,
+    notes:document.getElementById('pg-notes').value};
+  fetch('/admin/api/license/payment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){if(res.ok){toast('pagamento registrado',true);fecharModalLic();carregarLicencas();carregarTudo();}else{toast(res.j.error||'falha',false);}})
+    .catch(function(){toast('erro de conexao',false);});
+}
+
+// ── SAUDE DO CLIENTE ──
+function verSaude(domEnc){
+  irPara('health');
+  document.getElementById('health-domain').value=decodeURIComponent(domEnc);
+  carregarHealth();
+}
+function _card(titulo,corpo,alerta){
+  return '<div class="kpi '+(alerta?'red':'blue')+'" style="display:block;margin-bottom:14px">'+
+    '<div class="label">'+titulo+'</div><div style="margin-top:8px;font-size:.85em;line-height:1.7">'+corpo+'</div></div>';
+}
+function _linha(k,v){return '<div><span class="meta">'+k+':</span> '+v+'</div>';}
+function _alerta(txt){return '<div style="color:var(--red);font-weight:600;margin-top:6px">! '+txt+'</div>';}
+function carregarHealth(){
+  var dom=(document.getElementById('health-domain').value||'').trim();
+  var out=document.getElementById('health-out');
+  if(!dom){out.innerHTML='<div class="empty">Informe o dominio do cliente.</div>';return;}
+  out.innerHTML='<div class="loading">Diagnosticando '+dom+'...</div>';
+  fetch('/admin/api/tenant/health?domain='+encodeURIComponent(dom)).then(function(r){return r.json();}).then(function(d){
+    if(d.error){out.innerHTML='<div class="empty">'+d.error+'</div>';return;}
+    var html='';
+
+    var b=d.bitrix||{}, t=b.token||{}, cb='';
+    if(!b.instalado){cb=_alerta(b.problema||'app nao instalado');}
+    else{
+      cb=_linha('Linha Aberta',b.open_line_id||'-')+_linha('Conector',b.connector_id||'-')+
+         _linha('Instalado em',fmtDate(b.instalado_em))+
+         _linha('Token',t.estado==='ok'?('<span class="tok-valid">ok</span> (expira '+fmtDate(t.expira_em)+')'):('<span class="tok-expired">'+(t.estado||'?')+'</span>'));
+      if(t.problema)cb+=_alerta(t.problema);
+      if(b.problema)cb+=_alerta(b.problema);
+      if(b.problema_conector)cb+=_alerta(b.problema_conector);
+      (b.conectores||[]).forEach(function(c){cb+=_linha('Vinculo',c.session_jid+' -> linha '+c.open_line_id);});
+    }
+    html+=_card('Conexao Bitrix',cb,!b.instalado||t.estado!=='ok'||!!b.problema_conector);
+
+    var ss=d.sessoes||[], cs='', alertaS=false;
+    if(!ss.length){cs='<div class="meta">Nenhuma sessao WhatsApp cadastrada.</div>';alertaS=true;}
+    else ss.forEach(function(s){
+      cs+='<div style="padding:7px 0;border-bottom:1px solid var(--border)">'+
+        _linha('Numero','<strong>'+(s.numero||'?')+'</strong> '+(s.conectada_agora?'<span class="badge b-active">conectada</span>':'<span class="badge b-expired">offline</span>'))+
+        _linha('JID',s.jid)+_linha('Status no banco',s.status_no_banco)+
+        (s.visto_em?_linha('Visto em',fmtDate(s.visto_em)):'')+
+        (s.problema?_alerta(s.problema):'')+(s.problema_phone?_alerta(s.problema_phone):'')+
+      '</div>';
+      if(s.problema||s.problema_phone||!s.conectada_agora)alertaS=true;
+    });
+    html+=_card('Sessoes WhatsApp',cs,alertaS);
+
+    var m=d.mensagens||{};
+    var cm=_linha('Entrada 24h',m.entrada_24h||0)+_linha('Saida 24h',m.saida_24h||0)+
+           _linha('Falhas 7d',m.falhas_7d||0)+(m.observacao?_alerta(m.observacao):'');
+    html+=_card('Mensagens',cm,(m.falhas_7d||0)>0||!!m.observacao);
+
+    var l=d.licenca||{};
+    var cl=l.configurada?
+      (_linha('Numeros',l.max_sessions)+_linha('Beneficios',featTags(l))+
+       _linha('Vigencia',l.valid_until?fmtDia(l.valid_until):'sem prazo')+
+       (l.expirada?_alerta('licenca vencida - avisa, mas nao bloqueia o app'):'')+
+       '<div class="meta" style="margin-top:8px">'+((l.pagamentos||[]).length)+' pagamento(s) registrado(s)</div>')
+      :'<div class="meta">Licenca ainda nao configurada.</div>';
+    html+=_card('Licenca',cl,l.expirada||!l.configurada);
+
+    out.innerHTML=html;
+  }).catch(function(e){out.innerHTML='<div class="empty">Falha: '+e+'</div>';});
 }
 
 // ── USAGE ──
@@ -1104,16 +944,31 @@ function carregarAudit(){
   }).catch(function(){document.getElementById('audit-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
 }
 
+// Renovacoes a vencer na visao geral: o que o suporte precisa cobrar.
+// Vem da mesma lista de licencas, ja' ordenada por vencimento.
+function renderRenovacoes(list){
+  var b=document.getElementById('renovacoes');
+  if(!b)return;
+  var urg=(list||[]).filter(function(l){
+    return l.valid_until && (l.expirada || (typeof l.dias_restantes==='number' && l.dias_restantes<=15));
+  }).slice(0,10);
+  if(!urg.length){b.innerHTML='<tr><td colspan="4" class="empty">Nenhuma renovacao proxima.</td></tr>';return;}
+  b.innerHTML=urg.map(function(l){
+    var d=encodeURIComponent(l.domain);
+    var quando=l.expirada?('venceu em '+fmtDia(l.valid_until)):(l.dias_restantes+' dia(s)');
+    return '<tr><td class="domain">'+l.domain+'</td><td>'+quando+'</td><td>'+licBadge(l)+'</td>'+
+      '<td style="text-align:right"><button class="btn" onclick="abrirPagamento(&#39;'+d+'&#39;)">Registrar pagamento</button></td></tr>';
+  }).join('');
+}
+
 function carregarTudo(){
-  // Planos primeiro: planTag() usa PLANDEFS pra rotular os badges em
-  // todas as abas (tenants, pagamentos, consumo).
-  fetch('/admin/api/plan-defs').then(function(r){return r.json();}).then(function(d){
-    PLANDEFS=d.plans||[];
-    if(document.getElementById('page-plandefs').classList.contains('active'))renderPlanDefs();
+  fetch('/admin/api/licenses').then(function(r){return r.json();}).then(function(d){
+    LICENCAS=d.licenses||[];
+    renderRenovacoes(LICENCAS);
+    if(document.getElementById('page-licencas').classList.contains('active'))renderLicencas();
   }).catch(function(){});
   fetch('/admin/api/metrics').then(function(r){return r.json();}).then(renderKpis).catch(function(){document.getElementById('kpis').innerHTML='<div class="empty">Falha ao carregar métricas.</div>';});
-  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar tenants.</td></tr>';});
-  fetch('/admin/api/billing/charges').then(function(r){return r.json();}).then(function(d){renderBilling(d.charges||[]);renderRecentCharges(d.charges||[]);}).catch(function(){});
+  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar clientes.</td></tr>';});
 }
 carregarTudo();
 setInterval(carregarTudo,60000);

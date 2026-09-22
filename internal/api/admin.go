@@ -212,31 +212,102 @@ func verifyTenantCookie(secret, raw string) (string, bool) {
 	return domain, true
 }
 
-// signAdminCookie gera "exp.hmac" assinado com HMAC-SHA256(APP_SECRET).
-// exp é unix timestamp. Lookup em tempo constante.
-func signAdminCookie(secret string, expiresAt time.Time) string {
+// Papeis do painel admin.
+//
+// So' dois: o suporte faz tudo no dia a dia (clientes, licencas,
+// pagamentos, diagnostico e ate' criar usuarios). O que separa o
+// administrador sao as acoes DESTRUTIVAS — purge de portal, limpeza de
+// arquivos de sessao, flush de fila. A divisao existe pra evitar acidente
+// e dar rastro na auditoria, nao como barreira de seguranca: quem cria
+// usuario pode se promover.
+const (
+	roleAdmin   = "superadmin"
+	roleSupport = "support"
+)
+
+// signAdminCookie gera "exp|email|role|hmac" com HMAC-SHA256(APP_SECRET).
+//
+// BUG HISTORICO: a versao antiga assinava SO' o timestamp de expiracao
+// ("exp.hmac"). O cookie nao carregava identidade nenhuma — dois admins
+// diferentes geravam cookies indistinguiveis. Consequencia: adminActor()
+// nunca sabia quem estava logado e TODA a auditoria registrava o usuario
+// root do .env, mesmo com login de usuario do banco. Registrar "quem fez"
+// era o proposito da tabela admin_users, e nao funcionava.
+//
+// O formato com '|' e' o mesmo ja' usado em signTenantCookie.
+func signAdminCookie(secret, email, role string, expiresAt time.Time) string {
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := exp + "|" + email + "|" + role
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(exp))
-	return exp + "." + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(payload))
+	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func verifyAdminCookie(secret, raw string) bool {
+// verifyAdminCookie devolve (email, role, ok). Email e role so' sao
+// confiaveis com ok=true — vem de dentro do payload assinado.
+func verifyAdminCookie(secret, raw string) (string, string, bool) {
 	if raw == "" {
-		return false
+		return "", "", false
 	}
-	parts := strings.SplitN(raw, ".", 2)
-	if len(parts) != 2 {
-		return false
+	// Formato antigo "exp.hmac": ainda valido pra nao deslogar quem esta
+	// com sessao aberta no momento do deploy, mas sem identidade. Some
+	// sozinho quando o cookie expirar (12h).
+	if !strings.Contains(raw, "|") {
+		parts := strings.SplitN(raw, ".", 2)
+		if len(parts) != 2 {
+			return "", "", false
+		}
+		exp, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || time.Now().Unix() > exp {
+			return "", "", false
+		}
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(parts[0]))
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
+			return "", "", false
+		}
+		return "", roleAdmin, true
 	}
-	exp, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || time.Now().Unix() > exp {
-		return false
+
+	i := strings.LastIndex(raw, "|")
+	if i <= 0 {
+		return "", "", false
 	}
+	payload, sig := raw[:i], raw[i+1:]
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(parts[0]))
+	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
-	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
+	if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
+		return "", "", false
+	}
+	campos := strings.Split(payload, "|")
+	if len(campos) != 3 {
+		return "", "", false
+	}
+	exp, err := strconv.ParseInt(campos[0], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return "", "", false
+	}
+	return campos[1], campos[2], true
+}
+
+// requireAdminRole barra quem nao tem o papel exigido.
+//
+// Usado nas acoes DESTRUTIVAS (purge de portal, limpeza de arquivos de
+// sessao, flush de fila). Nao e' barreira de seguranca — o suporte pode
+// criar usuario e se promover — e' pra evitar acidente e deixar rastro.
+func (h *handlers) requireAdminRole(papel string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		atual, _ := c.Locals("admin_role").(string)
+		if atual == papel || atual == roleAdmin {
+			return c.Next()
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "esta acao e' restrita ao perfil Administrador",
+			"code":  "papel_insuficiente",
+		})
+	}
 }
 
 // requireTenantOrAdmin — middleware pra rotas /ui/* que precisam saber
@@ -257,7 +328,9 @@ func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
 	}
 	// 2) Cookie admin (super-admin): aceita ?domain= ou ?portal= da query.
 	if adminCookie := c.Cookies(adminCookieName); adminCookie != "" {
-		if verifyAdminCookie(h.cfg.App.Secret, adminCookie) {
+		if email, papel, ok := verifyAdminCookie(h.cfg.App.Secret, adminCookie); ok {
+			c.Locals("admin_actor", email)
+			c.Locals("admin_role", papel)
 			queryDomain := strings.TrimSpace(c.Query("domain"))
 			if queryDomain == "" {
 				queryDomain = strings.TrimSpace(c.Query("portal"))
@@ -277,11 +350,14 @@ func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
 //   - APIs (paths que contém /api/ ou /run, ou método != GET) retornam 401 JSON
 //   - Páginas HTML retornam redirect 302 para /admin/login (UX de browser)
 func (h *handlers) requireAdminAuth(c *fiber.Ctx) error {
-	if h.cfg.App.AdminUser == "" || h.cfg.App.AdminPassword == "" {
-		return c.Status(503).SendString("admin desabilitado: defina ADMIN_USER e ADMIN_PASSWORD no .env")
-	}
+	// Antes isto devolvia 503 quando ADMIN_USER/ADMIN_PASSWORD estavam
+	// vazios, o que impedia operar so' com usuarios do banco — justamente o
+	// modelo que a tabela admin_users existe pra suportar. O root do .env
+	// agora e' bootstrap (pra criar o primeiro usuario), nao requisito.
 	cookie := c.Cookies(adminCookieName)
-	if verifyAdminCookie(h.cfg.App.Secret, cookie) {
+	if email, papel, ok := verifyAdminCookie(h.cfg.App.Secret, cookie); ok {
+		c.Locals("admin_actor", email)
+		c.Locals("admin_role", papel)
 		return c.Next()
 	}
 	path := c.Path()
@@ -335,13 +411,14 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 
 	// Se nao bateu com o root do env, tenta os admins do banco (bcrypt).
 	if !userOK || !passOK {
-		if dbUserOK := h.tryDBAdminLogin(c, user, pass); dbUserOK {
+		if email, papel, dbUserOK := h.tryDBAdminLogin(c, user, pass); dbUserOK {
 			loginRecordSuccess(ip)
-			h.repo.WriteAudit(c.Context(), user, "login.success", "", "db-user", ip)
-			h.log.Info("admin login: sucesso (db user)", zap.String("ip", ip), zap.String("user", user))
+			h.repo.WriteAudit(c.Context(), email, "login.success", "", "db-user papel="+papel, ip)
+			h.log.Info("admin login: sucesso (db user)", zap.String("ip", ip),
+				zap.String("user", email), zap.String("papel", papel))
 			expires := time.Now().Add(adminCookieTTL)
 			c.Cookie(&fiber.Cookie{
-				Name: adminCookieName, Value: signAdminCookie(h.cfg.App.Secret, expires),
+				Name: adminCookieName, Value: signAdminCookie(h.cfg.App.Secret, email, papel, expires),
 				Path: "/", Expires: expires, HTTPOnly: true,
 				Secure: strings.HasPrefix(h.cfg.App.PublicURL, "https://"), SameSite: "Lax",
 			})
@@ -357,7 +434,7 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 	expires := time.Now().Add(adminCookieTTL)
 	c.Cookie(&fiber.Cookie{
 		Name:     adminCookieName,
-		Value:    signAdminCookie(h.cfg.App.Secret, expires),
+		Value:    signAdminCookie(h.cfg.App.Secret, user, roleAdmin, expires),
 		Path:     "/",
 		Expires:  expires,
 		HTTPOnly: true,
@@ -421,11 +498,11 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		h.log.Error("admin: AllDomainTokenExpiry failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": "token expiry: " + err.Error()})
 	}
-	// Planos por dominio: 1 query agregada pra evitar N+1 no loop.
-	allPlans, _ := h.repo.ListTenantPlans(ctx)
-	plansByDomain := map[string]*db.TenantPlan{}
-	for _, pl := range allPlans {
-		plansByDomain[normalizeDomainKey(pl.Domain)] = pl
+	// Licencas por dominio: 1 query agregada pra evitar N+1 no loop.
+	allLics, _ := h.repo.ListLicenses(ctx)
+	licsByDomain := map[string]*db.TenantLicense{}
+	for _, l := range allLics {
+		licsByDomain[normalizeDomainKey(l.Domain)] = l
 	}
 
 	type tenantCard struct {
@@ -443,15 +520,16 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		Msgs1h       int       `json:"msgs_1h"`
 		MsgsInbound  int       `json:"msgs_inbound_24h"`
 		MsgsOutbound int       `json:"msgs_outbound_24h"`
-		// Plano (basic|pro) / status (trial|active|expired|suspended)
-		Plan              string     `json:"plan"`
-		PlanStatus        string     `json:"plan_status"`
-		TrialEndsAt       *time.Time `json:"trial_ends_at,omitempty"`
-		ActiveUntil       *time.Time `json:"active_until,omitempty"`
-		TrialDaysRemain   int        `json:"trial_days_remaining"`
-		PlanIsAccessOK    bool       `json:"plan_access_allowed"`
-		PlanIsPro         bool       `json:"plan_has_pro_features"`
-		PlanNotes         string     `json:"plan_notes,omitempty"`
+		// Licenca: o que o contrato do cliente libera e ate quando vale.
+		LicencaConfigurada bool       `json:"licenca_configurada"`
+		MaxSessions        int        `json:"max_sessions"`
+		FeatCloudAPI       bool       `json:"feat_cloud_api"`
+		FeatAutomations    bool       `json:"feat_automations"`
+		FeatReports        bool       `json:"feat_reports"`
+		ValidUntil         *time.Time `json:"valid_until,omitempty"`
+		DiasRestantes      *int       `json:"dias_restantes,omitempty"`
+		Expirada           bool       `json:"expirada"`
+		LicencaNotes       string     `json:"licenca_notes,omitempty"`
 	}
 
 	cards := make([]tenantCard, 0, len(portals))
@@ -510,27 +588,23 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		if m, ok := msgs1hByDomain[key]; ok {
 			card.Msgs1h = m.Inbound + m.Outbound
 		}
-		// Plano do tenant — pra UI mostrar status e botoes de acao.
-		if pl, ok := plansByDomain[key]; ok {
-			card.Plan = pl.Plan
-			card.PlanStatus = pl.Status
-			card.TrialEndsAt = pl.TrialEndsAt
-			card.ActiveUntil = pl.ActiveUntil
-			card.PlanIsAccessOK = pl.IsAccessAllowed()
-			card.PlanIsPro = pl.HasProFeatures()
-			card.PlanNotes = pl.Notes
-			if pl.TrialEndsAt != nil {
-				days := int(pl.TrialEndsAt.Sub(now).Hours() / 24)
-				if days < 0 {
-					days = 0
-				}
-				card.TrialDaysRemain = days
+		// Licenca do cliente — pra UI mostrar contrato e vigencia.
+		if lic, ok := licsByDomain[key]; ok {
+			card.LicencaConfigurada = true
+			card.MaxSessions = lic.MaxSessions
+			card.FeatCloudAPI = lic.FeatCloudAPI
+			card.FeatAutomations = lic.FeatAutomations
+			card.FeatReports = lic.FeatReports
+			card.ValidUntil = lic.ValidUntil
+			card.Expirada = lic.Expired()
+			card.LicencaNotes = lic.Notes
+			if d, temPrazo := lic.DaysUntilExpiry(); temPrazo {
+				card.DiasRestantes = &d
 			}
 		} else {
-			// Tenant sem plano cadastrado (legacy ou nao instalou via /bitrix/auth).
-			// Mostra como "no_plan" pra UI poder oferecer "Criar trial agora".
-			card.Plan = "none"
-			card.PlanStatus = "no_plan"
+			// Cliente sem licenca: instalado fora do fluxo normal, ou portal
+			// legado. A UI oferece "configurar licenca".
+			card.MaxSessions = maxSessionsPadrao
 		}
 		cards = append(cards, card)
 	}

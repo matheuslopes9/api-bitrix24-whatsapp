@@ -210,16 +210,16 @@ func (r *Repository) ListActiveSessionsByDomain(ctx context.Context, domain stri
 // incluindo as antigas/desconectadas. Usada pelo Historico no /dashboard.
 //
 // Duas fontes (UNION):
-//   1. Sessoes atualmente vinculadas via bitrix_accounts.domain (caminho
-//      normal — sessoes que o tenant operou recentemente).
-//   2. Sessoes que aparecem em messages historicamente — capturadas via
-//      INTERSECT entre os JIDs distintos das msgs e as bitrix_accounts
-//      ja vistas pra esse dominio em qualquer momento (snapshot historico
-//      nao existe, entao filtramos por sessoes cujo JID aparece em msgs
-//      com session_id apontando pra uma sessao "do dominio em algum
-//      momento" — mas como nao temos esse log, ficamos com (1) + heuristic
-//      adicional via JIDs de mensagens cuja session_id == sessoes da (1)
-//      OU cujo JID == session_jid de (1)).
+//  1. Sessoes atualmente vinculadas via bitrix_accounts.domain (caminho
+//     normal — sessoes que o tenant operou recentemente).
+//  2. Sessoes que aparecem em messages historicamente — capturadas via
+//     INTERSECT entre os JIDs distintos das msgs e as bitrix_accounts
+//     ja vistas pra esse dominio em qualquer momento (snapshot historico
+//     nao existe, entao filtramos por sessoes cujo JID aparece em msgs
+//     com session_id apontando pra uma sessao "do dominio em algum
+//     momento" — mas como nao temos esse log, ficamos com (1) + heuristic
+//     adicional via JIDs de mensagens cuja session_id == sessoes da (1)
+//     OU cujo JID == session_jid de (1)).
 //
 // SEGURANCA: filtra estritamente por domain via bitrix_accounts. Versao
 // anterior listava TODAS as sessoes nao banidas se o dominio tivesse 1
@@ -622,11 +622,11 @@ func (r *Repository) DeleteMessagesByJIDPattern(ctx context.Context, pattern str
 
 // GetMessagesByPhone retorna as últimas N mensagens trocadas com um número de telefone.
 // Busca de duas formas:
-//   1. JID direto via LIKE "phone@%"  (msgs com @s.whatsapp.net)
-//   2. Via contact_mapping: pega todos os wa_jid (incluindo @lid) onde wa_phone = phone,
-//      e busca msgs que envolvam qualquer um desses JIDs. Necessário porque o WhatsApp
-//      pode usar @lid (LinkedID) em vez de @s.whatsapp.net no Sender — o LID não contém
-//      o telefone real, mas o contact_mapping vincula os dois.
+//  1. JID direto via LIKE "phone@%"  (msgs com @s.whatsapp.net)
+//  2. Via contact_mapping: pega todos os wa_jid (incluindo @lid) onde wa_phone = phone,
+//     e busca msgs que envolvam qualquer um desses JIDs. Necessário porque o WhatsApp
+//     pode usar @lid (LinkedID) em vez de @s.whatsapp.net no Sender — o LID não contém
+//     o telefone real, mas o contact_mapping vincula os dois.
 func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
@@ -747,12 +747,12 @@ func scanMessages(rows pgx.Rows) ([]Message, error) {
 // HistoryConversation representa uma linha do menu "Historico" no dashboard:
 // uma conversa = um peer (telefone) trocando msgs com uma sessao especifica.
 type HistoryConversation struct {
-	Phone        string    `json:"phone"`
-	LastMessage  string    `json:"last_message"`
-	LastAt       time.Time `json:"last_at"`
-	LastDir      string    `json:"last_direction"`
-	LastType     string    `json:"last_message_type"`
-	Total        int       `json:"total"`
+	Phone       string    `json:"phone"`
+	LastMessage string    `json:"last_message"`
+	LastAt      time.Time `json:"last_at"`
+	LastDir     string    `json:"last_direction"`
+	LastType    string    `json:"last_message_type"`
+	Total       int       `json:"total"`
 }
 
 // ListHistoryConversations agrupa msgs de uma sessao por "peer" (o JID
@@ -1492,11 +1492,11 @@ func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string)
 }
 
 // SetMasterUser define quem e' o "master user" do tenant. Politica:
-//   - Se ja existe master (legacy_admin_user_id <> ''), so pode trocar se
+//   - Se ja existe master (legacy_admin_user_id <> ”), so pode trocar se
 //     callerUserID == master atual. Caso contrario retorna ErrNotMaster.
 //   - Se nao existe, qualquer caller pode set (onboarding inicial).
 //   - Ao salvar o master, grant wildcard automatico em crm_user_permissions
-//     pra ele (session_jid='') — eh quem pode liberar outros.
+//     pra ele (session_jid=”) — eh quem pode liberar outros.
 func (r *Repository) SetMasterUser(ctx context.Context, domain, callerUserID, newMasterUserID, newMasterName string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -1599,7 +1599,7 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
 			&p.LegacyAdminUserID, &p.DefaultSMSSessionJID, &p.SMSRiskAcknowledged,
-		&p.ApplicationToken); err != nil {
+			&p.ApplicationToken); err != nil {
 			return nil, err
 		}
 		portals = append(portals, &p)
@@ -1752,6 +1752,7 @@ func (r *Repository) DeletePlaceholderPortals(ctx context.Context) (int64, error
 //   - from_jid OU to_jid vazio/NULL (msgs antigas sem JID — pré-correções)
 //   - from_jid = 'cloud@s.whatsapp.net' (bug historico do stripDeviceSuffix
 //     que truncava 'cloud:1160...' para 'cloud')
+//
 // Retorna contagem de linhas removidas.
 func (r *Repository) DeleteLegacyMessages(ctx context.Context) (int64, error) {
 	tag, err := r.pool.Exec(ctx, `
@@ -1819,7 +1820,7 @@ type CrmUserPermission struct {
 // ListCrmPermissionsByDomain retorna todas as linhas de permissao do
 // dominio — uma linha por (user, session_jid). Mesmo user pode aparecer
 // varias vezes (uma vez por sessao liberada). Linhas legadas tem
-// session_jid='' = wildcard.
+// session_jid=” = wildcard.
 func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain string) ([]*CrmUserPermission, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, domain, user_id, user_name, session_jid, granted_at, granted_by
@@ -1866,7 +1867,7 @@ func (r *Repository) RevokeSessionPermission(ctx context.Context, domain, userID
 }
 
 // ListUserAllowedSessions retorna as session_jids que esse user pode usar
-// no dominio. Linha legada com session_jid='' funciona como wildcard:
+// no dominio. Linha legada com session_jid=” funciona como wildcard:
 // libera qualquer sessao ativa do dominio (mantem compat sem migrate manual).
 func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID string) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
@@ -1910,7 +1911,7 @@ func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID
 }
 
 // IsSessionAllowed: o user pode enviar com esta sessao?
-// Match exato + match wildcard (session_jid='').
+// Match exato + match wildcard (session_jid=”).
 func (r *Repository) IsSessionAllowed(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
 	var n int
 	err := r.pool.QueryRow(ctx, `
@@ -2215,175 +2216,6 @@ func (r *Repository) AckSMSRisk(ctx context.Context, domain string) error {
 
 // ─── Tenant Plans (Trial / Basic / Pro) ────────────────────────────────────
 
-// GetTenantPlan retorna o plano do dominio. Se nao existe, devolve nil
-// (caller pode criar trial via EnsureTenantTrial). Usado nos gates de
-// feature pra decidir 200 vs 402.
-func (r *Repository) GetTenantPlan(ctx context.Context, domain string) (*TenantPlan, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT domain, plan, status, trial_ends_at, active_until,
-		       created_at, updated_at, notes,
-		       COALESCE(welcome_shown, FALSE), master_auto_set_at,
-		       COALESCE(cancel_at_period_end, FALSE), cancelled_at
-		FROM tenant_plans WHERE domain = $1`, domain)
-	var p TenantPlan
-	err := row.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-		&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt,
-		&p.CancelAtPeriodEnd, &p.CancelledAt)
-	if err != nil {
-		// pgx.ErrNoRows nao importado aqui — comparacao por mensagem evita
-		// import circular.
-		if strings.Contains(err.Error(), "no rows") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
-// SetWelcomeShown marca que o tenant ja' viu a tela de boas-vindas e
-// clicou "Continuar pro App". Idempotente — chamado pelo /ui/welcome/dismiss.
-func (r *Repository) SetWelcomeShown(ctx context.Context, domain string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE tenant_plans SET welcome_shown = TRUE, updated_at = NOW() WHERE domain = $1`,
-		domain)
-	return err
-}
-
-// MarkMasterAutoSet marca o timestamp em que o backend auto-setou o master.
-// Diagnostico: ajuda a distinguir master setado manualmente do automatico.
-func (r *Repository) MarkMasterAutoSet(ctx context.Context, domain string) error {
-	_, err := r.pool.Exec(ctx,
-		`UPDATE tenant_plans SET master_auto_set_at = NOW(), updated_at = NOW() WHERE domain = $1`,
-		domain)
-	return err
-}
-
-// EnsureTenantTrial cria o plano de trial pro dominio se ele ainda nao tem
-// plano. O PLANO e a DURACAO vem da aba Planos: o plano marcado como
-// is_trial_default e o trial_days dele. Fallback: 'basic' com 7 dias.
-// Idempotente. Chamado no /bitrix/auth (apos validar oauth do install).
-func (r *Repository) EnsureTenantTrial(ctx context.Context, domain string) error {
-	if domain == "" {
-		return nil
-	}
-	planCode, days := r.TrialPlanAndDays(ctx)
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at)
-		VALUES ($1, $2, 'trial', NOW() + make_interval(days => $3))
-		ON CONFLICT (domain) DO NOTHING`, domain, planCode, days)
-	return err
-}
-
-// TrialPlanAndDays devolve (codigo do plano de trial, dias). Le da aba
-// Planos (is_trial_default + trial_days); fallback 'basic'/7.
-func (r *Repository) TrialPlanAndDays(ctx context.Context) (string, int) {
-	var code string
-	var days int
-	err := r.pool.QueryRow(ctx, `
-		SELECT code, COALESCE(NULLIF(trial_days,0), 7)
-		  FROM plan_definitions
-		 WHERE is_trial_default
-		 LIMIT 1`).Scan(&code, &days)
-	if err != nil || code == "" {
-		return "basic", 7
-	}
-	if days <= 0 {
-		days = 7
-	}
-	return code, days
-}
-
-// SetTenantPlan atualiza o plano de um tenant. Usado pelo super-admin pra
-// converter trial -> pro pago, ou suspender. Idempotente. Se o tenant
-// ainda nao tem row, cria.
-//
-// plan: 'basic' | 'pro'
-// status: 'trial' | 'active' | 'expired' | 'suspended'
-// activeUntil: NULL pra vitalicio (Pro com pagamento manual sem cobranca recorrente)
-func (r *Repository) SetTenantPlan(ctx context.Context, domain, plan, status string,
-	activeUntil *time.Time, notes string) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO tenant_plans (domain, plan, status, active_until, notes)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (domain) DO UPDATE SET
-			plan         = EXCLUDED.plan,
-			status       = EXCLUDED.status,
-			active_until = EXCLUDED.active_until,
-			notes        = EXCLUDED.notes,
-			updated_at   = NOW()`,
-		domain, plan, status, activeUntil, notes)
-	return err
-}
-
-// SetTenantTrialEndsAt extende ou redefine o trial do tenant pra terminar
-// em `newEnd`. Forca status='trial' e plan='basic' (idempotente). Limpa
-// active_until (trial nao tem expiracao de Pro). Cria row se ainda nao
-// existe — caller passa newEnd ja' calculado (NOW + N dias).
-//
-// Usado pelos atalhos do /admin (extend-trial, reactivate). Trail de
-// auditoria em logs com timestamp da chamada.
-func (r *Repository) SetTenantTrialEndsAt(ctx context.Context, domain string, newEnd time.Time, notes string) error {
-	if domain == "" {
-		return nil
-	}
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO tenant_plans (domain, plan, status, trial_ends_at, active_until, notes)
-		VALUES ($1, 'basic', 'trial', $2, NULL, $3)
-		ON CONFLICT (domain) DO UPDATE SET
-			plan          = 'basic',
-			status        = 'trial',
-			trial_ends_at = EXCLUDED.trial_ends_at,
-			active_until  = NULL,
-			notes         = EXCLUDED.notes,
-			updated_at    = NOW()`,
-		domain, newEnd, notes)
-	return err
-}
-
-// ListTenantPlans pra UI super-admin (/admin/api/tenants).
-func (r *Repository) ListTenantPlans(ctx context.Context) ([]*TenantPlan, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT domain, plan, status, trial_ends_at, active_until,
-		       created_at, updated_at, notes,
-		       COALESCE(welcome_shown, FALSE), master_auto_set_at,
-		       COALESCE(cancel_at_period_end, FALSE), cancelled_at
-		FROM tenant_plans
-		ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*TenantPlan
-	for rows.Next() {
-		var p TenantPlan
-		if err := rows.Scan(&p.Domain, &p.Plan, &p.Status, &p.TrialEndsAt, &p.ActiveUntil,
-			&p.CreatedAt, &p.UpdatedAt, &p.Notes, &p.WelcomeShown, &p.MasterAutoSetAt,
-			&p.CancelAtPeriodEnd, &p.CancelledAt); err != nil {
-			return nil, err
-		}
-		out = append(out, &p)
-	}
-	return out, rows.Err()
-}
-
-// SetPlanCancellation marca/desmarca cancelamento agendado (nao renova no
-// fim do periodo). Mantem status='active' e active_until — o acesso segue
-// ate la. reactivate=false marca cancelamento; true reverte (volta a renovar).
-func (r *Repository) SetPlanCancellation(ctx context.Context, domain string, cancel bool) error {
-	if cancel {
-		_, err := r.pool.Exec(ctx, `
-			UPDATE tenant_plans
-			   SET cancel_at_period_end = TRUE, cancelled_at = NOW(), updated_at = NOW()
-			 WHERE domain = $1`, domain)
-		return err
-	}
-	_, err := r.pool.Exec(ctx, `
-		UPDATE tenant_plans
-		   SET cancel_at_period_end = FALSE, cancelled_at = NULL, updated_at = NOW()
-		 WHERE domain = $1`, domain)
-	return err
-}
-
 // CountActiveSessionsByDomain conta sessoes (QR + Cloud) ativas vinculadas
 // ao domain. Usado pra enforce do limite de 10 sessoes do plano Pro.
 func (r *Repository) CountActiveSessionsByDomain(ctx context.Context, domain string) (int, error) {
@@ -2436,7 +2268,9 @@ func (r *Repository) PurgePortalCompletely(ctx context.Context, domain string) (
 		{"message_templates", `DELETE FROM message_templates WHERE domain = $1`},
 		{"bitrix_accounts", `DELETE FROM bitrix_accounts WHERE domain = $1`},
 		{"bitrix_tokens", `DELETE FROM bitrix_tokens WHERE domain = $1`},
-		{"tenant_plans", `DELETE FROM tenant_plans WHERE domain = $1`},
+		{"license_payments", `DELETE FROM license_payments WHERE domain = $1`},
+		{"license_notifications", `DELETE FROM license_notifications WHERE domain = $1`},
+		{"tenant_licenses", `DELETE FROM tenant_licenses WHERE domain = $1`},
 		{"bitrix_portals", `DELETE FROM bitrix_portals WHERE domain = $1`},
 	}
 	for _, p := range purges {
@@ -2457,254 +2291,43 @@ func (r *Repository) PurgePortalCompletely(ctx context.Context, domain string) (
 
 // ─── Billing (maxiPago) ────────────────────────────────────────────────────
 
-// BillingCharge representa uma cobranca gerada no gateway maxiPago.
-type BillingCharge struct {
-	ID              uuid.UUID  `json:"id"`
-	Domain          string     `json:"domain"`
-	Plan            string     `json:"plan"`
-	Method          string     `json:"method"`
-	AmountCents     int64      `json:"amount_cents"`
-	ReferenceNum    string     `json:"reference_num"`
-	MPOrderID       string     `json:"mp_order_id"`
-	MPTransactionID string     `json:"mp_transaction_id"`
-	BoletoURL       string     `json:"boleto_url"`
-	Status          string     `json:"status"`
-	CreatedAt       time.Time  `json:"created_at"`
-	PaidAt          *time.Time `json:"paid_at,omitempty"`
-}
-
-// CreateBillingCharge insere uma cobranca pending.
-func (r *Repository) CreateBillingCharge(ctx context.Context, c *BillingCharge) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO billing_charges (id, domain, plan, method, amount_cents,
-			reference_num, mp_order_id, mp_transaction_id, boleto_url, status, raw_response)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)`,
-		c.ID, c.Domain, c.Plan, c.Method, c.AmountCents,
-		c.ReferenceNum, c.MPOrderID, c.MPTransactionID, c.BoletoURL, "")
-	return err
-}
-
-// GetBillingChargeByReference localiza cobranca pelo reference_num (chave do
-// postback maxiPago).
-func (r *Repository) GetBillingChargeByReference(ctx context.Context, ref string) (*BillingCharge, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, domain, plan, method, amount_cents, reference_num,
-		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
-		FROM billing_charges WHERE reference_num = $1`, ref)
-	var c BillingCharge
-	if err := row.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
-		&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
-		&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// ProximoNossoNumero incrementa e devolve o proximo "nosso numero" do boleto
-// Itau (carteira 109 exige crescente e unico). Atomico: UPDATE ... RETURNING
-// serializa concorrencia no proprio Postgres, sem risco de repetir.
-func (r *Repository) ProximoNossoNumero(ctx context.Context) (int64, error) {
-	var n int64
-	err := r.pool.QueryRow(ctx, `
-		UPDATE boleto_numeracao
-		   SET ultimo_numero = ultimo_numero + 1, updated_at = NOW()
-		 WHERE id = 1
-		RETURNING ultimo_numero`).Scan(&n)
-	return n, err
-}
-
-// GetBillingChargeByTxid busca uma cobranca pelo txid do PIX Itaú, guardado no
-// campo mp_transaction_id (reaproveitado — cobrancas Itaú nao usam MaxiPago).
-// Usado pelo webhook do Itaú, que reconcilia por txid (nao conhece nosso ref).
-func (r *Repository) GetBillingChargeByTxid(ctx context.Context, txid string) (*BillingCharge, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, domain, plan, method, amount_cents, reference_num,
-		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
-		FROM billing_charges WHERE mp_transaction_id = $1 AND method = 'pix'
-		ORDER BY created_at DESC LIMIT 1`, txid)
-	var c BillingCharge
-	if err := row.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
-		&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
-		&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// MarkBillingChargePaid marca a cobranca como paga (idempotente) e grava o
-// payload bruto do postback pra auditoria/tuning.
-func (r *Repository) MarkBillingChargePaid(ctx context.Context, ref, rawPayload string) (bool, error) {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE billing_charges
-		   SET status = 'paid', paid_at = NOW(), raw_response = $2
-		 WHERE reference_num = $1 AND status <> 'paid'`, ref, rawPayload)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() > 0, nil
-}
-
-// ListBillingChargesByDomain — historico de cobrancas do tenant (recentes primeiro).
-func (r *Repository) ListBillingChargesByDomain(ctx context.Context, domain string, limit int) ([]*BillingCharge, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, domain, plan, method, amount_cents, reference_num,
-		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
-		FROM billing_charges WHERE domain = $1
-		ORDER BY created_at DESC LIMIT $2`, domain, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*BillingCharge
-	for rows.Next() {
-		var c BillingCharge
-		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
-			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
-			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
-}
-
-// ListPendingBoletoCharges retorna cobrancas de boleto ainda nao pagas, pra o
-// job de reconciliacao consultar no Itau. Limita a janela pra nao consultar
-// boletos antigos eternamente (vencidos ha muito tempo nao serao pagos).
-// maxAgeDays: so' boletos criados nos ultimos N dias. limit: teto por rodada.
-func (r *Repository) ListPendingBoletoCharges(ctx context.Context, maxAgeDays, limit int) ([]*BillingCharge, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	if maxAgeDays <= 0 {
-		maxAgeDays = 10
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, domain, plan, method, amount_cents, reference_num,
-		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
-		FROM billing_charges
-		WHERE method = 'boleto'
-		  AND status = 'pending'
-		  AND created_at > NOW() - make_interval(days => $1)
-		ORDER BY created_at ASC
-		LIMIT $2`, maxAgeDays, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*BillingCharge
-	for rows.Next() {
-		var c BillingCharge
-		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
-			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
-			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
-}
-
-// ─── Admin metrics (agregados globais) ─────────────────────────────────────
-
-// AdminMetrics resume o estado do negocio pro painel super-admin.
+// AdminMetrics resume o estado do negocio pro painel admin.
+//
+// Reescrito para o modelo de instalacao local: as metricas de cobranca
+// (pagos/pendentes/receita) e de plano (trial/pro/basico) sairam junto com o
+// modelo SaaS. O que interessa agora e' quantos clientes estao instalados e
+// quantos precisam de renovacao.
 type AdminMetrics struct {
 	TenantsTotal     int   `json:"tenants_total"`
-	TenantsTrial     int   `json:"tenants_trial"`
-	TenantsActive    int   `json:"tenants_active"`
-	TenantsExpired   int   `json:"tenants_expired"`
-	TenantsSuspended int   `json:"tenants_suspended"`
-	TenantsPro       int   `json:"tenants_pro"`
-	TenantsBasic     int   `json:"tenants_basic"`
+	LicencasVigor    int   `json:"licencas_em_vigor"` // sem prazo ou dentro dele
+	LicencasVencidas int   `json:"licencas_vencidas"`
+	LicencasVencendo int   `json:"licencas_vencendo"` // vencem em ate 7 dias
 	SessionsActive   int   `json:"sessions_active"`
 	Msgs24h          int64 `json:"msgs_24h"`
-	ChargesPaid      int   `json:"charges_paid"`
-	ChargesPending   int   `json:"charges_pending"`
-	RevenueCentsPaid int64 `json:"revenue_cents_paid"`
 }
 
 // GetAdminMetrics computa os agregados em poucas queries.
 func (r *Repository) GetAdminMetrics(ctx context.Context) (*AdminMetrics, error) {
 	m := &AdminMetrics{}
 
-	// Planos por status/plan. Ignora placeholders (domain = member_id) via
-	// join defensivo: contamos so' tenant_plans, que so' existe pra domain real.
-	rows, err := r.pool.Query(ctx, `
-		SELECT plan, status, COUNT(*) FROM tenant_plans GROUP BY plan, status`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var plan, status string
-		var n int
-		if err := rows.Scan(&plan, &status, &n); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		m.TenantsTotal += n
-		switch status {
-		case "trial":
-			m.TenantsTrial += n
-		case "active":
-			m.TenantsActive += n
-		case "expired":
-			m.TenantsExpired += n
-		case "suspended":
-			m.TenantsSuspended += n
-		}
-		if plan == "pro" {
-			m.TenantsPro += n
-		} else {
-			m.TenantsBasic += n
-		}
-	}
-	rows.Close()
+	_ = r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE valid_until IS NULL OR valid_until >= CURRENT_DATE),
+			COUNT(*) FILTER (WHERE valid_until IS NOT NULL AND valid_until < CURRENT_DATE),
+			COUNT(*) FILTER (WHERE valid_until IS NOT NULL
+			                   AND valid_until >= CURRENT_DATE
+			                   AND valid_until <= CURRENT_DATE + 7)
+		  FROM tenant_licenses`).
+		Scan(&m.TenantsTotal, &m.LicencasVigor, &m.LicencasVencidas, &m.LicencasVencendo)
 
-	// Sessoes ativas (todas).
 	_ = r.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM whatsapp_sessions WHERE status = 'active'`).Scan(&m.SessionsActive)
 
-	// Msgs 24h.
 	_ = r.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM messages WHERE created_at > NOW() - INTERVAL '24 hours'`).Scan(&m.Msgs24h)
 
-	// Billing.
-	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FILTER (WHERE status='paid'),
-		        COUNT(*) FILTER (WHERE status='pending'),
-		        COALESCE(SUM(amount_cents) FILTER (WHERE status='paid'), 0)
-		 FROM billing_charges`).Scan(&m.ChargesPaid, &m.ChargesPending, &m.RevenueCentsPaid)
-
 	return m, nil
-}
-
-// ListRecentBillingCharges — ultimas cobrancas de TODOS os tenants (admin).
-func (r *Repository) ListRecentBillingCharges(ctx context.Context, limit int) ([]*BillingCharge, error) {
-	if limit <= 0 {
-		limit = 30
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, domain, plan, method, amount_cents, reference_num,
-		       mp_order_id, mp_transaction_id, boleto_url, status, created_at, paid_at
-		FROM billing_charges ORDER BY created_at DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*BillingCharge
-	for rows.Next() {
-		var c BillingCharge
-		if err := rows.Scan(&c.ID, &c.Domain, &c.Plan, &c.Method, &c.AmountCents,
-			&c.ReferenceNum, &c.MPOrderID, &c.MPTransactionID, &c.BoletoURL,
-			&c.Status, &c.CreatedAt, &c.PaidAt); err != nil {
-			return nil, err
-		}
-		out = append(out, &c)
-	}
-	return out, rows.Err()
 }
 
 // ─── Admin users (multi-admin com papeis) ──────────────────────────────────
@@ -2887,8 +2510,11 @@ type TenantUsage struct {
 	Msgs30d       int64  `json:"msgs_30d"`
 	SessionsQR    int    `json:"sessions_qr"`
 	SessionsCloud int    `json:"sessions_cloud"`
-	RevenueCents  int64  `json:"revenue_cents"`
-	ChargesPaid   int    `json:"charges_paid"`
+	// Contrato: quantos numeros o cliente pode ter e ate quando a licenca
+	// vale. Substituem receita/cobrancas do modelo antigo — o que importa
+	// agora e' se o consumo cabe no contratado.
+	MaxSessions int        `json:"max_sessions"`
+	ValidUntil  *time.Time `json:"valid_until,omitempty"`
 }
 
 // GetTenantUsage agrega consumo por dominio. Msgs via join messages ->
@@ -2896,7 +2522,7 @@ type TenantUsage struct {
 // da pra medir por tenant sem tocar o disco (arquivos .db sao por telefone,
 // nao por dominio) — fica de fora aqui; a UI mostra sessoes como proxy.
 func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error) {
-	// Base: um row por dominio de bitrix_accounts (planos existentes).
+	// Base: um row por dominio de bitrix_accounts.
 	rows, err := r.pool.Query(ctx, `
 		WITH dom AS (
 			SELECT DISTINCT domain FROM bitrix_accounts WHERE domain <> ''
@@ -2921,20 +2547,17 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 			  JOIN messages m ON m.session_id = ws.id
 			 GROUP BY ba.domain
 		),
-		bill AS (
-			SELECT domain,
-			       COALESCE(SUM(amount_cents) FILTER (WHERE status='paid'),0) AS rev,
-			       COUNT(*) FILTER (WHERE status='paid') AS paid
-			  FROM billing_charges GROUP BY domain
+		lic AS (
+			SELECT domain, max_sessions, valid_until FROM tenant_licenses
 		)
 		SELECT d.domain,
 		       COALESCE(msg.m24,0), COALESCE(msg.m7,0), COALESCE(msg.m30,0),
 		       COALESCE(sess.qr,0), COALESCE(sess.cloud,0),
-		       COALESCE(bill.rev,0), COALESCE(bill.paid,0)
+		       COALESCE(lic.max_sessions,1), lic.valid_until
 		  FROM dom d
 		  LEFT JOIN sess ON sess.domain = d.domain
 		  LEFT JOIN msg  ON msg.domain  = d.domain
-		  LEFT JOIN bill ON bill.domain = d.domain
+		  LEFT JOIN lic  ON lic.domain  = d.domain
 		 ORDER BY COALESCE(msg.m30,0) DESC`)
 	if err != nil {
 		return nil, err
@@ -2944,7 +2567,7 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 	for rows.Next() {
 		var u TenantUsage
 		if err := rows.Scan(&u.Domain, &u.Msgs24h, &u.Msgs7d, &u.Msgs30d,
-			&u.SessionsQR, &u.SessionsCloud, &u.RevenueCents, &u.ChargesPaid); err != nil {
+			&u.SessionsQR, &u.SessionsCloud, &u.MaxSessions, &u.ValidUntil); err != nil {
 			return nil, err
 		}
 		out = append(out, &u)
@@ -2953,337 +2576,3 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 }
 
 // ─── Plan definitions (construtor de planos) ───────────────────────────────
-
-type PlanDefinition struct {
-	Code            string    `json:"code"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	PriceCents      int64     `json:"price_cents"`
-	MaxSessions     int       `json:"max_sessions"`
-	FeatTemplates   bool      `json:"feat_templates"`
-	FeatAutomations bool      `json:"feat_automations"`
-	FeatSMS         bool      `json:"feat_sms"`
-	FeatReports     bool      `json:"feat_reports"`
-	IsPro           bool      `json:"is_pro"`
-	Active          bool      `json:"active"`
-	SortOrder       int       `json:"sort_order"`
-	TrialDays       int       `json:"trial_days"`        // duracao do teste deste plano
-	IsTrialDefault  bool      `json:"is_trial_default"`  // plano dado a novos tenants
-	AcceptBoleto    bool      `json:"accept_boleto"`     // checkout oferece boleto
-	AcceptPix       bool      `json:"accept_pix"`        // checkout oferece PIX
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-}
-
-const planDefCols = `code, name, description, price_cents, max_sessions,
-	feat_templates, feat_automations, feat_sms, feat_reports,
-	is_pro, active, sort_order,
-	COALESCE(trial_days,0), COALESCE(is_trial_default,FALSE),
-	COALESCE(accept_boleto,TRUE), COALESCE(accept_pix,TRUE),
-	created_at, updated_at`
-
-func scanPlanDef(row interface {
-	Scan(dest ...interface{}) error
-}) (*PlanDefinition, error) {
-	var p PlanDefinition
-	err := row.Scan(&p.Code, &p.Name, &p.Description, &p.PriceCents, &p.MaxSessions,
-		&p.FeatTemplates, &p.FeatAutomations, &p.FeatSMS, &p.FeatReports,
-		&p.IsPro, &p.Active, &p.SortOrder,
-		&p.TrialDays, &p.IsTrialDefault,
-		&p.AcceptBoleto, &p.AcceptPix,
-		&p.CreatedAt, &p.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
-}
-
-// GetPlanDefinition retorna a definicao de um plano pelo code (nil se nao
-// existe). Usado pelo gating pra decidir features do tenant.
-func (r *Repository) GetPlanDefinition(ctx context.Context, code string) (*PlanDefinition, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+planDefCols+` FROM plan_definitions WHERE code = $1`, code)
-	p, err := scanPlanDef(row)
-	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return p, nil
-}
-
-// ListPlanDefinitions retorna todos os planos (admin) ou so' ativos.
-func (r *Repository) ListPlanDefinitions(ctx context.Context, onlyActive bool) ([]*PlanDefinition, error) {
-	q := `SELECT ` + planDefCols + ` FROM plan_definitions`
-	if onlyActive {
-		q += ` WHERE active = TRUE`
-	}
-	q += ` ORDER BY sort_order ASC, price_cents ASC`
-	rows, err := r.pool.Query(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*PlanDefinition
-	for rows.Next() {
-		p, err := scanPlanDef(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
-// UpsertPlanDefinition cria ou atualiza um plano. Se o plano vier marcado
-// como is_trial_default, desmarca os outros (so' 1 plano pode ser o de
-// trial dos novos tenants).
-func (r *Repository) UpsertPlanDefinition(ctx context.Context, p *PlanDefinition) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	if p.IsTrialDefault {
-		if _, err := tx.Exec(ctx,
-			`UPDATE plan_definitions SET is_trial_default = FALSE WHERE code <> $1`, p.Code); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO plan_definitions
-			(code, name, description, price_cents, max_sessions,
-			 feat_templates, feat_automations, feat_sms, feat_reports,
-			 is_pro, active, sort_order, trial_days, is_trial_default,
-			 accept_boleto, accept_pix, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-		ON CONFLICT (code) DO UPDATE SET
-			name=EXCLUDED.name, description=EXCLUDED.description,
-			price_cents=EXCLUDED.price_cents, max_sessions=EXCLUDED.max_sessions,
-			feat_templates=EXCLUDED.feat_templates, feat_automations=EXCLUDED.feat_automations,
-			feat_sms=EXCLUDED.feat_sms, feat_reports=EXCLUDED.feat_reports,
-			is_pro=EXCLUDED.is_pro, active=EXCLUDED.active,
-			sort_order=EXCLUDED.sort_order, trial_days=EXCLUDED.trial_days,
-			is_trial_default=EXCLUDED.is_trial_default,
-			accept_boleto=EXCLUDED.accept_boleto, accept_pix=EXCLUDED.accept_pix,
-			updated_at=NOW()`,
-		p.Code, p.Name, p.Description, p.PriceCents, p.MaxSessions,
-		p.FeatTemplates, p.FeatAutomations, p.FeatSMS, p.FeatReports,
-		p.IsPro, p.Active, p.SortOrder, p.TrialDays, p.IsTrialDefault,
-		p.AcceptBoleto, p.AcceptPix); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// GetTrialPlan retorna o plano marcado como default de trial (ou nil).
-func (r *Repository) GetTrialPlan(ctx context.Context) (*PlanDefinition, error) {
-	row := r.pool.QueryRow(ctx,
-		`SELECT `+planDefCols+` FROM plan_definitions WHERE is_trial_default LIMIT 1`)
-	p, err := scanPlanDef(row)
-	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return p, nil
-}
-
-// DeletePlanDefinition remove um plano. Bloqueia se ha tenants usando.
-func (r *Repository) DeletePlanDefinition(ctx context.Context, code string) (bool, error) {
-	var inUse int
-	_ = r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM tenant_plans WHERE plan = $1`, code).Scan(&inUse)
-	if inUse > 0 {
-		return false, nil // em uso — nao deleta
-	}
-	_, err := r.pool.Exec(ctx, `DELETE FROM plan_definitions WHERE code = $1`, code)
-	return err == nil, err
-}
-
-// ─── Billing config (gateway editavel pela UI) ─────────────────────────────
-
-type BillingConfigRow struct {
-	Provider         string    `json:"provider"`
-	Environment      string    `json:"environment"`
-	MerchantID       string    `json:"merchant_id"`
-	MerchantKey      string    `json:"-"` // sensivel: nunca serializa pro front
-	ProcessorBoleto  string    `json:"processor_boleto"`
-	ProcessorPix     string    `json:"processor_pix"`
-	ProcessorCard    string    `json:"processor_card"`
-	ActivateDays     int       `json:"activate_days"`
-	TrialDays        int       `json:"trial_days"`
-	Enabled          bool      `json:"enabled"`
-	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-// GetBillingConfig retorna a linha unica (id=1). Sempre existe (seed na
-// migration). Erro so' em falha de conexao.
-func (r *Repository) GetBillingConfig(ctx context.Context) (*BillingConfigRow, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT provider, environment, merchant_id, merchant_key,
-		       processor_boleto, processor_pix, processor_card,
-		       activate_days, COALESCE(trial_days, 7), enabled, updated_at
-		FROM billing_config WHERE id = 1`)
-	var b BillingConfigRow
-	err := row.Scan(&b.Provider, &b.Environment, &b.MerchantID, &b.MerchantKey,
-		&b.ProcessorBoleto, &b.ProcessorPix, &b.ProcessorCard,
-		&b.ActivateDays, &b.TrialDays, &b.Enabled, &b.UpdatedAt)
-	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &b, nil
-}
-
-// SaveBillingConfig atualiza a config. merchantKeyChanged=false preserva a
-// key atual (o front nao reenvia a key sensivel se nao mudou).
-func (r *Repository) SaveBillingConfig(ctx context.Context, b *BillingConfigRow, merchantKeyChanged bool) error {
-	if merchantKeyChanged {
-		_, err := r.pool.Exec(ctx, `
-			UPDATE billing_config SET
-				provider=$1, environment=$2, merchant_id=$3, merchant_key=$4,
-				processor_boleto=$5, processor_pix=$6, processor_card=$7,
-				activate_days=$8, trial_days=$9, enabled=$10, updated_at=NOW()
-			WHERE id = 1`,
-			b.Provider, b.Environment, b.MerchantID, b.MerchantKey,
-			b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
-			b.ActivateDays, b.TrialDays, b.Enabled)
-		return err
-	}
-	_, err := r.pool.Exec(ctx, `
-		UPDATE billing_config SET
-			provider=$1, environment=$2, merchant_id=$3,
-			processor_boleto=$4, processor_pix=$5, processor_card=$6,
-			activate_days=$7, trial_days=$8, enabled=$9, updated_at=NOW()
-		WHERE id = 1`,
-		b.Provider, b.Environment, b.MerchantID,
-		b.ProcessorBoleto, b.ProcessorPix, b.ProcessorCard,
-		b.ActivateDays, b.TrialDays, b.Enabled)
-	return err
-}
-
-// ─── Cupons de desconto ────────────────────────────────────────────────────
-
-type Coupon struct {
-	Code        string     `json:"code"`
-	Description string     `json:"description"`
-	Kind        string     `json:"kind"`  // percent | amount | trial_days
-	Value       int        `json:"value"` // % | centavos | dias
-	PlanCode    string     `json:"plan_code"`
-	MaxUses     int        `json:"max_uses"`
-	UsedCount   int        `json:"used_count"`
-	Active      bool       `json:"active"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CreatedBy   string     `json:"created_by"`
-}
-
-const couponCols = `code, description, kind, value, plan_code, max_uses,
-	used_count, active, expires_at, created_at, created_by`
-
-func scanCoupon(row interface {
-	Scan(dest ...interface{}) error
-}) (*Coupon, error) {
-	var c Coupon
-	err := row.Scan(&c.Code, &c.Description, &c.Kind, &c.Value, &c.PlanCode,
-		&c.MaxUses, &c.UsedCount, &c.Active, &c.ExpiresAt, &c.CreatedAt, &c.CreatedBy)
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-func (r *Repository) ListCoupons(ctx context.Context) ([]*Coupon, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+couponCols+` FROM coupons ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*Coupon
-	for rows.Next() {
-		c, err := scanCoupon(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-func (r *Repository) GetCoupon(ctx context.Context, code string) (*Coupon, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+couponCols+` FROM coupons WHERE code = $1`, strings.ToUpper(code))
-	c, err := scanCoupon(row)
-	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return c, nil
-}
-
-func (r *Repository) UpsertCoupon(ctx context.Context, c *Coupon) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO coupons (code, description, kind, value, plan_code, max_uses,
-			active, expires_at, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (code) DO UPDATE SET
-			description=EXCLUDED.description, kind=EXCLUDED.kind,
-			value=EXCLUDED.value, plan_code=EXCLUDED.plan_code,
-			max_uses=EXCLUDED.max_uses, active=EXCLUDED.active,
-			expires_at=EXCLUDED.expires_at`,
-		strings.ToUpper(c.Code), c.Description, c.Kind, c.Value, c.PlanCode,
-		c.MaxUses, c.Active, c.ExpiresAt, c.CreatedBy)
-	return err
-}
-
-func (r *Repository) DeleteCoupon(ctx context.Context, code string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM coupons WHERE code = $1`, strings.ToUpper(code))
-	return err
-}
-
-// CouponRedeemedBy indica se o tenant ja usou esse cupom.
-func (r *Repository) CouponRedeemedBy(ctx context.Context, code, domain string) bool {
-	var n int
-	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM coupon_redemptions WHERE code=$1 AND domain=$2`,
-		strings.ToUpper(code), domain).Scan(&n)
-	return n > 0
-}
-
-// RedeemCoupon registra o uso e incrementa o contador. Idempotente por
-// (code, domain) via unique index — segunda tentativa retorna erro.
-func (r *Repository) RedeemCoupon(ctx context.Context, code, domain, planCode string, discountCents int64, trialDaysAdded int) error {
-	code = strings.ToUpper(code)
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO coupon_redemptions (code, domain, plan_code, discount_cents, trial_days_added)
-		VALUES ($1,$2,$3,$4,$5)`, code, domain, planCode, discountCents, trialDaysAdded); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE coupons SET used_count = used_count + 1 WHERE code = $1`, code); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// ExtendTrial soma dias ao trial vigente do tenant (usado por cupom
-// trial_days). Se nao esta em trial, nao faz nada.
-func (r *Repository) ExtendTrial(ctx context.Context, domain string, days int) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE tenant_plans
-		   SET trial_ends_at = GREATEST(COALESCE(trial_ends_at, NOW()), NOW())
-		                       + make_interval(days => $2),
-		       updated_at = NOW()
-		 WHERE domain = $1 AND status = 'trial'`, domain, days)
-	return err
-}

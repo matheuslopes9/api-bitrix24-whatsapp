@@ -442,7 +442,7 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
 	// PLAN GATE: robots BizProc dependem da feature "automations" do plano
-	// (configuravel via plan_definitions, com fallback legado).
+	// (feature 'Automacoes' da licenca do cliente).
 	feat := h.resolveTenantFeatures(c.Context(), portal.Domain)
 	if !feat.Automations {
 		h.log.Warn("bp-robot: feature automations nao habilitada no plano",
