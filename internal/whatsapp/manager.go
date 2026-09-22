@@ -862,11 +862,26 @@ func extractPhoneFromJID(jid string) string {
 }
 
 // Ping verifica se a conexão está ativa.
+//
+// BUG HISTORICO (loop de reconexao a cada ~30s): esta funcao casava o JID
+// por igualdade EXATA no mapa. Mas o JID carrega o device suffix do
+// whatsmeow (":1", ":2") que muda a cada re-pareamento, e o Manager indexa
+// o mapa pelo JID REAL do device — enquanto o watchdog varre as linhas do
+// BANCO, que podem ter um suffix antigo. Com uma linha orfa no banco
+// (ex: ":1" quando o device atual e' ":2"):
+//
+//   Ping(":1")  -> map miss -> false, SEMPRE
+//   watchdog    -> "session not responding" -> Reconnect(":1")
+//   Reconnect   -> abre um SEGUNDO client sobre o mesmo numero
+//   WhatsApp    -> derruba um dos dois (stream:conflict)
+//   ...30s depois, tudo de novo, pra sempre.
+//
+// FIX: resolve por numero BASE (resolveSession ja' tolera o suffix). Uma
+// linha orfa do mesmo numero agora encontra a sessao viva e responde true,
+// entao o watchdog nao tenta reconectar o que ja' esta conectado.
 func (m *Manager) Ping(jid string) bool {
-	m.mu.RLock()
-	sess, ok := m.sessions[jid]
-	m.mu.RUnlock()
-	return ok && sess.Client.IsConnected()
+	sess, ok := m.resolveSession(jid)
+	return ok && sess.Client != nil && sess.Client.IsConnected()
 }
 
 // Reconnect tenta reconectar uma sessão que estava desconectada.
@@ -883,10 +898,12 @@ func (m *Manager) Ping(jid string) bool {
 // FIX: se a entrada existe MAS o cliente nao esta conectado, e' um zumbi.
 // Remove a entrada morta e reconecta de verdade via connectSession (que
 // reabre o .db preservado). So' retorna nil (no-op) se REALMENTE conectado.
+// Alem disso, a busca e' por NUMERO BASE (resolveSession), nao por JID
+// exato: uma linha orfa do banco com suffix antigo (":1") tem que encontrar
+// a sessao viva do mesmo numero (":2") e virar no-op — senao abriria um
+// segundo client sobre o mesmo device e o WhatsApp derrubaria um dos dois.
 func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
-	m.mu.RLock()
-	existing, exists := m.sessions[s.JID]
-	m.mu.RUnlock()
+	existing, exists := m.resolveSession(s.JID)
 
 	if exists {
 		// Ja' conectado de verdade — nao interfere.
@@ -895,12 +912,14 @@ func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
 		}
 		// Entrada zumbi (no mapa mas desconectada) — limpa antes de reconectar.
 		m.log.Warn("reconnect: entrada zumbi no mapa (desconectada) — limpando pra reconectar",
-			zap.String("jid", s.JID))
-		if existing.Client != nil {
-			existing.Client.Disconnect() // fecha qualquer socket meio-aberto
-		}
+			zap.String("jid_banco", s.JID),
+			zap.String("jid_mapa", existing.JID))
+		// close() desconecta, REMOVE OS EVENT HANDLERS e fecha o store
+		// SQLite. Antes so' chamava Disconnect(): o client continuava vivo
+		// com os handlers registrados e o handle do banco aberto.
+		existing.close()
 		m.mu.Lock()
-		delete(m.sessions, s.JID)
+		delete(m.sessions, existing.JID)
 		m.mu.Unlock()
 	}
 
@@ -998,21 +1017,59 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 		realJID = client.Store.ID.String()
 	}
 
+	// O numero autoritativo e' o do JID do device, NAO o s.Phone vindo do
+	// banco. O s.Phone e' a string que o usuario digitou na tela ao parear
+	// e nunca foi conferida contra a realidade — foi assim que o mesmo
+	// numero apareceu como "+5581996807479" e "+81996807479" na tela de
+	// Permissoes, sendo que o numero real e' 558196807479.
+	phone := extractPhoneFromJID(realJID)
+	if phone == "" {
+		phone = s.Phone
+	}
+
+	// Guarda de duplicidade: se o mesmo NUMERO ja' tem uma sessao viva, nao
+	// abre um segundo client. Duas conexoes sobre o mesmo device fazem o
+	// WhatsApp derrubar uma delas (stream:conflict), que era a origem do
+	// ciclo desconecta/reconecta a cada ~30s visto nos logs. Acontecia
+	// quando o banco tinha 2+ linhas pro mesmo numero (device suffix
+	// diferente) e o watchdog tentava reconectar cada uma.
+	if live, ok := m.resolveSession(realJID); ok && live.Client != nil && live.Client.IsConnected() {
+		_ = container.Close()
+		m.log.Info("connectSession: numero ja' conectado, ignorando conexao duplicada",
+			zap.String("jid_pedido", s.JID),
+			zap.String("jid_vivo", live.JID),
+			zap.String("phone", phone))
+		return nil
+	}
+
 	sess := &Session{
-		ID:     s.ID,
-		JID:    realJID,
-		Phone:  s.Phone,
-		Client: client,
-		dbPath: s.SessionFile,
+		ID:        s.ID,
+		JID:       realJID,
+		Phone:     phone,
+		Client:    client,
+		dbPath:    s.SessionFile,
+		container: container,
 	}
 
 	client.AddEventHandler(m.buildEventHandler(sess))
 
 	if err := client.Connect(); err != nil {
+		_ = container.Close()
 		return err
 	}
 
 	m.mu.Lock()
+	// Se sobrou uma entrada antiga do mesmo numero sob outra chave (suffix
+	// trocado no re-pareamento), fecha e remove — senao o client velho fica
+	// vivo e orfao, brigando pelo mesmo device.
+	for k, old := range m.sessions {
+		if k != realJID && extractPhoneFromJID(k) == phone {
+			old.close()
+			delete(m.sessions, k)
+			m.log.Info("connectSession: removida entrada antiga do mesmo numero",
+				zap.String("jid_antigo", k), zap.String("jid_novo", realJID))
+		}
+	}
 	m.sessions[realJID] = sess
 	m.mu.Unlock()
 
@@ -1020,7 +1077,7 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 	_ = m.repo.UpsertSession(ctx, &db.WhatsAppSession{
 		ID:          s.ID,
 		JID:         realJID,
-		Phone:       s.Phone,
+		Phone:       phone,
 		Status:      db.SessionActive,
 		SessionFile: s.SessionFile,
 		LastSeen:    &now,
@@ -1030,13 +1087,13 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 		m.log.Info("session jid updated on reconnect",
 			zap.String("old_jid", s.JID),
 			zap.String("new_jid", realJID),
-			zap.String("phone", s.Phone))
+			zap.String("phone", phone))
 	}
 
 	// Sessao reconectou e esta ativa — dispara refresh dos robots BizProc.
 	// Cobre o caso de sessao que estava Disconnected (dropdown ficou vazio)
 	// e voltou: re-registra pra popular o dropdown com o JID atual.
-	m.fireSessionConnect(s.Phone, realJID)
+	m.fireSessionConnect(phone, realJID)
 
 	return nil
 }

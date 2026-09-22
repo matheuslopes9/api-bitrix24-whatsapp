@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -53,10 +54,48 @@ func scanSession(r sessionRowScanner, s *WhatsAppSession) error {
 	)
 }
 
+// UpsertSession grava (ou atualiza) uma sessão WhatsApp.
+//
+// BUG HISTORICO (mesmo numero aparecia 2x na tela de Sessoes): o upsert e'
+// ON CONFLICT (jid), e o JID de sessao QR carrega o device suffix do
+// whatsmeow — que MUDA a cada re-pareamento (":1" -> ":2"). Com o suffix
+// novo o ON CONFLICT nao dispara e o Postgres INSERE UMA LINHA NOVA em vez
+// de atualizar a existente. A linha antiga fica orfa no banco pra sempre.
+//
+// Os estragos em cascata disso:
+//   - a tela de Sessoes WhatsApp listava o mesmo numero duas vezes
+//   - a tela de Permissoes oferecia 2 chips pro mesmo numero
+//   - o watchdog varria as DUAS linhas e tentava reconectar a orfa, abrindo
+//     um segundo client sobre o mesmo device -> stream:conflict -> o ciclo
+//     de desconexao a cada ~30s
+//
+// FIX: numa sessao QR, antes de inserir, remove as OUTRAS linhas do mesmo
+// numero base. O numero (sem suffix, sem dominio) e' a identidade estavel
+// de uma sessao QR; o JID nao e'.
 func (r *Repository) UpsertSession(ctx context.Context, s *WhatsAppSession) error {
 	if s.Type == "" {
 		s.Type = SessionTypeQR
 	}
+
+	// Cloud API fica de fora: o "JID" delas e' "cloud:<phone_id>@...", que
+	// nao tem device suffix e cujo SPLIT_PART(...,':',1) da' "cloud" pra
+	// todas — agrupar por isso colidiria contas oficiais distintas.
+	if s.Type != SessionTypeCloudAPI && !strings.HasPrefix(s.JID, "cloud:") {
+		if _, err := r.pool.Exec(ctx, `
+			DELETE FROM whatsapp_sessions
+			 WHERE jid <> $1
+			   AND jid NOT LIKE 'cloud:%'
+			   -- Exige numero base valido nos DOIS lados: um JID malformado
+			   -- produz base vazia, e sem esta guarda o vazio casaria com
+			   -- vazio e a limpeza apagaria linhas sem relacao entre si.
+			   AND SPLIT_PART(SPLIT_PART($1::text, '@', 1), ':', 1) ~ '^[0-9]+$'
+			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+			     = SPLIT_PART(SPLIT_PART($1::text, '@', 1), ':', 1)
+		`, s.JID); err != nil {
+			return fmt.Errorf("limpar sessoes duplicadas do mesmo numero: %w", err)
+		}
+	}
+
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO whatsapp_sessions
 			(id, jid, phone, display_name, status, session_file, type,
@@ -406,16 +445,18 @@ func (r *Repository) GetContactByJID(ctx context.Context, jid string, sessionID 
 func (r *Repository) InsertMessage(ctx context.Context, m *Message) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO messages (id, wa_message_id, session_id, contact_id, from_jid, to_jid, author_name,
-		                      direction, message_type, content, media_url, media_mime, media_size, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		                      direction, message_type, content, media_url, media_mime, media_size, status,
+		                      sent_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (wa_message_id) DO UPDATE SET
 			from_jid    = EXCLUDED.from_jid,
 			to_jid      = EXCLUDED.to_jid,
 			author_name = EXCLUDED.author_name,
-			status      = EXCLUDED.status
+			status      = EXCLUDED.status,
+			sent_at     = COALESCE(EXCLUDED.sent_at, messages.sent_at)
 	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.FromJID, m.ToJID, m.AuthorName,
 		m.Direction, m.MessageType, m.Content,
-		m.MediaURL, m.MediaMime, m.MediaSize, m.Status)
+		m.MediaURL, m.MediaMime, m.MediaSize, m.Status, m.SentAt)
 	return err
 }
 
@@ -599,7 +640,67 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 		return nil, err
 	}
 	defer rows.Close()
+	return scanMessages(rows)
+}
 
+// GetMessagesByPhoneForSession e' a versao ESCOPADA POR SESSAO do
+// GetMessagesByPhone.
+//
+// BUG: a aba Historico chamava GetMessagesByPhone(phone) passando so' o
+// telefone do contato, embora a tela ja' soubesse qual sessao o usuario
+// escolheu. Aquela query casa por peer em TODA a tabela messages, sem
+// nenhum filtro de sessao ou de tenant — entao a conversa exibida misturava
+// mensagens de outras sessoes do portal e, se dois tenants distintos ja'
+// conversaram com o mesmo numero, mensagens de OUTRO tenant.
+//
+// O escopo de sessao aqui e' o mesmo do ListHistoryConversations (que ja'
+// estava correto): FK session_id quando existe, com fallback por JID
+// literal tolerante a device suffix pro legado gravado sem session_id.
+func (r *Repository) GetMessagesByPhoneForSession(ctx context.Context, sessionJID, phone string, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	pattern := phone + "@%"
+	rows, err := r.pool.Query(ctx, `
+		WITH sess AS (
+			SELECT id FROM whatsapp_sessions WHERE jid = $4 LIMIT 1
+		)
+		SELECT id, wa_message_id, session_id, contact_id,
+		       COALESCE(from_jid,''), COALESCE(to_jid,''), COALESCE(author_name,''),
+		       direction, message_type,
+		       COALESCE(content,''), COALESCE(media_url,''), COALESCE(media_mime,''),
+		       COALESCE(media_size,0),
+		       status, retry_count, COALESCE(error_msg,''),
+		       sent_at, delivered_at, created_at
+		FROM messages m
+		WHERE (
+		        from_jid LIKE $1
+		     OR to_jid   LIKE $1
+		     OR from_jid IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		     OR to_jid   IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		     OR contact_id IN (SELECT id FROM contact_mapping WHERE wa_phone = $2)
+		      )
+		  AND (
+		        (m.session_id IS NOT NULL AND m.session_id = (SELECT id FROM sess))
+		     OR (m.direction = 'outbound' AND
+		         REGEXP_REPLACE(m.from_jid, ':[0-9]+@', '@') = REGEXP_REPLACE($4::text, ':[0-9]+@', '@'))
+		     OR (m.direction = 'inbound'  AND
+		         REGEXP_REPLACE(m.to_jid,   ':[0-9]+@', '@') = REGEXP_REPLACE($4::text, ':[0-9]+@', '@'))
+		      )
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, pattern, phone, limit, sessionJID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// scanMessages le as linhas no formato da lista de colunas usada pelas
+// queries de historico. Extraido pra que as variantes escopada e nao
+// escopada nao possam divergir na ordem das colunas.
+func scanMessages(rows pgx.Rows) ([]Message, error) {
 	var msgs []Message
 	for rows.Next() {
 		var m Message
@@ -1137,12 +1238,25 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 		return &a, nil
 	}
 
+	// SPLIT_PART duplo (primeiro '@', depois ':') — NAO so' por ':'.
+	//
+	// BUG: a versao antiga fazia SPLIT_PART(session_jid, ':', 1). Isso so'
+	// funciona quando o JID TEM device suffix. Num JID sem suffix
+	// ("558196807479@s.whatsapp.net") o split por ':' devolve a string
+	// inteira, incluindo o dominio — que nunca casa com o lado que tem
+	// suffix ("558196807479:2@s.whatsapp.net" -> "558196807479"). Resultado:
+	// conta Bitrix "nao encontrada" e a mensagem do cliente morre antes de
+	// chegar no Contact Center.
+	//
+	// E' exatamente a regra que docs/aprendizados/05-integracao-whatsapp.md
+	// prescreve: SPLIT_PART(SPLIT_PART(jid,'@',1),':',1).
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
 		       connector_id, redirect_uri, status, created_at, updated_at
 		FROM bitrix_accounts
 		WHERE session_jid NOT LIKE 'cloud:%'
-		  AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)
+		  AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		    = SPLIT_PART(SPLIT_PART($1::text,    '@', 1), ':', 1)
 		ORDER BY updated_at DESC
 		LIMIT 1`, sessionJID)
 
@@ -1252,7 +1366,8 @@ func (r *Repository) UpdateBitrixAccountStatus(ctx context.Context, sessionJID s
 	_, err := r.pool.Exec(ctx,
 		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW()
 		 WHERE session_jid NOT LIKE 'cloud:%'
-		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($2, ':', 1)`,
+		   AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		     = SPLIT_PART(SPLIT_PART($2::text,     '@', 1), ':', 1)`,
 		status, sessionJID)
 	return err
 }
@@ -1266,7 +1381,8 @@ func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string)
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM bitrix_accounts
 		 WHERE session_jid NOT LIKE 'cloud:%'
-		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)`,
+		   AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		     = SPLIT_PART(SPLIT_PART($1::text,     '@', 1), ':', 1)`,
 		sessionJID)
 	return err
 }

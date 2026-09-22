@@ -95,6 +95,10 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				media_mime    TEXT NOT NULL DEFAULT '',
 				media_size    BIGINT NOT NULL DEFAULT 0,
 				status        TEXT NOT NULL DEFAULT 'received',
+				retry_count   INT NOT NULL DEFAULT 0,
+				error_msg     TEXT,
+				sent_at       TIMESTAMPTZ,
+				delivered_at  TIMESTAMPTZ,
 				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			);
 
@@ -784,6 +788,102 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- um valor positivo (respeita o que o admin configurou, ex: 3).
 			UPDATE plan_definitions SET trial_days = 7
 			 WHERE code = 'trial' AND (trial_days IS NULL OR trial_days < 1);
+		`},
+		{"043_messages_colunas_faltantes", `
+			-- BUG: a tabela 'messages' criada pela migration 000_base_schema e'
+			-- uma copia REDUZIDA do migrations/001_init.sql — perdeu 4 colunas.
+			-- Os arquivos migrations/*.sql NAO sao executados (so' este array
+			-- roda), entao em qualquer banco criado pelo codigo atual essas
+			-- colunas simplesmente nao existem. Consequencias:
+			--
+			--   GetMessagesByPhone  -> SELECT ... retry_count  -> SQLSTATE 42703
+			--                          (a aba Historico nao abre a conversa)
+			--   GetRecentMessages   -> mesmo erro (simulador/diagnostico)
+			--   UpdateMessageStatus -> UPDATE ... error_msg, delivered_at falha.
+			--                          O processor descarta o erro com '_ =',
+			--                          entao a mensagem NUNCA sai de 'received'
+			--                          e nunca marca entrega — falha silenciosa.
+			--   IncrementRetry      -> UPDATE ... retry_count  -> retry nunca
+			--                          e' contabilizado.
+			--
+			-- Idempotente (ADD COLUMN IF NOT EXISTS): em bancos antigos que ja'
+			-- nasceram do 001_init.sql as colunas ja' existem e isto e' no-op.
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS retry_count  INT NOT NULL DEFAULT 0;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS error_msg    TEXT;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_at      TIMESTAMPTZ;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+		`},
+		{"044_sessoes_qr_duplicadas", `
+			-- Limpa as linhas orfas que o UpsertSession criou ao longo do tempo.
+			--
+			-- O upsert e' ON CONFLICT (jid) e o JID de sessao QR carrega o
+			-- device suffix do whatsmeow, que muda a cada re-pareamento
+			-- (":1" -> ":2"). Com suffix novo o ON CONFLICT nao dispara e o
+			-- Postgres INSERE linha nova: sobra a antiga. Efeitos em producao:
+			-- numero repetido na tela de Sessoes, 2 chips do mesmo numero em
+			-- Permissoes, e o watchdog tentando reconectar a linha orfa —
+			-- abrindo um 2o client sobre o mesmo device, o que o WhatsApp
+			-- resolve derrubando um dos dois (stream:conflict). Era a origem
+			-- do ciclo de desconexao a cada ~30s.
+			--
+			-- Mantem, por numero base, UMA linha: a de last_seen mais recente
+			-- (NULL por ultimo), desempatando por created_at e por jid.
+			--
+			-- ROW_NUMBER em vez de comparacao de tupla de proposito: last_seen
+			-- e' NULLABLE, e "(a,b) > (c,d)" com NULL resulta em NULL (nao em
+			-- true/false). Com duas linhas de last_seen NULL — caso comum em
+			-- sessao que nunca reconectou — a comparacao nunca seria
+			-- verdadeira e NADA seria deletado, deixando a duplicata de pe'
+			-- e fazendo o CREATE UNIQUE INDEX abaixo falhar. Migration que
+			-- falha aborta o boot inteiro, entao isto precisa ser NULL-safe.
+			DELETE FROM whatsapp_sessions
+			 WHERE jid IN (
+			   SELECT jid FROM (
+			     SELECT jid,
+			            ROW_NUMBER() OVER (
+			              PARTITION BY SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+			              ORDER BY last_seen DESC NULLS LAST, created_at DESC, jid DESC
+			            ) AS rn
+			       FROM whatsapp_sessions
+			      WHERE jid NOT LIKE 'cloud:%'
+			        -- So' deduplica quem tem numero base valido. Um JID
+			        -- malformado produziria base vazia e TODOS eles cairiam
+			        -- na mesma particao, fazendo a limpeza apagar linhas sem
+			        -- nenhuma relacao entre si.
+			        AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$'
+			   ) ranked
+			   WHERE rn > 1
+			 );
+
+			-- Corrige o campo 'phone' das linhas sobreviventes. Ele guardava a
+			-- string que o usuario DIGITOU ao parear, nunca conferida contra o
+			-- JID real — foi assim que o mesmo numero apareceu como
+			-- "+5581996807479" e "+81996807479" na tela de Permissoes, sendo
+			-- 558196807479 o numero de verdade. Quem manda no numero e' o
+			-- WhatsApp (o JID do device), nao o formulario.
+			UPDATE whatsapp_sessions
+			   SET phone = SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+			 WHERE jid NOT LIKE 'cloud:%'
+			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$'
+			   AND phone IS DISTINCT FROM SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1);
+
+			-- Indice unico por numero base pras sessoes QR: barra no BANCO a
+			-- reintroducao de duplicata, mesmo que algum caminho de codigo
+			-- novo esqueca de deduplicar.
+			--
+			-- Dentro de bloco com EXCEPTION: se por qualquer estado inesperado
+			-- ainda houver duplicata, o indice nao e' criado e o boot segue —
+			-- em vez de derrubar a aplicacao inteira. O log do Postgres avisa,
+			-- e o proximo boot tenta de novo.
+			DO $$
+			BEGIN
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_sessions_numero_base
+					ON whatsapp_sessions ((SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)))
+					WHERE jid NOT LIKE 'cloud:%'
+					  AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$';
+			EXCEPTION WHEN unique_violation OR duplicate_table THEN
+				RAISE WARNING 'idx_whatsapp_sessions_numero_base nao criado (duplicatas remanescentes); boot segue';
+			END $$;
 		`},
 	}
 
