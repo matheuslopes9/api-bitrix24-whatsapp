@@ -325,7 +325,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
 
 	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
-	// existe row em tenant_plans, nao faz nada (caso de re-install).
+	// existe licenca, nao faz nada (caso de re-install).
 	domainNorm := normalizePortalDomain(domain)
 	if err := h.repo.EnsureLicense(c.Context(), domainNorm); err != nil {
 		h.log.Warn("partner auth: ensure trial failed",
@@ -554,7 +554,7 @@ func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken 
 		}
 		portal.ApplicationToken = appToken
 		// Best-effort: clientes que ja existiam antes do sistema de planos
-		// nao tem row em tenant_plans. Cria trial agora pra nao bloquear.
+		// nao tem licenca. Cria a minima agora pra nao bloquear.
 		_ = h.repo.EnsureLicense(ctx, portal.Domain)
 		return portal, nil
 	}

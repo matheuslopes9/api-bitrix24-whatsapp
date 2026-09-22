@@ -450,39 +450,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE bitrix_portals
 				ADD COLUMN IF NOT EXISTS application_token TEXT NOT NULL DEFAULT '';
 		`},
-		{"026_tenant_plans", `
-			-- Sistema de planos / trial / billing. Um row por dominio (portal
-			-- Bitrix24). Default: cria com trial 7 dias no install do app.
-			--
-			-- plan: 'basic' (limitado, default trial) | 'pro' (full features)
-			-- status: 'trial' | 'active' | 'expired' | 'suspended'
-			-- trial_ends_at: NULL para Pro pago; futuro para trial em andamento
-			-- active_until: NULL = vitalicio (Pro pago manual); futuro = renovacao
-			CREATE TABLE IF NOT EXISTS tenant_plans (
-				domain          TEXT PRIMARY KEY,
-				plan            TEXT NOT NULL DEFAULT 'basic',
-				status          TEXT NOT NULL DEFAULT 'trial',
-				trial_ends_at   TIMESTAMPTZ,
-				active_until    TIMESTAMPTZ,
-				created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				notes           TEXT NOT NULL DEFAULT ''
-			);
-			CREATE INDEX IF NOT EXISTS idx_tenant_plans_status ON tenant_plans (status);
-		`},
-		{"027_tenant_plans_onboarding", `
-			-- Onboarding state pra controlar se mostramos welcome screen e
-			-- quando o master foi auto-setado.
-			--
-			-- welcome_shown: TRUE = user ja' viu a tela de boas-vindas e
-			-- clicou 'Continuar pro App'. Dashboard skip o /welcome.
-			-- master_auto_set_at: timestamp em que o backend setou o master
-			-- automaticamente no install (NULL = setado manual ou ainda nao).
-			ALTER TABLE tenant_plans
-				ADD COLUMN IF NOT EXISTS welcome_shown BOOLEAN NOT NULL DEFAULT FALSE;
-			ALTER TABLE tenant_plans
-				ADD COLUMN IF NOT EXISTS master_auto_set_at TIMESTAMPTZ;
-		`},
 		{"029_admin_users", `
 			-- Usuarios do painel admin (multi-admin com papeis). O login por
 			-- env (ADMIN_USER/ADMIN_PASSWORD) continua funcionando como 'root'
@@ -514,193 +481,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log (created_at DESC);
 		`},
-		{"034_billing_config", `
-			-- Config do gateway de pagamento (maxiPago) editavel pela UI admin,
-			-- em vez de depender so' de env var. Linha unica (id=1). Valores
-			-- vazios caem no fallback do env. merchant_key e' sensivel — nunca
-			-- retornado pro front (so' um flag "configurado").
-			CREATE TABLE IF NOT EXISTS billing_config (
-				id                INT PRIMARY KEY DEFAULT 1,
-				provider          TEXT NOT NULL DEFAULT 'maxipago',
-				environment       TEXT NOT NULL DEFAULT 'sandbox',   -- sandbox | production
-				merchant_id       TEXT NOT NULL DEFAULT '',
-				merchant_key      TEXT NOT NULL DEFAULT '',
-				processor_boleto  TEXT NOT NULL DEFAULT '12',
-				processor_pix     TEXT NOT NULL DEFAULT '206',
-				processor_card    TEXT NOT NULL DEFAULT '1',
-				activate_days     INT NOT NULL DEFAULT 30,
-				enabled           BOOLEAN NOT NULL DEFAULT FALSE,
-				updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				CONSTRAINT billing_config_single CHECK (id = 1)
-			);
-			-- Seed com as credenciais de SANDBOX ja conhecidas, pra tela vir
-			-- preenchida e o admin so' revisar/habilitar. enabled=FALSE por
-			-- seguranca: o admin liga conscientemente na tela Gateway.
-			-- ON CONFLICT DO NOTHING: nunca sobrescreve o que o admin ja salvou.
-			INSERT INTO billing_config
-				(id, provider, environment, merchant_id, merchant_key,
-				 processor_boleto, processor_pix, processor_card, activate_days, enabled)
-			VALUES
-				(1, 'maxipago', 'sandbox', '39041', 'e0kpdthr975n3xcv1r9lfg80',
-				 '12', '206', '1', 30, FALSE)
-			ON CONFLICT (id) DO NOTHING;
-		`},
-		{"037_coupons", `
-			-- Cupons de desconto configuraveis pelo admin.
-			-- kind: 'percent' (desconto %) | 'amount' (desconto fixo em centavos)
-			--     | 'trial_days' (estende o trial em N dias, sem cobranca)
-			-- plan_code vazio = vale pra qualquer plano.
-			-- max_uses 0 = ilimitado. expires_at NULL = sem validade.
-			CREATE TABLE IF NOT EXISTS coupons (
-				code        TEXT PRIMARY KEY,
-				description TEXT NOT NULL DEFAULT '',
-				kind        TEXT NOT NULL DEFAULT 'percent',
-				value       INT NOT NULL DEFAULT 0,  -- % | centavos | dias
-				plan_code   TEXT NOT NULL DEFAULT '',
-				max_uses    INT NOT NULL DEFAULT 0,
-				used_count  INT NOT NULL DEFAULT 0,
-				active      BOOLEAN NOT NULL DEFAULT TRUE,
-				expires_at  TIMESTAMPTZ,
-				created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				created_by  TEXT NOT NULL DEFAULT ''
-			);
-			-- Registro de uso (auditoria + evita reuso pelo mesmo tenant).
-			CREATE TABLE IF NOT EXISTS coupon_redemptions (
-				id           BIGSERIAL PRIMARY KEY,
-				code         TEXT NOT NULL,
-				domain       TEXT NOT NULL,
-				plan_code    TEXT NOT NULL DEFAULT '',
-				discount_cents BIGINT NOT NULL DEFAULT 0,
-				trial_days_added INT NOT NULL DEFAULT 0,
-				redeemed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-			);
-			CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_code ON coupon_redemptions (code);
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_coupon_once_per_domain
-				ON coupon_redemptions (code, domain);
-		`},
-		{"036_trial_days_config", `
-			-- Dias de trial configuraveis pela UI admin (antes fixo em 7).
-			-- Fica em billing_config por ser config global do produto.
-			ALTER TABLE billing_config
-				ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 7;
-		`},
-		{"035_billing_config_seed", `
-			-- Preenche as credenciais de sandbox SE a config ainda estiver
-			-- vazia. Cobre quem ja rodou a 034 antes deste seed existir (a
-			-- linha foi criada em branco). Nunca sobrescreve config existente:
-			-- so' age quando merchant_id esta vazio.
-			UPDATE billing_config
-			   SET merchant_id  = '39041',
-			       merchant_key = 'e0kpdthr975n3xcv1r9lfg80',
-			       environment  = COALESCE(NULLIF(environment,''), 'sandbox'),
-			       processor_boleto = COALESCE(NULLIF(processor_boleto,''), '12'),
-			       processor_pix    = COALESCE(NULLIF(processor_pix,''), '206'),
-			       processor_card   = COALESCE(NULLIF(processor_card,''), '1'),
-			       updated_at   = NOW()
-			 WHERE id = 1 AND COALESCE(merchant_id,'') = '';
-		`},
-		{"033_plan_definitions", `
-			-- Construtor de planos: cada plano e' uma linha configuravel pela
-			-- UI admin (preco + quais features libera + limite de sessoes).
-			-- code: identificador estavel referenciado por tenant_plans.plan.
-			-- As flags substituem o gating hardcoded (HasProFeatures etc).
-			CREATE TABLE IF NOT EXISTS plan_definitions (
-				code             TEXT PRIMARY KEY,
-				name             TEXT NOT NULL DEFAULT '',
-				description      TEXT NOT NULL DEFAULT '',
-				price_cents      BIGINT NOT NULL DEFAULT 0,
-				max_sessions     INT NOT NULL DEFAULT 1,
-				feat_templates   BOOLEAN NOT NULL DEFAULT FALSE,  -- templates + Cloud API Meta
-				feat_automations BOOLEAN NOT NULL DEFAULT FALSE,  -- robots BizProc
-				feat_sms         BOOLEAN NOT NULL DEFAULT FALSE,  -- campanhas SMS
-				feat_reports     BOOLEAN NOT NULL DEFAULT FALSE,  -- relatorios + historico longo
-				is_pro           BOOLEAN NOT NULL DEFAULT FALSE,  -- rotulo "pro" (compat gating antigo)
-				active           BOOLEAN NOT NULL DEFAULT TRUE,   -- aparece pro cliente assinar
-				sort_order       INT NOT NULL DEFAULT 0,
-				created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-			);
-			-- Seed dos 2 planos atuais preservando o comportamento hardcoded:
-			-- basic = so conexao; pro = tudo. Idempotente (ON CONFLICT nada).
-			INSERT INTO plan_definitions
-				(code, name, description, price_cents, max_sessions,
-				 feat_templates, feat_automations, feat_sms, feat_reports, is_pro, active, sort_order)
-			VALUES
-				('basic','Básico','Conecte o WhatsApp ao Bitrix24 e atenda pelo CRM.',
-				 9900, 1, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE, 1),
-				('pro','Pro','Automação, campanhas, múltiplos números e relatórios completos.',
-				 19900, 10, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, 2)
-			ON CONFLICT (code) DO NOTHING;
-		`},
-		{"038_plan_trial", `
-			-- ORDEM IMPORTA: roda DEPOIS da 033 (que cria plan_definitions).
-			--
-			-- O TRIAL e' um PLANO SEPARADO na lista (code 'trial'), com preco
-			-- zero e suas proprias features. is_trial_default marca qual plano
-			-- os novos tenants recebem; trial_days e' a duracao.
-			ALTER TABLE plan_definitions
-				ADD COLUMN IF NOT EXISTS trial_days INT NOT NULL DEFAULT 0;
-			ALTER TABLE plan_definitions
-				ADD COLUMN IF NOT EXISTS is_trial_default BOOLEAN NOT NULL DEFAULT FALSE;
-
-			-- Remove o indice ANTES de qualquer INSERT/UPDATE. A versao
-			-- anterior desta migration criava um indice sobre a COLUNA, que
-			-- colide quando 2 planos ficam marcados — e travava o boot com
-			-- "duplicate key". Dropar primeiro deixa os ajustes rodarem.
-			DROP INDEX IF EXISTS idx_plan_trial_default;
-
-			-- Cria o plano Trial. active=FALSE porque ele NAO e' assinavel —
-			-- e' concedido automaticamente no install, nao aparece nos cards
-			-- de compra do cliente. Features iguais ao Basico por padrao;
-			-- o admin edita na aba Planos.
-			INSERT INTO plan_definitions
-				(code, name, description, price_cents, max_sessions,
-				 feat_templates, feat_automations, feat_sms, feat_reports,
-				 is_pro, active, sort_order, trial_days, is_trial_default)
-			VALUES
-				('trial','Trial','Período de teste gratuito para novos clientes.',
-				 0, 1, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 0, 7, TRUE)
-			ON CONFLICT (code) DO NOTHING;
-
-			-- Corrige estado inconsistente de deploys anteriores: se mais de
-			-- um plano ficou marcado como trial, mantem so' o 'trial'.
-			UPDATE plan_definitions SET is_trial_default = FALSE
-			 WHERE is_trial_default AND code <> 'trial';
-
-			-- Se ninguem estiver marcado (ex: alguem desmarcou), garante o
-			-- 'trial' como default.
-			UPDATE plan_definitions SET is_trial_default = TRUE
-			 WHERE code = 'trial'
-			   AND NOT EXISTS (SELECT 1 FROM plan_definitions WHERE is_trial_default);
-
-			-- No maximo 1 plano marcado como default de trial.
-			-- Indexa uma CONSTANTE com filtro parcial: so' as linhas com
-			-- is_trial_default=TRUE entram no indice, e todas mapeiam pro
-			-- mesmo valor — logo, so' 1 linha pode existir. E' a regra que
-			-- queremos, sem colidir na criacao (ja limpamos duplicados acima).
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_trial_default
-				ON plan_definitions ((true)) WHERE is_trial_default;
-		`},
-		{"039_migrate_trial_tenants", `
-			-- Tenants que estao em trial ainda apontam pro plano 'basic'
-			-- (comportamento antigo). Move pro plano 'trial' pra ficar
-			-- coerente com a nova modelagem. So' mexe em quem esta em trial.
-			UPDATE tenant_plans
-			   SET plan = 'trial', updated_at = NOW()
-			 WHERE status = 'trial' AND plan = 'basic'
-			   AND EXISTS (SELECT 1 FROM plan_definitions WHERE code = 'trial');
-		`},
-		{"032_plan_cancellation", `
-			-- Cancelamento agendado (padrao SaaS): cliente cancela mas usa ate
-			-- o fim do periodo pago (active_until). cancel_at_period_end=TRUE
-			-- marca que NAO deve renovar. cancelled_at = quando cancelou.
-			-- O acesso continua liberado ate active_until (IsAccessAllowed nao
-			-- muda). Um job/checagem no vencimento move pra expired.
-			ALTER TABLE tenant_plans
-				ADD COLUMN IF NOT EXISTS cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;
-			ALTER TABLE tenant_plans
-				ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
-		`},
 		{"031_blocked_ips", `
 			-- IPs bloqueados persistentes (alem do rate-limit em memoria).
 			-- reason: 'manual' | 'brute_force'. active=FALSE = liberado.
@@ -714,41 +494,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			);
 		`},
-		{"028_billing_charges", `
-			-- Cobrancas geradas via gateway maxiPago (boleto/cartao).
-			-- 1 row por tentativa de cobranca. reference_num e' a chave que
-			-- amarra o postback do maxiPago de volta ao tenant.
-			--
-			-- status: 'pending' (gerada, aguardando pagto) | 'paid' |
-			--         'failed' | 'cancelled'
-			CREATE TABLE IF NOT EXISTS billing_charges (
-				id                 UUID PRIMARY KEY,
-				domain             TEXT NOT NULL,
-				plan               TEXT NOT NULL DEFAULT 'pro',
-				method             TEXT NOT NULL DEFAULT 'boleto',
-				amount_cents       BIGINT NOT NULL,
-				reference_num      TEXT NOT NULL UNIQUE,
-				mp_order_id        TEXT NOT NULL DEFAULT '',
-				mp_transaction_id  TEXT NOT NULL DEFAULT '',
-				boleto_url         TEXT NOT NULL DEFAULT '',
-				status             TEXT NOT NULL DEFAULT 'pending',
-				raw_response       TEXT NOT NULL DEFAULT '',
-				created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				paid_at            TIMESTAMPTZ
-			);
-			CREATE INDEX IF NOT EXISTS idx_billing_charges_domain ON billing_charges (domain);
-			CREATE INDEX IF NOT EXISTS idx_billing_charges_status ON billing_charges (status);
-		`},
-		{"040_plan_payment_methods", `
-			-- Formas de pagamento aceitas POR PLANO (configuravel no admin).
-			-- Default: boleto ligado (ja funciona), PIX ligado por padrao tambem
-			-- — o checkout so' oferece PIX se o gateway estiver configurado, entao
-			-- ligar aqui e' seguro. O admin desliga por plano se quiser.
-			ALTER TABLE plan_definitions
-				ADD COLUMN IF NOT EXISTS accept_boleto BOOLEAN NOT NULL DEFAULT TRUE;
-			ALTER TABLE plan_definitions
-				ADD COLUMN IF NOT EXISTS accept_pix BOOLEAN NOT NULL DEFAULT TRUE;
-		`},
 		{"041b_bitrix_portals_installed_at", `
 			-- installed_at e' lido pelo código (admin: lista de portais, ORDER BY
 			-- installed_at) mas nunca foi criado em migration — em banco novo
@@ -759,35 +504,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			UPDATE bitrix_portals SET installed_at = created_at WHERE installed_at IS NULL;
 			ALTER TABLE bitrix_portals
 				ALTER COLUMN installed_at SET DEFAULT NOW();
-		`},
-		{"041_boleto_numeracao", `
-			-- "Nosso numero" do boleto Itau (carteira 109): precisa ser CRESCENTE
-			-- e UNICO por conta, sem repetir nem entre reinicios. Contador unico
-			-- (id=1) incrementado transacionalmente (UPDATE ... RETURNING).
-			CREATE TABLE IF NOT EXISTS boleto_numeracao (
-				id          INT PRIMARY KEY DEFAULT 1,
-				ultimo_numero BIGINT NOT NULL DEFAULT 0,
-				updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				CONSTRAINT boleto_numeracao_single CHECK (id = 1)
-			);
-			INSERT INTO boleto_numeracao (id, ultimo_numero) VALUES (1, 0)
-				ON CONFLICT (id) DO NOTHING;
-		`},
-		{"042_plan_order_fix", `
-			-- Forca a ORDEM dos planos na aba admin: Trial -> Basico -> Pro.
-			-- Os seeds das migrations 033/038 usam ON CONFLICT DO NOTHING, entao
-			-- se alguem editou os planos pela UI (que reescreve sort_order) a
-			-- ordem fica bagunçada (ex: Pro, Trial, Basico). Aqui e' UPDATE
-			-- direto — idempotente, roda todo boot e sempre deixa a ordem certa.
-			UPDATE plan_definitions SET sort_order = 0 WHERE code = 'trial';
-			UPDATE plan_definitions SET sort_order = 1 WHERE code = 'basic';
-			UPDATE plan_definitions SET sort_order = 2 WHERE code = 'pro';
-
-			-- Garante que o Trial tenha uma duracao valida (>=1 dia). Se por
-			-- engano ficou 0, volta pro padrao de 7 dias. Nao mexe se ja' tem
-			-- um valor positivo (respeita o que o admin configurou, ex: 3).
-			UPDATE plan_definitions SET trial_days = 7
-			 WHERE code = 'trial' AND (trial_days IS NULL OR trial_days < 1);
 		`},
 		{"043_messages_colunas_faltantes", `
 			-- BUG: a tabela 'messages' criada pela migration 000_base_schema e'
@@ -967,44 +683,63 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- um ja' tinha: quem estava em 'pro' com acesso valido leva os
 			-- beneficios; os demais entram no minimo (1 sessao) e o suporte
 			-- ajusta conforme contrato. valid_until herda o active_until (ou
-			-- o fim do trial), entao ninguem e' marcado como vencido a toa.
-			INSERT INTO tenant_licenses (
-				domain, max_sessions,
-				feat_cloud_api, feat_automations, feat_reports,
-				valid_until, notes, welcome_shown, master_auto_set_at
-			)
-			SELECT
-				p.domain,
-				CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
-				COALESCE(tp.plan = 'pro', FALSE),
-				COALESCE(tp.plan = 'pro', FALSE),
-				COALESCE(tp.plan = 'pro', FALSE),
-				COALESCE(tp.active_until::date, tp.trial_ends_at::date),
-				COALESCE(tp.notes, ''),
-				COALESCE(tp.welcome_shown, FALSE),
-				tp.master_auto_set_at
-			  FROM bitrix_portals p
-			  LEFT JOIN tenant_plans tp ON tp.domain = p.domain
-			 WHERE p.domain <> p.member_id          -- ignora placeholders de install
-			ON CONFLICT (domain) DO NOTHING;
+			-- o fim do trial), entao ninguem e' marcado vencido a toa.
+			--
+			-- Tudo dentro de um IF sobre to_regclass: num banco NOVO a tabela
+			-- tenant_plans nunca existiu (as migrations que a criavam sairam
+			-- do array junto com o modelo SaaS), e um SELECT direto quebraria
+			-- o boot com "relation does not exist".
+			DO $$
+			BEGIN
+			IF to_regclass('public.tenant_plans') IS NOT NULL THEN
 
-			-- Tenants que tinham plano mas cujo portal ja' sumiu da
-			-- bitrix_portals: entram tambem, pra nao perder historico.
-			INSERT INTO tenant_licenses (
-				domain, max_sessions,
-				feat_cloud_api, feat_automations, feat_reports,
-				valid_until, notes, welcome_shown, master_auto_set_at
-			)
-			SELECT
-				tp.domain,
-				CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
-				tp.plan = 'pro', tp.plan = 'pro', tp.plan = 'pro',
-				COALESCE(tp.active_until::date, tp.trial_ends_at::date),
-				COALESCE(tp.notes, ''),
-				COALESCE(tp.welcome_shown, FALSE),
-				tp.master_auto_set_at
-			  FROM tenant_plans tp
+				INSERT INTO tenant_licenses (
+					domain, max_sessions,
+					feat_cloud_api, feat_automations, feat_reports,
+					valid_until, notes, welcome_shown, master_auto_set_at
+				)
+				SELECT
+					p.domain,
+					CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
+					COALESCE(tp.plan = 'pro', FALSE),
+					COALESCE(tp.plan = 'pro', FALSE),
+					COALESCE(tp.plan = 'pro', FALSE),
+					COALESCE(tp.active_until::date, tp.trial_ends_at::date),
+					COALESCE(tp.notes, ''),
+					COALESCE(tp.welcome_shown, FALSE),
+					tp.master_auto_set_at
+				  FROM bitrix_portals p
+				  LEFT JOIN tenant_plans tp ON tp.domain = p.domain
+				 WHERE p.domain <> p.member_id
+				ON CONFLICT (domain) DO NOTHING;
+
+				-- Tenants com plano cujo portal ja' sumiu: entram tambem,
+				-- pra nao perder historico.
+				INSERT INTO tenant_licenses (
+					domain, max_sessions,
+					feat_cloud_api, feat_automations, feat_reports,
+					valid_until, notes, welcome_shown, master_auto_set_at
+				)
+				SELECT
+					tp.domain,
+					CASE WHEN tp.plan = 'pro' THEN 10 ELSE 1 END,
+					tp.plan = 'pro', tp.plan = 'pro', tp.plan = 'pro',
+					COALESCE(tp.active_until::date, tp.trial_ends_at::date),
+					COALESCE(tp.notes, ''),
+					COALESCE(tp.welcome_shown, FALSE),
+					tp.master_auto_set_at
+				  FROM tenant_plans tp
+				ON CONFLICT (domain) DO NOTHING;
+
+			END IF;
+
+			-- Independente de ter havido modelo antigo: todo portal instalado
+			-- precisa de licenca.
+			INSERT INTO tenant_licenses (domain)
+			SELECT p.domain FROM bitrix_portals p
+			 WHERE p.domain <> p.member_id
 			ON CONFLICT (domain) DO NOTHING;
+			END $$;
 		`},
 		{"047_remove_billing", `
 			-- Remove o modelo SaaS de marketplace. Roda DEPOIS da 046, que ja'
