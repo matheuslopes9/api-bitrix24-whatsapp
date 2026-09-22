@@ -62,14 +62,39 @@ type Client struct {
 	http *http.Client
 	log  *zap.Logger
 	rl   *rateLimiter // rate limit por (domain, method) — 2 req/s
+
+	// refreshMu serializa a renovacao de token por (domain|client_id).
+	// O Bitrix rotaciona o refresh_token a cada uso, entao duas renovacoes
+	// simultaneas do mesmo tenant se anulam.
+	refreshMu   sync.Mutex
+	refreshLock map[string]*sync.Mutex
+}
+
+// lockRefresh pega (criando se preciso) o mutex daquele tenant e devolve a
+// funcao de liberacao.
+func (c *Client) lockRefresh(key string) func() {
+	c.refreshMu.Lock()
+	if c.refreshLock == nil {
+		c.refreshLock = map[string]*sync.Mutex{}
+	}
+	mu, ok := c.refreshLock[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.refreshLock[key] = mu
+	}
+	c.refreshMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 func NewClient(repo *db.Repository, log *zap.Logger) *Client {
 	return &Client{
-		repo: repo,
-		http: &http.Client{Timeout: 15 * time.Second},
-		log:  log,
-		rl:   newRateLimiter(),
+		repo:        repo,
+		http:        &http.Client{Timeout: 15 * time.Second},
+		log:         log,
+		rl:          newRateLimiter(),
+		refreshLock: map[string]*sync.Mutex{},
 	}
 }
 
@@ -121,9 +146,50 @@ func (c *Client) SaveToken(ctx context.Context, creds TenantCreds, accessToken, 
 	})
 }
 
+// lookupToken le o token do banco com a MESMA regra do token(): por
+// client_id quando ha' um, com fallback pro mais recente do dominio.
+// Devolve nil em qualquer falha — os callers tratam nil como "nao tenho".
+func (c *Client) lookupToken(ctx context.Context, creds TenantCreds) *db.BitrixToken {
+	domain := normalizeDomain(creds.Domain)
+	if creds.ClientID != "" {
+		if t, err := c.repo.GetBitrixTokenByClientID(ctx, domain, creds.ClientID); err == nil && t != nil {
+			return t
+		}
+	}
+	if t, err := c.repo.GetBitrixToken(ctx, domain); err == nil {
+		return t
+	}
+	return nil
+}
+
 // refreshToken renova o access token usando o refresh token.
 // O endpoint OAuth2 do Bitrix24 é sempre oauth.bitrix.info, nunca o domínio da conta.
 func (c *Client) refreshToken(ctx context.Context, creds TenantCreds, t *db.BitrixToken) error {
+	// Sem refresh_token nao ha' o que renovar. Antes disso a chamada era
+	// feita mesmo assim, falhava, e o caller tentava de novo — gerando a
+	// enxurrada de "refreshing bitrix token" com prefixo vazio no log.
+	// Falhar aqui, explicito, diz o que realmente precisa acontecer.
+	if t.RefreshToken == "" {
+		return fmt.Errorf("tenant %s sem refresh_token salvo — o app precisa ser reinstalado/reautorizado no portal Bitrix", creds.Domain)
+	}
+
+	// Serializa por dominio+client_id: o Bitrix ROTACIONA o refresh_token a
+	// cada renovacao. Com N chamadas concorrentes, a primeira rotaciona e as
+	// outras N-1 usam um refresh_token que acabou de ser invalidado — todas
+	// falham, e antes do fix acima ainda gravavam vazio por cima. O log de
+	// producao mostrou 10+ refreshes simultaneos do mesmo tenant.
+	key := normalizeDomain(creds.Domain) + "|" + creds.ClientID
+	unlock := c.lockRefresh(key)
+	defer unlock()
+
+	// Outra goroutine pode ter renovado enquanto esperavamos o lock —
+	// nesse caso o token do banco ja' esta' fresco e nao ha' o que fazer.
+	if fresh := c.lookupToken(ctx, creds); fresh != nil && fresh.AccessToken != "" &&
+		time.Now().Before(fresh.ExpiresAt.Add(-1*time.Minute)) {
+		*t = *fresh
+		return nil
+	}
+
 	c.log.Info("refreshing bitrix token",
 		zap.String("domain", creds.Domain),
 		zap.String("refresh_token_prefix", t.RefreshToken[:min(8, len(t.RefreshToken))]))
@@ -166,6 +232,31 @@ func (c *Client) saveTokenResponse(ctx context.Context, creds TenantCreds, r io.
 		return err
 	}
 	domain := normalizeDomain(creds.Domain)
+
+	// NUNCA gravar token vazio por cima de um token bom.
+	//
+	// BUG CRITICO QUE ISTO CORRIGE: o endpoint OAuth do Bitrix as vezes
+	// responde HTTP 200 com um CORPO DE ERRO (ex: {"error":"invalid_grant"},
+	// 26 bytes — exatamente o body_len visto no log de producao). Como o
+	// status era 200, o codigo seguia em frente, decodificava um JSON que
+	// nao tem access_token nem refresh_token, e gravava DUAS STRINGS VAZIAS
+	// por cima das credenciais validas — com expires_at = agora, porque
+	// ExpiresIn tambem vinha 0.
+	//
+	// A partir dali o tenant estava morto de forma irreversivel: todo
+	// refresh mandava refresh_token vazio, recebia erro, e regravava vazio.
+	// E' a origem do 'refresh_token_prefix:""' seguido de NO_AUTH_FOUND em
+	// loop. Recuperar exigia reinstalar o app no portal.
+	//
+	// Agora a resposta so' e' aceita se tiver os dois tokens. Caso
+	// contrario devolve erro e o token ANTERIOR fica intacto no banco.
+	if tr.AccessToken == "" || tr.RefreshToken == "" {
+		c.log.Error("resposta de token sem access_token/refresh_token — MANTENDO o token anterior",
+			zap.String("domain", domain),
+			zap.Bool("tem_access", tr.AccessToken != ""),
+			zap.Bool("tem_refresh", tr.RefreshToken != ""))
+		return fmt.Errorf("resposta de token invalida para %s: access_token/refresh_token ausentes (o Bitrix responde 200 com corpo de erro nesse caso)", domain)
+	}
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),
 		Domain:       domain,
