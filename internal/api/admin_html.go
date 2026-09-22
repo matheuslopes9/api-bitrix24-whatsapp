@@ -614,10 +614,10 @@ function renderTenants(){
       '<td>'+conn+'</td><td>'+(t.msgs_24h||0)+'<div class="meta">'+(t.msgs_inbound_24h||0)+'↓ '+(t.msgs_outbound_24h||0)+'↑</div></td>'+
       '<td class="'+tokCls+'">● '+tokLbl+'</td>'+
       '<td style="text-align:right"><div class="actions"><button class="btn" onclick="toggleMenu(this)">⋯</button><div class="menu">'+
-        '<button onclick="abrirLicenca(''+d+'')">📄 Licença e pagamentos</button>'+
-        '<button onclick="verSaude(''+d+'')">🩺 Diagnosticar</button>'+
+        '<button onclick="abrirLicenca(&#39;'+d+'&#39;)">📄 Licença e pagamentos</button>'+
+        '<button onclick="verSaude(&#39;'+d+'&#39;)">🩺 Diagnosticar</button>'+
         '<div class="sep"></div>'+
-        '<button onclick="setToolDomain(''+d+'')">🔧 Abrir em Ferramentas</button>'+
+        '<button onclick="setToolDomain(&#39;'+d+'&#39;)">🔧 Abrir em Ferramentas</button>'+
       '</div></div></td></tr>';
   }).join('');
 }
