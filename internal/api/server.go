@@ -274,10 +274,15 @@ func New(
 	admin.Post("/api/license", h.adminSaveLicense)               // beneficios + vigencia
 	admin.Post("/api/license/payment", h.adminRecordPayment)     // lanca pagamento
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
+	//
+	// Criar/desativar/remover usuario e' SO' do Administrador. Sem isso a
+	// separacao de papeis nao valia nada: o suporte podia criar um usuario
+	// superadmin e se promover, e qualquer restricao viraria decorativa.
+	// Listar segue liberado — ver quem tem acesso e' parte do diagnostico.
 	admin.Get("/api/users", h.adminListUsers)
-	admin.Post("/api/users", h.adminCreateUser)
-	admin.Post("/api/users/toggle", h.adminToggleUser)
-	admin.Post("/api/users/delete", h.adminDeleteUser)
+	admin.Post("/api/users", soAdmin, h.adminCreateUser)
+	admin.Post("/api/users/toggle", soAdmin, h.adminToggleUser)
+	admin.Post("/api/users/delete", soAdmin, h.adminDeleteUser)
 	admin.Get("/api/audit", h.adminAuditLog)
 	admin.Get("/api/system", h.adminSystem)          // monitoramento processo
 	admin.Get("/api/usage", h.adminUsage)            // consumo por tenant

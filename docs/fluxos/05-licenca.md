@@ -117,12 +117,14 @@ avisado uma vez nunca mais seria.
 |---|---|---|
 | Clientes, saúde, logs, ferramentas | ✅ | ✅ |
 | Licenças e pagamentos | ✅ | ✅ |
-| Gerenciar usuários admin | ✅ | ✅ |
+| Ver quem tem acesso admin | ✅ | ✅ |
+| Criar / desativar / remover usuário admin | ✅ | ❌ |
 | Purge de portal, cleanup de arquivos, flush de fila | ✅ | ❌ |
 
-⚠️ Como o suporte cria usuários, ele pode se promover. A separação existe para
-**evitar acidente e dar rastro na auditoria**, não como barreira de segurança.
-Para virar barreira de verdade, gerenciar usuários precisa sair do suporte.
+Criar usuário é exclusivo do Administrador **de propósito**: se o suporte
+pudesse criar um usuário `superadmin`, ele se promoveria e toda a separação
+viraria decorativa. Listar continua liberado — ver quem tem acesso faz parte
+do diagnóstico.
 
 ## Consultas de diagnóstico
 
