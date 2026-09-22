@@ -838,20 +838,31 @@ func (m *Manager) Disconnect(jid string) {
 		}
 	}
 
-	// Apaga TODOS os arquivos .db/.db-shm/.db-wal do phone, nao so o
-	// sess.dbPath em memoria — devices antigos deixavam sidecars.
+	// Apaga os arquivos .db/.db-shm/.db-wal da sessao.
+	//
+	// O caminho NAO pode ser montado so' a partir do phone: o arquivo recebe
+	// o nome do numero DIGITADO no pareamento, enquanto o phone e' derivado
+	// do JID do device. Quando os dois divergem — o caso que motivou a
+	// migration 044, arquivo "81996807479.db" para o numero 558196807479 —
+	// montar por phone aponta pra um arquivo que nao existe, o os.Remove
+	// falha com IsNotExist (ignorado em silencio) e o arquivo REAL fica
+	// orfao no volume pra sempre.
+	//
+	// Junta os dois: o dbPath conhecido em memoria (fonte da verdade) e o
+	// caminho derivado do phone (cobre devices antigos que deixaram sidecar).
+	bases := map[string]bool{}
+	if ok && sess != nil && sess.dbPath != "" {
+		bases[strings.TrimSuffix(sess.dbPath, ".db")] = true
+	}
 	if phone != "" {
-		base := filepath.Join(m.cfg.SessionsDir, phone)
+		bases[filepath.Join(m.cfg.SessionsDir, phone)] = true
+	}
+	for base := range bases {
 		for _, suffix := range []string{".db", ".db-shm", ".db-wal"} {
 			p := base + suffix
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				m.log.Warn("remove session file failed", zap.String("path", p), zap.Error(err))
 			}
-		}
-	} else if ok && sess != nil && sess.dbPath != "" {
-		// Fallback: apaga so o dbPath conhecido
-		if err := os.Remove(sess.dbPath); err != nil && !os.IsNotExist(err) {
-			m.log.Warn("remove session sqlite failed", zap.String("path", sess.dbPath), zap.Error(err))
 		}
 	}
 

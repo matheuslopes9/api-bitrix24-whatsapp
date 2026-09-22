@@ -381,7 +381,20 @@ func (r *Repository) DeleteSessionsByPhone(ctx context.Context, phone string) er
 	if phone == "" {
 		return nil
 	}
-	_, err := r.pool.Exec(ctx, `DELETE FROM whatsapp_sessions WHERE phone = $1`, phone)
+	// Casa pelo NUMERO BASE do jid alem da coluna phone.
+	//
+	// So' 'WHERE phone = $1' nao bastava: o phone e' um campo derivado e ja'
+	// esteve divergente do numero real (guardava a string digitada no
+	// pareamento). Quando divergia, o Disconnect chamava isto com o numero
+	// do JID, nao casava nada, e a linha sobrevivia — foi assim que devices
+	// antigos se acumulavam e "re-apareciam" depois do deploy. O jid e' a
+	// fonte da verdade, entao ele entra na condicao tambem.
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM whatsapp_sessions
+		 WHERE phone = $1
+		    OR (jid NOT LIKE 'cloud:%'
+		        AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) = $1)
+	`, phone)
 	return err
 }
 
@@ -905,7 +918,7 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count,
 			0::float8                   AS avg_response_secs
 		FROM messages
-		WHERE created_at >= NOW() - ($1 || ' days')::interval
+		WHERE created_at >= NOW() - make_interval(days => $1)
 		GROUP BY DATE(created_at)
 		ORDER BY date DESC
 	`, fmt.Sprintf("%d", days))
@@ -976,7 +989,7 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 				direction,
 				status
 			FROM messages
-			WHERE created_at >= NOW() - ($1 || ' days')::interval
+			WHERE created_at >= NOW() - make_interval(days => $1)
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END IS NOT NULL
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END != ''
 		),
@@ -1051,7 +1064,7 @@ func (r *Repository) GetStatsByType(ctx context.Context, days int) ([]StatsTypeR
 			SUM(CASE WHEN direction = 'inbound'  THEN 1 ELSE 0 END) AS inbound_count,
 			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count
 		FROM messages
-		WHERE created_at >= NOW() - ($1 || ' days')::interval
+		WHERE created_at >= NOW() - make_interval(days => $1)
 		GROUP BY message_type
 		ORDER BY total_messages DESC
 	`, fmt.Sprintf("%d", days))
@@ -1076,7 +1089,7 @@ func (r *Repository) GetStatsByHour(ctx context.Context, days int) ([]StatsHourR
 			EXTRACT(HOUR FROM created_at)::int AS hour,
 			COUNT(*)                           AS total_messages
 		FROM messages
-		WHERE created_at >= NOW() - ($1 || ' days')::interval
+		WHERE created_at >= NOW() - make_interval(days => $1)
 		GROUP BY hour
 		ORDER BY hour
 	`, fmt.Sprintf("%d", days))
@@ -1111,7 +1124,7 @@ func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]Sta
 					':[0-9]+@', '@') AS norm_jid,
 				direction
 			FROM messages
-			WHERE created_at >= NOW() - ($1 || ' days')::interval
+			WHERE created_at >= NOW() - make_interval(days => $1)
 			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END IS NOT NULL
 			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END != ''
 		)
@@ -2575,7 +2588,7 @@ func (r *Repository) ListPendingBoletoCharges(ctx context.Context, maxAgeDays, l
 		FROM billing_charges
 		WHERE method = 'boleto'
 		  AND status = 'pending'
-		  AND created_at > NOW() - ($1 || ' days')::interval
+		  AND created_at > NOW() - make_interval(days => $1)
 		ORDER BY created_at ASC
 		LIMIT $2`, maxAgeDays, limit)
 	if err != nil {
