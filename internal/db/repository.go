@@ -53,10 +53,44 @@ func scanSession(r sessionRowScanner, s *WhatsAppSession) error {
 	)
 }
 
+// UpsertSession grava (ou atualiza) uma sessão WhatsApp.
+//
+// BUG HISTORICO (mesmo numero aparecia 2x na tela de Sessoes): o upsert e'
+// ON CONFLICT (jid), e o JID de sessao QR carrega o device suffix do
+// whatsmeow — que MUDA a cada re-pareamento (":1" -> ":2"). Com o suffix
+// novo o ON CONFLICT nao dispara e o Postgres INSERE UMA LINHA NOVA em vez
+// de atualizar a existente. A linha antiga fica orfa no banco pra sempre.
+//
+// Os estragos em cascata disso:
+//   - a tela de Sessoes WhatsApp listava o mesmo numero duas vezes
+//   - a tela de Permissoes oferecia 2 chips pro mesmo numero
+//   - o watchdog varria as DUAS linhas e tentava reconectar a orfa, abrindo
+//     um segundo client sobre o mesmo device -> stream:conflict -> o ciclo
+//     de desconexao a cada ~30s
+//
+// FIX: numa sessao QR, antes de inserir, remove as OUTRAS linhas do mesmo
+// numero base. O numero (sem suffix, sem dominio) e' a identidade estavel
+// de uma sessao QR; o JID nao e'.
 func (r *Repository) UpsertSession(ctx context.Context, s *WhatsAppSession) error {
 	if s.Type == "" {
 		s.Type = SessionTypeQR
 	}
+
+	// Cloud API fica de fora: o "JID" delas e' "cloud:<phone_id>@...", que
+	// nao tem device suffix e cujo SPLIT_PART(...,':',1) da' "cloud" pra
+	// todas — agrupar por isso colidiria contas oficiais distintas.
+	if s.Type != SessionTypeCloudAPI && !strings.HasPrefix(s.JID, "cloud:") {
+		if _, err := r.pool.Exec(ctx, `
+			DELETE FROM whatsapp_sessions
+			 WHERE jid <> $1
+			   AND jid NOT LIKE 'cloud:%'
+			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+			     = SPLIT_PART(SPLIT_PART($1::text, '@', 1), ':', 1)
+		`, s.JID); err != nil {
+			return fmt.Errorf("limpar sessoes duplicadas do mesmo numero: %w", err)
+		}
+	}
+
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO whatsapp_sessions
 			(id, jid, phone, display_name, status, session_file, type,
@@ -1137,12 +1171,25 @@ func (r *Repository) GetBitrixAccountByJID(ctx context.Context, sessionJID strin
 		return &a, nil
 	}
 
+	// SPLIT_PART duplo (primeiro '@', depois ':') — NAO so' por ':'.
+	//
+	// BUG: a versao antiga fazia SPLIT_PART(session_jid, ':', 1). Isso so'
+	// funciona quando o JID TEM device suffix. Num JID sem suffix
+	// ("558196807479@s.whatsapp.net") o split por ':' devolve a string
+	// inteira, incluindo o dominio — que nunca casa com o lado que tem
+	// suffix ("558196807479:2@s.whatsapp.net" -> "558196807479"). Resultado:
+	// conta Bitrix "nao encontrada" e a mensagem do cliente morre antes de
+	// chegar no Contact Center.
+	//
+	// E' exatamente a regra que docs/aprendizados/05-integracao-whatsapp.md
+	// prescreve: SPLIT_PART(SPLIT_PART(jid,'@',1),':',1).
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
 		       connector_id, redirect_uri, status, created_at, updated_at
 		FROM bitrix_accounts
 		WHERE session_jid NOT LIKE 'cloud:%'
-		  AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)
+		  AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		    = SPLIT_PART(SPLIT_PART($1::text,    '@', 1), ':', 1)
 		ORDER BY updated_at DESC
 		LIMIT 1`, sessionJID)
 
@@ -1252,7 +1299,8 @@ func (r *Repository) UpdateBitrixAccountStatus(ctx context.Context, sessionJID s
 	_, err := r.pool.Exec(ctx,
 		`UPDATE bitrix_accounts SET status = $1, updated_at = NOW()
 		 WHERE session_jid NOT LIKE 'cloud:%'
-		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($2, ':', 1)`,
+		   AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		     = SPLIT_PART(SPLIT_PART($2::text,     '@', 1), ':', 1)`,
 		status, sessionJID)
 	return err
 }
@@ -1266,7 +1314,8 @@ func (r *Repository) DeleteBitrixAccount(ctx context.Context, sessionJID string)
 	_, err := r.pool.Exec(ctx,
 		`DELETE FROM bitrix_accounts
 		 WHERE session_jid NOT LIKE 'cloud:%'
-		   AND SPLIT_PART(session_jid, ':', 1) = SPLIT_PART($1, ':', 1)`,
+		   AND SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+		     = SPLIT_PART(SPLIT_PART($1::text,     '@', 1), ':', 1)`,
 		sessionJID)
 	return err
 }
