@@ -327,7 +327,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
 	// existe row em tenant_plans, nao faz nada (caso de re-install).
 	domainNorm := normalizePortalDomain(domain)
-	if err := h.repo.EnsureTenantTrial(c.Context(), domainNorm); err != nil {
+	if err := h.repo.EnsureLicense(c.Context(), domainNorm); err != nil {
 		h.log.Warn("partner auth: ensure trial failed",
 			zap.String("domain", domain), zap.Error(err))
 	}
@@ -396,7 +396,7 @@ func (h *handlers) tryAutoSetMaster(ctx context.Context, portal *db.BitrixPortal
 			zap.Error(err))
 		return "failed:" + err.Error()
 	}
-	_ = h.repo.MarkMasterAutoSet(ctx, portal.Domain)
+	_ = h.repo.MarkLicenseMasterAutoSet(ctx, portal.Domain)
 	h.log.Info("auto-master: configurado",
 		zap.String("domain", portal.Domain),
 		zap.String("user_id", userID),
@@ -555,7 +555,7 @@ func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken 
 		portal.ApplicationToken = appToken
 		// Best-effort: clientes que ja existiam antes do sistema de planos
 		// nao tem row em tenant_plans. Cria trial agora pra nao bloquear.
-		_ = h.repo.EnsureTenantTrial(ctx, portal.Domain)
+		_ = h.repo.EnsureLicense(ctx, portal.Domain)
 		return portal, nil
 	}
 	if subtle.ConstantTimeCompare([]byte(appToken), []byte(portal.ApplicationToken)) != 1 {

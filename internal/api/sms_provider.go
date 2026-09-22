@@ -89,15 +89,15 @@ func (h *handlers) smsProviderSend(c *fiber.Ctx) error {
 			zap.String("domain", domainRaw), zap.Error(err))
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "auth invalid"})
 	}
-	// PLAN GATE: SMS Campaigns e feature Pro. Tenant sem Pro recebe 402
-	// e o Bitrix marca a campanha como failed (cliente ve nos logs).
-	plan, _ := h.repo.GetTenantPlan(c.Context(), portal.Domain)
-	if plan == nil || !plan.HasProFeatures() {
-		h.log.Warn("sms-provider: plano Pro requerido",
+	// SMS e' feature de contrato. Segue oculta na UI de licencas por
+	// decisao de produto, entao na pratica nenhum cliente tem hoje — o
+	// codigo fica pronto pra quando for oferecida.
+	if !h.resolveTenantFeatures(c.Context(), portal.Domain).SMS {
+		h.log.Warn("sms-provider: feature nao contratada",
 			zap.String("domain", portal.Domain))
-		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-			"error": "SMS Campaigns e feature do plano Pro. Faca upgrade pra usar.",
-			"code":  "plan_pro_required",
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Campanhas SMS nao fazem parte do seu contrato.",
+			"code":  "feature_nao_contratada",
 		})
 	}
 

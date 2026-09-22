@@ -1113,21 +1113,12 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		}
 	}
 
-	// ─── Gate de PLANO (outbound) ──────────────────────────────────────────
-	// Resposta do operador so' sai se o tenant tem plano ativo. Cobre TODOS os
-	// caminhos de PushOutbound abaixo (cloud, QR, fallback) de uma vez. Resolve
-	// o domain pelo connector. Fail-open: se nao der pra resolver o domain ou
-	// checar o plano, deixa passar (nao derruba cliente por hiccup).
-	if connector != "" {
-		if acct, aerr := h.repo.GetBitrixAccountByConnectorID(ctx, connector); aerr == nil && acct != nil {
-			if !h.tenantAccessAllowed(ctx, acct.Domain) {
-				h.log.Info("connector event: BLOQUEADO — plano expirado/inativo",
-					zap.String("connector", connector), zap.String("domain", acct.Domain))
-				// 200 pro Bitrix nao re-tentar; a mensagem simplesmente nao sai.
-				return c.SendStatus(fiber.StatusOK)
-			}
-		}
-	}
+	// Aqui existia um gate de plano que engolia a resposta do operador quando
+	// o trial expirava (devolvia 200 pro Bitrix e simplesmente nao enviava).
+	// Removido junto com o modelo de trial: licenca vencida nao bloqueia
+	// atendimento. Alem do mais, descartar mensagem em silencio e' o pior
+	// jeito possivel de sinalizar inadimplencia — o operador via a mensagem
+	// como enviada e o cliente nunca recebia.
 
 	// toJID: usa o chatID normalizado diretamente.
 	// Se for @lid, o whatsmeow resolve internamente — não converter para @s.whatsapp.net

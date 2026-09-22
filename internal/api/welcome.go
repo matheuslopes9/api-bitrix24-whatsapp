@@ -1,21 +1,21 @@
 package api
 
-// Tela de boas-vindas + pagina de planos. Mostradas no primeiro acesso
-// apos install (welcome_shown=false em tenant_plans).
+// Tela de boas-vindas do primeiro acesso apos o install
+// (tenant_licenses.welcome_shown = false).
 //
 // Fluxo esperado:
 //   1. Bitrix carrega iframe /bitrix-app
 //   2. /bitrix-app faz handshake POST /bitrix/auth (seta cookie tenant +
-//      cria trial 7d + auto-master)
+//      cria a licenca minima + auto-master)
 //   3. /bitrix-app carrega iframe filho com /dashboard
-//   4. /dashboard handler verifica tenant_plans.welcome_shown — se FALSE,
-//      redireciona pra /welcome em vez de servir o HTML do dashboard
-//   5. /welcome mostra: trial countdown, confirmacao master, features
-//      Basic vs Pro, botoes "Continuar pro App" e "Ver Planos"
+//   4. /dashboard verifica tenant_licenses.welcome_shown — se FALSE,
+//      redireciona pra /welcome
+//   5. /welcome mostra as boas-vindas e a confirmacao do usuario master
 //   6. User clica "Continuar" -> POST /ui/welcome/dismiss -> marca
 //      welcome_shown=true -> redireciona pra /dashboard
 //
-// /planos e' acessivel a qualquer momento, nao bloqueia.
+// A pagina /planos saiu junto com o modelo SaaS: nao ha' mais vitrine de
+// precos nem auto-servico de assinatura. Quem contrata fala com o comercial.
 
 import (
 	"github.com/gofiber/fiber/v2"
@@ -34,16 +34,7 @@ func (h *handlers) welcomePage(c *fiber.Ctx) error {
 	return c.SendString(welcomeHTML)
 }
 
-// GET /planos — comparativo Basic vs Pro. Acessivel a qualquer momento
-// via menu lateral ou banner. Nao precisa estar logado no tenant — pagina
-// estatica, sem dados sensiveis.
-func (h *handlers) planosPage(c *fiber.Ctx) error {
-	c.Set("Content-Type", "text/html; charset=utf-8")
-	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	return c.SendString(planosHTML)
-}
-
-// POST /ui/welcome/dismiss — marca tenant_plans.welcome_shown=TRUE.
+// POST /ui/welcome/dismiss — marca tenant_licenses.welcome_shown=TRUE.
 // Idempotente. Chamado quando user clica "Continuar pro App" no /welcome.
 func (h *handlers) uiWelcomeDismiss(c *fiber.Ctx) error {
 	ctx := c.Context()
@@ -51,9 +42,9 @@ func (h *handlers) uiWelcomeDismiss(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
-	// Garante que tem row (clientes muito antigos podem nao ter).
-	_ = h.repo.EnsureTenantTrial(ctx, domain)
-	if err := h.repo.SetWelcomeShown(ctx, domain); err != nil {
+	// Garante que tem licenca (clientes muito antigos podem nao ter).
+	_ = h.repo.EnsureLicense(ctx, domain)
+	if err := h.repo.SetLicenseWelcomeShown(ctx, domain); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	h.log.Info("welcome: dismissed", zap.String("domain", domain))
@@ -112,14 +103,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 <div class="wrap">
   <div class="hero">
     <h1>Bem-vindo ao UC Talk! 🎉</h1>
-    <p class="sub">Você acabou de instalar o conector WhatsApp + Bitrix24 da UC Technology. Comece a usar agora ou explore os planos disponíveis.</p>
+    <p class="sub">Você acabou de instalar o conector WhatsApp + Bitrix24 da UC Technology. Vamos conectar seu primeiro número.</p>
   </div>
 
   <div class="cards">
     <div class="card">
-      <div class="label">Trial gratuito</div>
-      <div class="big" id="trial-days">7</div>
-      <div class="small">dia(s) restantes no plano <strong>Básico</strong></div>
+      <div class="label">Números do contrato</div>
+      <div class="big" id="max-sessions">1</div>
+      <div class="small">número(s) WhatsApp que você pode conectar</div>
     </div>
     <div class="card">
       <div class="label">Usuário Master</div>
@@ -134,32 +125,28 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   </div>
 
   <div class="features">
-    <h2>O que você pode fazer agora</h2>
+    <h2>O que você pode fazer</h2>
     <div class="feat-grid">
       <div class="feat-col basic">
-        <h3>✓ Plano Básico (atual)</h3>
+        <h3>✓ Sempre incluso</h3>
         <ul>
-          <li>Conectar 1 número WhatsApp (QR ou Oficial)</li>
-          <li>Aba WhatsApp dentro de Contatos / Leads / Negociações</li>
+          <li>Conectar número WhatsApp (QR Code)</li>
+          <li>Aba WhatsApp em Contatos / Leads / Negociações</li>
           <li>Envio e recepção de mensagens inline no CRM</li>
-          <li>Permissões básicas (usuário master)</li>
-          <li class="off">Templates de mensagem</li>
-          <li class="off">Campanhas SMS via WhatsApp</li>
-          <li class="off">Automações BizProc (robots)</li>
-          <li class="off">Relatórios e histórico estendido</li>
+          <li>Linhas Abertas (Contact Center) do Bitrix24</li>
+          <li>Permissões por número, por operador</li>
+          <li>Histórico de conversas</li>
         </ul>
       </div>
       <div class="feat-col pro">
-        <h3>★ Plano Pro (upgrade)</h3>
-        <ul>
-          <li>Até 10 números WhatsApp (QR + Cloud API Meta)</li>
-          <li>Tudo do Básico, +</li>
-          <li>Templates Não Oficiais e Templates Meta (HSM)</li>
-          <li>Importação direta de templates da Meta Graph API</li>
-          <li>Robots BizProc (Não Oficial + Oficial HSM)</li>
-          <li>Campanhas SMS (Marketing &gt; SMS via WhatsApp)</li>
-          <li>Relatórios completos + histórico de 1 ano</li>
-          <li>Suporte prioritário UC Technology</li>
+        <h3>★ Conforme seu contrato</h3>
+        <ul id="feats-contrato">
+          <li>Vários números WhatsApp</li>
+          <li>WhatsApp Cloud API oficial da Meta</li>
+          <li>Templates de mensagem (inclusive HSM da Meta)</li>
+          <li>Automações BizProc (robôs no editor de processos)</li>
+          <li>Relatórios completos</li>
+          <li>Suporte UC Technology</li>
         </ul>
       </div>
     </div>
@@ -167,27 +154,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
 
   <div class="cta">
     <button class="btn btn-primary" id="btn-continue">Continuar para o App →</button>
-    <a class="btn btn-ghost" href="/planos" target="_top">Ver Planos</a>
   </div>
 </div>
 
 <script>
 (function(){
-  // Carrega dados do plano + master pra preencher countdown e avatar.
-  fetch('/ui/plan', {credentials:'include'})
+  // Licenca: quantos numeros o contrato libera.
+  fetch('/ui/license', {credentials:'include'})
     .then(function(r){ return r.json(); })
     .then(function(p){
-      if (p && typeof p.trial_days_remaining === 'number') {
-        document.getElementById('trial-days').textContent = p.trial_days_remaining;
+      if (p && typeof p.max_sessions === 'number') {
+        document.getElementById('max-sessions').textContent = p.max_sessions;
       }
     })
     .catch(function(){});
 
-  // Master via /ui/permissions/user-info OU /bitrix/crm/master/status.
-  // Como nao temos domain aqui (cookie cuida), usamos /bitrix/crm/master/status
-  // com query domain inferido pelo backend. Simplificado: chama /ui/plan
-  // ja' devolve domain.
-  fetch('/ui/plan', {credentials:'include'})
+  // Master: /ui/license ja' devolve o domain, entao encadeia a partir dele.
+  fetch('/ui/license', {credentials:'include'})
     .then(function(r){ return r.json(); })
     .then(function(p){
       if (!p || !p.domain) return;
@@ -214,179 +197,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
       .then(function(){ window.location.href = '/dashboard'; })
       .catch(function(){ window.location.href = '/dashboard'; });
   });
-})();
-</script>
-</body>
-</html>`
-
-const planosHTML = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Planos UC Talk</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#e2e8f0;
-     min-height:100vh;padding:40px 20px}
-.wrap{max-width:1100px;margin:0 auto}
-.hero{text-align:center;margin-bottom:36px}
-.hero h1{font-size:30px;font-weight:800;margin-bottom:8px}
-.hero p{font-size:14px;color:#94a3b8;max-width:560px;margin:0 auto;line-height:1.6}
-.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;margin-bottom:32px}
-.plan{background:rgba(30,41,59,.6);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:28px;backdrop-filter:blur(10px);position:relative;display:flex;flex-direction:column}
-.plan.pro{border-color:rgba(37,211,102,.4);box-shadow:0 0 30px rgba(37,211,102,.08)}
-.plan .ribbon{position:absolute;top:-12px;right:20px;background:linear-gradient(90deg,#25D366,#10b981);color:#fff;font-size:11px;font-weight:700;padding:4px 12px;border-radius:8px;letter-spacing:.05em}
-.plan .name{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
-.plan.basic .name{color:#60a5fa}
-.plan.pro .name{color:#25D366}
-.plan .desc{font-size:13px;color:#94a3b8;margin-bottom:18px;line-height:1.5}
-.plan .price-row{display:flex;align-items:baseline;gap:6px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,.06)}
-.plan .price{font-size:34px;font-weight:800;color:#f1f5f9}
-.plan .period{font-size:13px;color:#64748b}
-.plan ul{list-style:none;display:flex;flex-direction:column;gap:9px;margin-bottom:24px;flex:1}
-.plan li{font-size:13px;color:#cbd5e1;display:flex;align-items:flex-start;gap:9px;line-height:1.5}
-.plan li::before{content:'';width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-top:7px}
-.plan.basic li::before{background:#60a5fa}
-.plan.pro li::before{background:#25D366}
-.plan .cta{display:flex;flex-direction:column;gap:8px}
-.btn{padding:13px 20px;border-radius:11px;font-size:14px;font-weight:700;border:0;cursor:pointer;text-align:center;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .12s,box-shadow .12s}
-.btn:hover{transform:translateY(-1px)}
-.btn-primary{background:linear-gradient(90deg,#25D366,#10b981);color:#fff;box-shadow:0 4px 14px rgba(37,211,102,.2)}
-.btn-ghost{background:rgba(255,255,255,.05);color:#cbd5e1;border:1px solid rgba(255,255,255,.1)}
-.btn-ghost:hover{background:rgba(255,255,255,.08)}
-.back{text-align:center;margin-top:20px}
-.back a{color:#64748b;text-decoration:none;font-size:13px}
-.back a:hover{color:#cbd5e1}
-@media(max-width:640px){.hero h1{font-size:22px}}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="hero">
-    <h1>Escolha seu plano</h1>
-    <p>Todo cliente começa com 7 dias grátis. Depois, assine por PIX (libera na hora) ou Boleto pra continuar usando o WhatsApp no seu Bitrix24.</p>
-  </div>
-
-  <div class="plans" id="plans"><div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">Carregando planos…</div></div>
-
-  <div id="pay-note" style="display:none;max-width:640px;margin:0 auto 20px;padding:14px 18px;border-radius:12px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);font-size:13px;color:#93c5fd;line-height:1.5;text-align:center"></div>
-
-  <div class="back"><a href="/dashboard" target="_top">← Voltar pro App</a></div>
-</div>
-
-<!-- Modal de pagamento (PIX/Boleto) -->
-<div id="pay-modal" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:9999;align-items:center;justify-content:center;padding:20px">
-  <div style="max-width:420px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(255,255,255,.1);border-radius:18px;padding:26px">
-    <div id="pay-modal-body"></div>
-    <button onclick="fecharPay()" style="width:100%;margin-top:14px;padding:11px;border-radius:11px;background:rgba(255,255,255,.05);color:#94a3b8;border:1px solid rgba(255,255,255,.1);font-size:13px;cursor:pointer">Fechar</button>
-  </div>
-</div>
-
-<script>
-(function(){
-  var BRL = function(cents){ return 'R$ ' + (Number(cents||0)/100).toLocaleString('pt-BR',{minimumFractionDigits:2}); };
-  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); };
-
-  // Monta as features visíveis do plano a partir das flags do banco.
-  function feats(p){
-    var f = [ (p.max_sessions||1) + (p.max_sessions>1?' números WhatsApp':' número WhatsApp') + ' conectado' + (p.max_sessions>1?'s':''),
-              'Aba WhatsApp no Contato / Lead / Negócio', 'Envio e recepção inline no CRM' ];
-    if (p.feat_templates)   f.push('Templates de mensagem (inclui Meta HSM)');
-    if (p.feat_automations) f.push('Automações BizProc (robots)');
-    if (p.feat_sms)         f.push('Campanhas via WhatsApp (Marketing)');
-    if (p.feat_reports)     f.push('Relatórios + histórico estendido');
-    return f;
-  }
-
-  function cardHTML(p){
-    var cls = p.is_pro ? 'pro' : 'basic';
-    var ribbon = p.is_pro ? '<div class="ribbon">RECOMENDADO</div>' : '';
-    var price = (p.price_cents>0) ? BRL(p.price_cents) : 'Grátis';
-    var li = feats(p).map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('');
-    var metodos = [];
-    if (p.accept_pix !== false)   metodos.push('pix');
-    if (p.accept_boleto !== false) metodos.push('boleto');
-    var botoes = metodos.map(function(m){
-      var lbl = m==='pix' ? '⚡ Assinar com PIX' : '🧾 Assinar com Boleto';
-      return '<button class="btn '+(m==='pix'?'btn-primary':'btn-ghost')+'" onclick="pagar(\''+esc(p.code)+'\',\''+m+'\',this)">'+lbl+'</button>';
-    }).join('');
-    if (!botoes) botoes = '<a class="btn btn-ghost" href="https://wa.me/551932345030" target="_blank">Falar com o comercial</a>';
-    return '<div class="plan '+cls+'">'+ribbon+
-      '<div class="name">'+esc(p.name)+'</div>'+
-      '<div class="desc">'+esc(p.description)+'</div>'+
-      '<div class="price-row"><span class="price">'+price+'</span><span class="period">'+(p.price_cents>0?'/mês':'7 dias de teste')+'</span></div>'+
-      '<ul>'+li+'</ul>'+
-      '<div class="cta">'+botoes+'</div></div>';
-  }
-
-  // Carrega planos reais do banco (ativos, na ordem configurada). Rota pública
-  // (/planos/list) pra funcionar mesmo fora do iframe Bitrix.
-  fetch('/planos/list', {credentials:'include'})
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      var plans = (d && d.plans) || [];
-      var box = document.getElementById('plans');
-      if (!plans.length){ box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#64748b;padding:30px">Nenhum plano disponível no momento.</div>'; return; }
-      box.innerHTML = plans.map(cardHTML).join('');
-    })
-    .catch(function(){
-      document.getElementById('plans').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#fca5a5;padding:30px">Não foi possível carregar os planos. Recarregue a página.</div>';
-    });
-
-  function fecharPay(){ document.getElementById('pay-modal').style.display='none'; }
-  window.fecharPay = fecharPay;
-
-  // Gera a cobrança. Fora do Bitrix (sem cookie) o checkout devolve 401 — aí
-  // explicamos que precisa abrir pelo app, em vez de um alert cru.
-  window.pagar = function(plano, metodo, btn){
-    var orig = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Gerando…';
-    fetch('/ui/billing/checkout', {
-      method:'POST', credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({plan: plano, method: metodo})
-    })
-    .then(function(r){ return r.json().then(function(j){ return {status:r.status, body:j}; }); })
-    .then(function(res){
-      btn.disabled = false; btn.textContent = orig;
-      if (res.status === 401){
-        // Sem sessão de tenant — página aberta fora do Bitrix.
-        var note = document.getElementById('pay-note');
-        note.style.display = 'block';
-        note.innerHTML = 'Pra assinar, abra o <b>UC Talk dentro do seu Bitrix24</b> (aba do app) e escolha o plano por lá — é onde o pagamento é liberado com segurança pra sua conta.';
-        note.scrollIntoView({behavior:'smooth', block:'center'});
-        return;
-      }
-      var body = res.body || {};
-      if (res.status === 200 && (body.pix_copy_paste || body.linha_digitavel || body.boleto_url)){
-        abrirPay(metodo, body);
-        return;
-      }
-      alert(body.error || 'Não foi possível gerar a cobrança agora. Tente novamente.');
-    })
-    .catch(function(){ btn.disabled=false; btn.textContent=orig; alert('Falha de conexão. Tente novamente.'); });
-  };
-
-  function abrirPay(metodo, body){
-    var el = document.getElementById('pay-modal-body');
-    if (metodo === 'pix'){
-      var img = body.pix_qr_base64 ? '<div style="text-align:center;margin-bottom:12px"><img src="data:image/png;base64,'+body.pix_qr_base64+'" alt="QR PIX" style="width:180px;height:180px;background:#fff;border-radius:10px;padding:8px"></div>' : '';
-      el.innerHTML = '<div style="font-size:16px;font-weight:800;color:#25D366;text-align:center;margin-bottom:10px">⚡ PIX gerado — libera na hora</div>'+img+
-        '<div style="font-size:12px;color:#94a3b8;word-break:break-all;background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px">'+esc(body.pix_copy_paste||'')+'</div>'+
-        '<button class="btn btn-primary" style="width:100%" onclick="navigator.clipboard.writeText('+JSON.stringify(body.pix_copy_paste||'')+');this.textContent=\'✓ Copiado\'">📋 Copiar código PIX</button>';
-    } else {
-      var linha = body.linha_digitavel || '';
-      var venc = body.due_date ? ('<div style="font-size:12px;color:#64748b;text-align:center;margin-bottom:10px">Vence em '+esc(body.due_date)+'</div>') : '';
-      var linhaBox = linha ? ('<div style="font-size:13px;color:#cbd5e1;word-break:break-all;background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px;font-family:monospace">'+esc(linha)+'</div>'+
-        '<button class="btn btn-primary" style="width:100%" onclick="navigator.clipboard.writeText('+JSON.stringify(linha)+');this.textContent=\'✓ Copiado\'">📋 Copiar linha digitável</button>') :
-        '<div style="font-size:13px;color:#94a3b8;text-align:center">Boleto gerado. Consulte na aba de assinatura do app.</div>';
-      el.innerHTML = '<div style="font-size:16px;font-weight:800;color:#93c5fd;text-align:center;margin-bottom:10px">🧾 Boleto gerado</div>'+venc+linhaBox+
-        '<div style="font-size:12px;color:#64748b;line-height:1.5;text-align:center;margin-top:10px">A liberação ocorre em até 30 min após a compensação bancária.</div>';
-    }
-    document.getElementById('pay-modal').style.display = 'flex';
-  }
 })();
 </script>
 </body>

@@ -303,3 +303,53 @@ func (r *Repository) MarkNotificationSent(ctx context.Context, domain, kind stri
 	}
 	return tag.RowsAffected() > 0, nil
 }
+
+// ─── Apoio ao diagnostico de suporte ──────────────────────────────────────
+
+// ListBitrixAccountsByDomain devolve os vinculos sessao<->Linha Aberta do
+// dominio. Usado pela tela de saude: sem vinculo, mensagem recebida nao
+// chega no Contact Center, e era preciso ir no banco pra descobrir isso.
+func (r *Repository) ListBitrixAccountsByDomain(ctx context.Context, domain string) ([]*BitrixAccount, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,
+		       connector_id, redirect_uri, status, created_at, updated_at
+		  FROM bitrix_accounts
+		 WHERE LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) = LOWER($1)
+		 ORDER BY updated_at DESC`, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*BitrixAccount
+	for rows.Next() {
+		var a BitrixAccount
+		if err := rows.Scan(&a.ID, &a.SessionJID, &a.Domain, &a.ClientID, &a.ClientSecret,
+			&a.OpenLineID, &a.ConnectorID, &a.RedirectURI, &a.Status,
+			&a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &a)
+	}
+	return out, rows.Err()
+}
+
+// CountFailedMessagesByDomain conta mensagens que falharam no periodo.
+//
+// So' devolve numero util a partir da migration 043: antes dela a tabela
+// messages nao tinha as colunas status/error_msg, e TODA atualizacao de
+// status falhava em silencio — nenhuma mensagem chegava a ser marcada como
+// 'failed' nem como 'delivered'.
+func (r *Repository) CountFailedMessagesByDomain(ctx context.Context, domain string, since time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM messages m
+		  JOIN whatsapp_sessions ws ON m.session_id = ws.id
+		  JOIN bitrix_accounts ba
+		    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1)
+		     = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+		 WHERE LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) = LOWER($1)
+		   AND m.status = 'failed'
+		   AND m.created_at >= $2`, domain, since).Scan(&n)
+	return n, err
+}

@@ -1006,6 +1006,25 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			  FROM tenant_plans tp
 			ON CONFLICT (domain) DO NOTHING;
 		`},
+		{"047_remove_billing", `
+			-- Remove o modelo SaaS de marketplace. Roda DEPOIS da 046, que ja'
+			-- copiou pra tenant_licenses tudo que precisava sobreviver:
+			-- os beneficios traduzidos do plano e as duas colunas de
+			-- onboarding (welcome_shown, master_auto_set_at) que moravam em
+			-- tenant_plans mas nao sao cobranca.
+			--
+			-- Destrutivo e irreversivel. O historico de cobranca online morre
+			-- junto — e' intencional: nao ha' mais cobranca pelo app, o
+			-- cliente paga pelo comercial e o lancamento vive em
+			-- license_payments.
+			DROP TABLE IF EXISTS coupon_redemptions;
+			DROP TABLE IF EXISTS coupons;
+			DROP TABLE IF EXISTS billing_charges;
+			DROP TABLE IF EXISTS boleto_numeracao;
+			DROP TABLE IF EXISTS billing_config;
+			DROP TABLE IF EXISTS plan_definitions;
+			DROP TABLE IF EXISTS tenant_plans;
+		`},
 	}
 
 	for _, m := range migrations {

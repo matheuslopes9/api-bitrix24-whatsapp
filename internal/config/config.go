@@ -15,45 +15,6 @@ type Config struct {
 	Bitrix   BitrixConfig
 	Queue    QueueConfig
 	Watchdog WatchdogConfig
-	Billing  BillingConfig
-}
-
-// BillingConfig — gateway maxiPago (Rede). Sandbox: testapi.maxipago.net.
-// MERCHANT_ID/KEY vem do portal maxiPago (Configuracoes > Dados da Loja).
-// Env "sandbox" | "production" decide a base URL da API XML.
-type BillingConfig struct {
-	MaxiPagoMerchantID  string // MAXIPAGO_MERCHANT_ID
-	MaxiPagoMerchantKey string // MAXIPAGO_MERCHANT_KEY
-	MaxiPagoEnv         string // MAXIPAGO_ENV: sandbox (default) | production
-	ProcessorCard       string // MAXIPAGO_PROCESSOR_CARD: 1 = simulador sandbox
-	ProcessorBoleto     string // MAXIPAGO_PROCESSOR_BOLETO: 12 = boleto teste
-	ProcessorPix        string // MAXIPAGO_PROCESSOR_PIX: processador PIX (pegar no portal)
-	BasicPriceCents     int    // MAXIPAGO_BASIC_PRICE_CENTS: preco do Basico em centavos
-	ProPriceCents       int    // MAXIPAGO_PRO_PRICE_CENTS: preco do Pro em centavos
-	ActivateDays        int    // MAXIPAGO_ACTIVATE_DAYS: dias liberados por pagamento
-
-	// ─── PIX direto Itaú (produto Recebimentos PIX / regulatorio-pix) ───
-	// Quando ITAU_CLIENT_ID esta setado, o metodo "pix" do checkout usa o Itau
-	// direto (mTLS) em vez do MaxiPago. Boleto continua no MaxiPago.
-	ItauClientID     string // ITAU_CLIENT_ID (tambem e' o CN do certificado)
-	ItauClientSecret string // ITAU_CLIENT_SECRET
-	ItauAPIKey       string // ITAU_API_KEY (x-itau-apikey; se vazio, usa o ClientID)
-	ItauChavePIX     string // ITAU_CHAVE_PIX: chave que recebe os pagamentos
-	ItauCertPath     string // ITAU_CERT_PATH (default /app/certs/itau.crt)
-	ItauKeyPath      string // ITAU_KEY_PATH (default /app/certs/itau.key)
-	ItauEnv          string // ITAU_ENV: producao | sandbox (default sandbox)
-	ItauBaseURL      string // ITAU_BASE_URL: override do endpoint PIX (DNS de homolog)
-
-	// ─── Boleto Itaú (Cash Management V2) ───
-	// Emissao de boleto pela conta PJ. Dados da conta ja' conhecidos (mesma
-	// integracao do faturamento); ficam como default mas sao sobrescreviveis.
-	ItauBoletoURL string // ITAU_BOLETO_URL: base cash_management (vazio => default producao)
-	ItauAgencia   string // ITAU_AGENCIA
-	ItauConta     string // ITAU_CONTA
-	ItauContaDAC  string // ITAU_CONTA_DAC
-	ItauCarteira  string // ITAU_CARTEIRA (109 confirmada pelo Itau)
-	ItauEspecie   string // ITAU_ESPECIE (08)
-	ItauEtapa     string // ITAU_ETAPA: validacao | efetivacao (real)
 }
 
 type AppConfig struct {
@@ -163,34 +124,6 @@ func Load() (*Config, error) {
 		},
 		Watchdog: WatchdogConfig{
 			PingIntervalSecs: getIntWithDefault("WATCHDOG_PING_INTERVAL_SECS", 30),
-		},
-		Billing: BillingConfig{
-			MaxiPagoMerchantID:  viper.GetString("MAXIPAGO_MERCHANT_ID"),
-			MaxiPagoMerchantKey: viper.GetString("MAXIPAGO_MERCHANT_KEY"),
-			MaxiPagoEnv:         getEnvWithDefault("MAXIPAGO_ENV", "sandbox"),
-			ProcessorCard:       getEnvWithDefault("MAXIPAGO_PROCESSOR_CARD", "1"),
-			ProcessorBoleto:     getEnvWithDefault("MAXIPAGO_PROCESSOR_BOLETO", "12"),
-			ProcessorPix:        getEnvWithDefault("MAXIPAGO_PROCESSOR_PIX", "206"),
-			BasicPriceCents:     getIntWithDefault("MAXIPAGO_BASIC_PRICE_CENTS", 9900),
-			ProPriceCents:       getIntWithDefault("MAXIPAGO_PRO_PRICE_CENTS", 19900),
-			ActivateDays:        getIntWithDefault("MAXIPAGO_ACTIVATE_DAYS", 30),
-
-			ItauClientID:     viper.GetString("ITAU_CLIENT_ID"),
-			ItauClientSecret: viper.GetString("ITAU_CLIENT_SECRET"),
-			ItauAPIKey:       viper.GetString("ITAU_API_KEY"),
-			ItauChavePIX:     viper.GetString("ITAU_CHAVE_PIX"),
-			ItauCertPath:     getEnvWithDefault("ITAU_CERT_PATH", "/app/certs/itau.crt"),
-			ItauKeyPath:      getEnvWithDefault("ITAU_KEY_PATH", "/app/certs/itau.key"),
-			ItauEnv:          getEnvWithDefault("ITAU_ENV", "sandbox"),
-			ItauBaseURL:      viper.GetString("ITAU_BASE_URL"),
-
-			ItauBoletoURL: viper.GetString("ITAU_BOLETO_URL"),
-			ItauAgencia:   getEnvWithDefault("ITAU_AGENCIA", "1565"),
-			ItauConta:     getEnvWithDefault("ITAU_CONTA", "0099415"),
-			ItauContaDAC:  getEnvWithDefault("ITAU_CONTA_DAC", "7"),
-			ItauCarteira:  getEnvWithDefault("ITAU_CARTEIRA", "109"),
-			ItauEspecie:   getEnvWithDefault("ITAU_ESPECIE", "08"),
-			ItauEtapa:     getEnvWithDefault("ITAU_ETAPA", "efetivacao"),
 		},
 	}
 

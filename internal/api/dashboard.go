@@ -26,30 +26,30 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	// apos o user clicar "Continuar pro App" no /welcome, welcome_shown=TRUE
 	// e dashboard serve normal.
 	//
-	// SAFETY: se plan e' nil (race: /bitrix/auth falhou em chamar
-	// EnsureTenantTrial), cria trial agora e ainda assim redireciona pro
-	// welcome. Sem isso, race silencia o welcome e user pula direto pro
-	// dashboard sem nunca ver tela de boas-vindas.
+	// SAFETY: se a licenca e' nil (race: /bitrix/auth falhou em chamar
+	// EnsureLicense), cria agora e ainda assim redireciona pro welcome. Sem
+	// isso, a race silencia o welcome e o usuario pula direto pro dashboard
+	// sem nunca ver a tela de boas-vindas.
 	cookieRaw := c.Cookies(tenantCookieName)
 	if cookieRaw != "" {
 		domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookieRaw)
 		if ok && domain != "" {
-			plan, err := h.repo.GetTenantPlan(c.Context(), domain)
-			if err == nil && plan == nil {
-				// Row faltando — cria trial retroativamente.
-				if e := h.repo.EnsureTenantTrial(c.Context(), domain); e == nil {
-					plan, _ = h.repo.GetTenantPlan(c.Context(), domain)
+			lic, err := h.repo.GetLicense(c.Context(), domain)
+			if err == nil && lic == nil {
+				// Row faltando — cria a licenca minima retroativamente.
+				if e := h.repo.EnsureLicense(c.Context(), domain); e == nil {
+					lic, _ = h.repo.GetLicense(c.Context(), domain)
 				}
 			}
 			welcomeShown := false
-			if plan != nil {
-				welcomeShown = plan.WelcomeShown
+			if lic != nil {
+				welcomeShown = lic.WelcomeShown
 			}
 			h.log.Info("dashboard: welcome gate check",
 				zap.String("domain", domain),
-				zap.Bool("plan_found", plan != nil),
+				zap.Bool("licenca_encontrada", lic != nil),
 				zap.Bool("welcome_shown", welcomeShown))
-			if plan != nil && !plan.WelcomeShown {
+			if lic != nil && !lic.WelcomeShown {
 				return c.Redirect("/welcome", fiber.StatusFound)
 			}
 		} else {
@@ -502,10 +502,6 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
   <!-- Oculto: entrada de Planos e Assinatura desativada no dashboard do cliente.
        display:none inline porque .nav-item define display:flex (o atributo hidden
        perderia pro CSS do autor). Pra reexibir, remova o style abaixo. -->
-  <div class="nav-item" id="nav-assinatura" style="display:none;" onclick="showPage('assinatura')">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
-    Planos &amp; Assinatura
-  </div>
 
   <div style="flex:1;"></div>
 
@@ -519,17 +515,14 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     <div style="font-size:11.5px;color:#334155;" id="sb-sessoes">-- sessão(ões) ativa(s)</div>
   </div>
 
-  <!-- Plano / Trial -->
+  <!-- Licenca do cliente -->
   <div class="card-flat" id="plan-card" style="padding:13px;margin-top:8px;display:none;">
-    <div style="font-size:10.5px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Plano</div>
+    <div style="font-size:10.5px;color:#334155;font-weight:700;text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px;">Licença</div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
-      <div class="dot" id="plan-dot" style="background:#fbbf24;"></div>
+      <div class="dot" id="plan-dot" style="background:#25D366;"></div>
       <span style="font-size:13px;color:#e2e8f0;font-weight:600;" id="plan-label">--</span>
     </div>
     <div style="font-size:11.5px;color:#334155;line-height:1.4;" id="plan-detail">--</div>
-    <div id="plan-upgrade" style="display:none;margin-top:8px;">
-      <a href="https://uctechnology.com.br/contato" target="_blank" style="display:inline-block;padding:6px 12px;background:linear-gradient(90deg,#fbbf24,#f59e0b);color:#1a1a1a;border-radius:6px;font-size:11.5px;font-weight:700;text-decoration:none;">Fazer Upgrade →</a>
-    </div>
   </div>
 
   <!-- Toggle tema -->
@@ -1282,34 +1275,6 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
     </div>
   </div>
 
-  <!-- ══════════════════════ PÁGINA ASSINATURA ══════════════════════ -->
-  <div id="page-assinatura" class="page">
-    <div class="section-hdr">
-      <div>
-        <div class="section-title">Planos &amp; Assinatura</div>
-        <div class="section-sub">Gerencie seu plano, pagamentos e cancelamento</div>
-      </div>
-    </div>
-
-    <!-- Card de status da assinatura -->
-    <div id="assinatura-status" class="card-flat" style="padding:22px;margin-bottom:18px;">
-      <div style="text-align:center;padding:20px;color:#334155;">Carregando plano…</div>
-    </div>
-
-    <!-- Cards dos planos disponíveis (assinar/upgrade) -->
-    <div class="section-title" style="font-size:15px;margin-bottom:12px;">Escolha ou altere seu plano</div>
-    <div id="assinatura-planos" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:22px;"></div>
-
-    <!-- Histórico de pagamentos -->
-    <div class="section-title" style="font-size:15px;margin-bottom:12px;">Histórico de pagamentos</div>
-    <div class="card-flat" style="overflow:hidden;">
-      <div id="assinatura-charges" style="padding:8px;">
-        <div style="text-align:center;padding:24px;color:#334155;font-size:13px;">Carregando…</div>
-      </div>
-    </div>
-  </div>
-
-
 </div>
 
 <!-- ══════════════════════ MODAL FILA ══════════════════════ -->
@@ -1710,14 +1675,9 @@ function apiUrl(base) {
 })();
 
 // ─── Navegação ────────────────────────────────────────────────────────────────
-var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios', assinatura: 'Planos & Assinatura' };
+var titulosPaginas = { painel: 'Painel', sessoes: 'Sessões', filas: 'Filas Bitrix', permissoes: 'Permissões CRM', templates: 'Templates de Mensagem', historico: 'Histórico de Conversas', sms: 'Campanhas SMS', relatorios: 'Relatórios' };
 
 function showPage(nome) {
-  // Planos & Assinatura desativado no dashboard do cliente. O guard vive aqui,
-  // e nao so no item de menu, porque o popup de plano expirado tambem chamava
-  // showPage("assinatura") — qualquer chamador futuro cairia no mesmo furo.
-  // Isto e UI apenas: a pagina segue no DOM e as rotas /ui/plan/* seguem abertas.
-  if (nome === "assinatura") return;
   document.querySelectorAll('.page').forEach(function(el) { el.classList.remove('active'); });
   document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
   document.getElementById('page-' + nome).classList.add('active');
@@ -1733,238 +1693,6 @@ function showPage(nome) {
   if (nome === 'templates') carregarTemplatesDashboard();
   if (nome === 'historico') carregarHistoricoSessoes();
   if (nome === 'sms') carregarSMSPage();
-  if (nome === 'assinatura') carregarAssinatura();
-}
-
-// ─── Assinatura (planos, pagamento, cancelamento) ─────────────────────────────
-function fmtCentavos(c){ return 'R$ ' + ((c||0)/100).toFixed(2).replace('.',','); }
-function fmtDataBR(s){ if(!s)return '—'; try{return new Date(s).toLocaleDateString('pt-BR');}catch(e){return s;} }
-
-function carregarAssinatura(){
-  fetch(apiUrl('/ui/plan/details'))
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      renderAssinaturaStatus(d);
-      renderAssinaturaCharges(d.charges||[]);
-      // Planos disponiveis vem do backend (configurados no admin).
-      fetch(apiUrl('/ui/plans')).then(function(r){return r.json();}).then(function(pl){
-        renderAssinaturaPlanos(d, pl.plans||[]);
-      }).catch(function(){ renderAssinaturaPlanos(d, []); });
-    })
-    .catch(function(){ document.getElementById('assinatura-status').innerHTML='<div style="text-align:center;padding:20px;color:#f87171;">Falha ao carregar plano.</div>'; });
-}
-
-function renderAssinaturaStatus(d){
-  var el=document.getElementById('assinatura-status');
-  var state=d.state||'expired';
-  var cfg={
-    trial:{cor:'#fbbf24',bg:'rgba(251,191,36,.1)',lbl:'Período de teste',ic:'⏳'},
-    active:{cor:'#25D366',bg:'rgba(37,211,102,.1)',lbl:'Assinatura ativa',ic:'✅'},
-    cancelling:{cor:'#fb923c',bg:'rgba(251,146,60,.1)',lbl:'Cancelamento agendado',ic:'⚠️'},
-    expired:{cor:'#f87171',bg:'rgba(248,113,113,.1)',lbl:'Sem acesso',ic:'⛔'},
-    suspended:{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:'Suspenso',ic:'🚫'}
-  }[state]||{cor:'#94a3b8',bg:'rgba(148,163,184,.1)',lbl:state,ic:'•'};
-  // Nome vem do backend (planos configuráveis); fallback pros legados.
-  var planNome=d.plan_name||(d.plan==='pro'?'Pro':d.plan==='basic'?'Básico':d.plan==='trial'?'Trial':'—');
-  var dias=(typeof d.days_remaining==='number')?d.days_remaining:null;
-
-  var msg='';
-  if(state==='trial') msg='Você tem <strong>'+(dias!=null?dias:'?')+' dia(s)</strong> restantes no teste grátis. Assine um plano pra continuar.';
-  else if(state==='active') msg='Renova automaticamente em <strong>'+fmtDataBR(d.period_end)+'</strong>. '+(dias!=null?dias+' dia(s) no período atual.':'');
-  else if(state==='cancelling') msg='Cancelamento agendado. Você mantém acesso até <strong>'+fmtDataBR(d.period_end)+'</strong> e não será cobrado novamente.';
-  else if(state==='expired') msg='Seu acesso expirou. Assine um plano abaixo pra reativar.';
-  else if(state==='suspended') msg='Sua conta está suspensa. Entre em contato com o suporte.';
-
-  var acao='';
-  if(state==='active') acao='<button class="btn btn-ghost" style="border-color:rgba(248,113,113,.3);color:#fca5a5;" onclick="cancelarAssinatura()">Cancelar assinatura</button>';
-  else if(state==='cancelling') acao='<button class="btn btn-primary" onclick="reativarAssinatura()">Reativar renovação</button>';
-
-  // Banner de renovacao: assinatura ativa vencendo em <=5 dias.
-  var renovar='';
-  if(d.renewal_soon){
-    var rd=d.renewal_days||0;
-    var txt=rd<=0?'vence hoje':('vence em '+rd+' dia'+(rd>1?'s':''));
-    renovar='<div style="background:linear-gradient(90deg,rgba(251,191,36,.14),rgba(251,146,60,.06));border:1px solid rgba(251,191,36,.3);border-radius:12px;padding:13px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">'+
-      '<span style="font-size:20px;">🔔</span>'+
-      '<div style="flex:1;min-width:180px;font-size:13px;color:#fcd34d;line-height:1.5;">Sua assinatura <strong>'+txt+'</strong>. Renove pra não perder o acesso — gere um novo boleto agora.</div>'+
-      '<button class="btn btn-primary" onclick="assinarPlano(\''+(d.plan||'pro')+'\',this)">Renovar — Boleto</button>'+
-    '</div>';
-  }
-
-  el.innerHTML= renovar +
-    '<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">'+
-      '<div style="width:54px;height:54px;border-radius:14px;background:'+cfg.bg+';display:flex;align-items:center;justify-content:center;font-size:26px;">'+cfg.ic+'</div>'+
-      '<div style="flex:1;min-width:200px;">'+
-        '<div style="display:flex;align-items:center;gap:10px;">'+
-          '<span style="font-size:18px;font-weight:800;color:#f1f5f9;">'+cfg.lbl+'</span>'+
-          '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;background:'+cfg.bg+';color:'+cfg.cor+';">Plano '+planNome+'</span>'+
-        '</div>'+
-        '<div style="font-size:13px;color:#94a3b8;margin-top:6px;line-height:1.6;">'+msg+'</div>'+
-        '<div style="font-size:12px;color:#475569;margin-top:6px;">'+(d.sessions_used||0)+' / '+(d.sessions_limit||1)+' sessão(ões) em uso</div>'+
-      '</div>'+
-      (acao?'<div>'+acao+'</div>':'')+
-    '</div>';
-}
-
-function planoCard(d, p){
-  var atual=(d.plan===p.code && (d.state==='active'||d.state==='cancelling'));
-  var cor=p.is_pro?'#a78bfa':'#60a5fa';
-  // Monta a lista de features a partir das flags configuradas.
-  var feats=['Até '+p.max_sessions+' número(s) WhatsApp','Aba no Contato/Lead/Deal','Envio e recepção inline'];
-  if(p.feat_templates)feats.push('Templates + Cloud API Meta');
-  if(p.feat_automations)feats.push('Automações (robôs BizProc)');
-  if(p.feat_sms)feats.push('Campanhas SMS');
-  if(p.feat_reports)feats.push('Relatórios + histórico longo');
-  var btn = atual
-    ? '<button class="btn" disabled style="width:100%;opacity:.5;cursor:default;">Plano atual</button>'
-    : (d.billing_configured
-        ? '<button class="btn btn-primary" style="width:100%;" onclick="assinarPlano(\''+p.code+'\',this)">Assinar '+p.name+' — Boleto</button>'
-        : '<button class="btn" style="width:100%;opacity:.6;cursor:not-allowed;" disabled>Pagamento indisponível</button>');
-  return '<div class="card-flat" style="padding:22px;border:1px solid '+(atual?cor:'rgba(255,255,255,.08)')+';'+(atual?'box-shadow:0 0 24px '+cor+'22;':'')+'">'+
-    '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:'+cor+';">'+p.name+'</div>'+
-    (p.description?'<div style="font-size:12px;color:#64748b;margin-top:3px;line-height:1.4">'+p.description+'</div>':'')+
-    '<div style="font-size:26px;font-weight:800;color:#f1f5f9;margin:10px 0 2px;">'+fmtCentavos(p.price_cents)+'<span style="font-size:13px;color:#475569;font-weight:500;"> /mês</span></div>'+
-    '<ul style="list-style:none;padding:0;margin:16px 0;display:flex;flex-direction:column;gap:8px;">'+
-      feats.map(function(f){return '<li style="font-size:12.5px;color:#cbd5e1;display:flex;gap:8px;align-items:flex-start;line-height:1.5;"><span style="color:'+cor+';">✓</span>'+f+'</li>';}).join('')+
-    '</ul>'+btn+'</div>';
-}
-function renderAssinaturaPlanos(d, planos){
-  var box=document.getElementById('assinatura-planos');
-  if(!planos||!planos.length){ box.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:24px;color:#334155;font-size:13px;">Nenhum plano disponível no momento.</div>'; return; }
-  box.innerHTML=planos.map(function(p){return planoCard(d,p);}).join('');
-}
-
-function renderAssinaturaCharges(charges){
-  var el=document.getElementById('assinatura-charges');
-  if(!charges||!charges.length){ el.innerHTML='<div style="text-align:center;padding:24px;color:#334155;font-size:13px;">Nenhum pagamento ainda.</div>'; return; }
-  var rows=charges.map(function(c){
-    var st=c.status==='paid'?'<span style="color:#25D366;">● pago</span>':c.status==='pending'?'<span style="color:#fbbf24;">● pendente</span>':'<span style="color:#64748b;">'+c.status+'</span>';
-    var bol=c.boleto_url?'<a href="'+c.boleto_url+'" target="_blank" style="color:#60a5fa;">abrir ↗</a>':'—';
-    return '<div style="display:flex;align-items:center;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12.5px;">'+
-      '<div style="flex:1;color:#cbd5e1;">'+(c.plan==='pro'?'Pro':'Básico')+'</div>'+
-      '<div style="width:110px;color:#94a3b8;">'+fmtCentavos(c.amount_cents)+'</div>'+
-      '<div style="width:100px;">'+st+'</div>'+
-      '<div style="width:110px;color:#475569;">'+fmtDataBR(c.created_at)+'</div>'+
-      '<div style="width:70px;text-align:right;">'+bol+'</div>'+
-    '</div>';
-  }).join('');
-  el.innerHTML='<div style="display:flex;padding:8px 14px;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid rgba(255,255,255,.06);"><div style="flex:1;">Plano</div><div style="width:110px;">Valor</div><div style="width:100px;">Status</div><div style="width:110px;">Data</div><div style="width:70px;text-align:right;">Boleto</div></div>'+rows;
-}
-
-// assinarPlano abre um modal pra escolher o método (PIX ou boleto).
-function assinarPlano(plano, btn){
-  abrirModalPagamento(plano);
-}
-function abrirModalPagamento(plano){
-  fecharModalPagamento();
-  var ov=document.createElement('div');
-  ov.id='pgto-modal';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto';
-  ov.innerHTML='<div style="max-width:440px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:26px" onclick="event.stopPropagation()">'+
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:1.2em;font-weight:800;color:#f1f5f9">Assinar plano</div>'+
-      '<button onclick="fecharModalPagamento()" style="background:none;border:0;color:#64748b;font-size:20px;cursor:pointer">×</button></div>'+
-    '<div style="font-size:13px;color:#94a3b8;margin-bottom:14px">Escolha como pagar. O PIX libera o acesso na hora.</div>'+
-    '<div style="display:flex;gap:8px;margin-bottom:14px">'+
-      '<input id="pgto-cupom" placeholder="Tem um cupom? Digite aqui" style="flex:1;padding:.62em .8em;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:9px;color:#e2e8f0;font-size:12.5px;text-transform:uppercase">'+
-      '<button class="btn" onclick="validarCupom(\''+plano+'\')" style="white-space:nowrap">Aplicar</button>'+
-    '</div>'+
-    '<div id="pgto-cupom-msg" style="margin-bottom:12px"></div>'+
-    '<div style="display:flex;flex-direction:column;gap:10px">'+
-      '<button class="btn btn-primary" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'pix\')">⚡ PIX — liberação imediata</button>'+
-      '<button class="btn" style="width:100%;padding:14px" onclick="pagarCom(\''+plano+'\',\'boleto\')">🧾 Boleto bancário</button>'+
-    '</div>'+
-    '<div id="pgto-resultado" style="margin-top:18px"></div>'+
-  '</div>';
-  ov.onclick=function(){ fecharModalPagamento(); };
-  document.body.appendChild(ov);
-}
-function fecharModalPagamento(){ var m=document.getElementById('pgto-modal'); if(m)m.remove(); _cupomAplicado=''; }
-
-// ── Cupom no modal de pagamento ──
-var _cupomAplicado='';
-function validarCupom(plano){
-  var inp=document.getElementById('pgto-cupom');
-  var msg=document.getElementById('pgto-cupom-msg');
-  var code=(inp.value||'').trim().toUpperCase();
-  if(!code){ msg.innerHTML=''; _cupomAplicado=''; return; }
-  msg.innerHTML='<div style="font-size:12px;color:#94a3b8">Validando…</div>';
-  fetch(apiUrl('/ui/coupon/validate'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,plan:plano})})
-    .then(function(r){return r.json();})
-    .then(function(d){
-      var c=d.check||{};
-      if(!c.valid){ _cupomAplicado=''; msg.innerHTML='<div style="font-size:12px;color:#f87171">✗ '+(c.reason||'cupom inválido')+'</div>'; return; }
-      if(c.kind==='trial_days'){
-        _cupomAplicado='';
-        msg.innerHTML='<div style="font-size:12px;color:#fbbf24">Este cupom estende seu teste em '+c.trial_days_added+' dia(s). <a href="#" onclick="aplicarCupomTrial(\''+code+'\');return false;" style="color:#25D366">Aplicar agora</a></div>';
-        return;
-      }
-      _cupomAplicado=code;
-      msg.innerHTML='<div style="font-size:12px;color:#25D366;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.25);border-radius:8px;padding:8px">'+
-        '✓ Cupom <b>'+code+'</b> aplicado — de <s style="color:#64748b">'+fmtCentavos(d.original_cents)+'</s> por <b>'+fmtCentavos(c.final_cents)+'</b>'+
-        (c.description?'<div style="color:#94a3b8;margin-top:3px">'+c.description+'</div>':'')+'</div>';
-    })
-    .catch(function(){ msg.innerHTML='<div style="font-size:12px;color:#f87171">Falha ao validar.</div>'; });
-}
-function aplicarCupomTrial(code){
-  fetch(apiUrl('/ui/coupon/apply'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})})
-    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
-    .then(function(res){ alert(res.j.message||res.j.error||'ok'); if(res.ok){fecharModalPagamento();carregarAssinatura();} })
-    .catch(function(){ alert('Falha ao aplicar cupom.'); });
-}
-
-function pagarCom(plano, metodo){
-  var box=document.getElementById('pgto-resultado');
-  box.innerHTML='<div style="text-align:center;color:#94a3b8;font-size:13px;padding:12px">Gerando '+(metodo==='pix'?'PIX':'boleto')+'…</div>';
-  fetch(apiUrl('/ui/billing/checkout'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plan:plano,method:metodo,coupon:_cupomAplicado})})
-    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
-    .then(function(res){
-      if(!res.ok){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">'+(res.j.error||'Falha ao gerar cobrança.')+'</div>'; return; }
-      if(metodo==='pix' && res.j.pix_copy_paste){
-        var code=res.j.pix_copy_paste;
-        var qr='';
-        if(res.j.pix_qr_base64){
-          var src=res.j.pix_qr_base64.indexOf('data:')===0?res.j.pix_qr_base64:('data:image/png;base64,'+res.j.pix_qr_base64);
-          qr='<div style="text-align:center;margin-bottom:12px"><img src="'+src+'" alt="QR PIX" style="width:180px;height:180px;background:#fff;border-radius:10px;padding:8px"></div>';
-        }
-        box.innerHTML='<div style="background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.25);border-radius:12px;padding:14px">'+
-          '<div style="font-size:12px;color:#25D366;font-weight:700;margin-bottom:10px;text-align:center">✅ PIX gerado — escaneie ou copie</div>'+
-          qr+
-          '<textarea readonly style="width:100%;height:70px;background:#05080f;border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#cbd5e1;font-size:11px;font-family:monospace;padding:8px;resize:none" id="pix-code">'+code+'</textarea>'+
-          '<button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="copiarPix()">📋 Copiar código PIX</button>'+
-          '<div style="font-size:11px;color:#64748b;margin-top:8px;text-align:center">A liberação é automática assim que o pagamento cair.</div>'+
-        '</div>';
-        setTimeout(carregarAssinatura, 1500);
-      } else if(metodo==='boleto' && res.j.boleto_url){
-        window.open(res.j.boleto_url,'_blank');
-        box.innerHTML='<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:12px;padding:14px;text-align:center">'+
-          '<div style="font-size:13px;color:#93c5fd;margin-bottom:8px">🧾 Boleto gerado e aberto em nova aba.</div>'+
-          '<a href="'+res.j.boleto_url+'" target="_blank" class="btn btn-primary" style="text-decoration:none">Abrir boleto novamente</a>'+
-        '</div>';
-        setTimeout(carregarAssinatura, 1500);
-      } else {
-        box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">O gateway não retornou os dados do pagamento.</div>';
-      }
-    })
-    .catch(function(){ box.innerHTML='<div style="color:#f87171;font-size:13px;text-align:center;padding:10px">Falha de conexão.</div>'; });
-}
-function copiarPix(){
-  var t=document.getElementById('pix-code'); if(!t)return;
-  t.select(); t.setSelectionRange(0,99999);
-  try{ document.execCommand('copy'); }catch(e){}
-  if(navigator.clipboard){ navigator.clipboard.writeText(t.value).catch(function(){}); }
-}
-function cancelarAssinatura(){
-  if(!confirm('Cancelar a renovação da assinatura?\n\nVocê continua com acesso completo até o fim do período já pago. Não haverá nova cobrança.'))return;
-  fetch(apiUrl('/ui/plan/cancel'),{method:'POST'})
-    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
-    .then(function(res){ alert(res.j.message||(res.ok?'Cancelado.':res.j.error||'Falha.')); carregarAssinatura(); })
-    .catch(function(){ alert('Falha de conexão.'); });
-}
-function reativarAssinatura(){
-  fetch(apiUrl('/ui/plan/reactivate'),{method:'POST'})
-    .then(function(r){ return r.json().then(function(j){return{ok:r.ok,j:j};}); })
-    .then(function(res){ alert(res.j.message||(res.ok?'Reativado.':res.j.error||'Falha.')); carregarAssinatura(); })
-    .catch(function(){ alert('Falha de conexão.'); });
 }
 
 function openSidebar() {
@@ -2011,7 +1739,7 @@ function carregarVisaoGeral() {
     setText('cfg-sess-count', d.active_sessions + ' sessão(ões) ativa(s)');
 
     // Plano: chamada paralela pro card lateral
-    atualizarPlano();
+    atualizarLicenca();
 
     // Dispositivos no painel
     renderizarDispositivos(d.sessions || []);
@@ -2036,100 +1764,50 @@ function atualizarStatus(online) {
 
 // Carrega plano do tenant e atualiza card lateral. Esconde features Pro
 // se o plano for Basico/trial. Chamada a cada poll de /ui/overview.
-function atualizarPlano() {
-  fetch(apiUrl('/ui/plan'))
+function atualizarLicenca() {
+  fetch(apiUrl('/ui/license'))
     .then(function(r){ return r.json(); })
     .then(function(p){
       if (!p || p.error) return;
       var card = document.getElementById('plan-card');
       if (card) card.style.display = 'block';
 
-      var label = (p.plan || 'basic').toUpperCase();
       var labelEl = document.getElementById('plan-label');
       var dot = document.getElementById('plan-dot');
       var detail = document.getElementById('plan-detail');
-      var upgrade = document.getElementById('plan-upgrade');
 
-      var isPro = p.has_pro_features === true;
-      var isTrial = p.status === 'trial';
-      var isExpired = !p.is_access_allowed;
+      var usadas = p.sessions_em_uso || 0, limite = p.max_sessions || 1;
 
-      // Cor do dot/badge segue o plano + status
-      if (isExpired) {
-        dot.style.background = '#f87171';
-        if (labelEl) labelEl.textContent = 'EXPIRADO';
-        if (detail) detail.innerHTML = 'Acesso bloqueado.<br>Veja os planos pra reativar.';
-        if (upgrade) upgrade.style.display = 'block';
-        mostrarPopupPlanoExpirado();
-      } else if (isTrial) {
+      // Licenca vencida AVISA, nao bloqueia: nada aqui impede o uso do app.
+      // Quem cobra e' o comercial — derrubar o atendimento do cliente final
+      // por causa de boleto atrasado seria pior pra todo mundo.
+      if (p.expirada) {
         dot.style.background = '#fbbf24';
-        if (labelEl) labelEl.textContent = 'TRIAL';
-        var days = (typeof p.trial_days_remaining === 'number') ? p.trial_days_remaining : '?';
-        if (detail) detail.innerHTML = days + ' dia(s) restantes<br>Plano ' + label + ' • ' +
-                     (p.sessions_used||0) + '/' + (p.sessions_limit||1) + ' sessão(ões)';
-        if (upgrade) upgrade.style.display = 'block';
-      } else if (isPro) {
-        dot.style.background = '#25D366';
-        if (labelEl) labelEl.textContent = 'PRO';
-        if (detail) detail.innerHTML = 'Ativo • Todas as features liberadas<br>' +
-                     (p.sessions_used||0) + '/' + (p.sessions_limit||10) + ' sessão(ões)';
-        if (upgrade) upgrade.style.display = 'none';
+        if (labelEl) labelEl.textContent = 'RENOVAR';
+        if (detail) detail.innerHTML = 'Licença venceu em ' + (p.valid_until||'') +
+                     '<br>Fale com a UC Technology.<br>' + usadas + '/' + limite + ' número(s)';
       } else {
-        // Basic ativo pago (raro — clientes Basico vem por trial)
-        dot.style.background = '#60a5fa';
-        if (labelEl) labelEl.textContent = 'BASIC';
-        if (detail) detail.innerHTML = 'Conexão básica<br>' +
-                     (p.sessions_used||0) + '/' + (p.sessions_limit||1) + ' sessão(ões)';
-        if (upgrade) upgrade.style.display = 'block';
+        dot.style.background = '#25D366';
+        if (labelEl) labelEl.textContent = 'ATIVO';
+        var vig = p.valid_until ? ('Válido até ' + p.valid_until) : 'Sem prazo';
+        if (detail) detail.innerHTML = vig + '<br>' + usadas + '/' + limite + ' número(s)';
       }
 
-      // Mostra/esconde cada aba conforme a FEATURE configurada no plano
-      // (via plan_definitions). Cada aba tem sua flag; fallback pra isPro
-      // quando o backend nao mandar a flag (compat).
+      // Mostra/esconde cada aba conforme o BENEFICIO contratado.
       function toggleNav(id, on){
         var el=document.getElementById(id);
         if(el)el.style.display=on?'':'none';
       }
-      var fTpl = (p.feat_templates!==undefined)?p.feat_templates:isPro;
-      var fAut = (p.feat_automations!==undefined)?p.feat_automations:isPro;
-      var fSms = (p.feat_sms!==undefined)?p.feat_sms:isPro;
-      var fRep = (p.feat_reports!==undefined)?p.feat_reports:isPro;
-      toggleNav('nav-templates', fTpl);
-      toggleNav('nav-sms', fSms);
-      toggleNav('nav-relatorios', fRep);
-      toggleNav('nav-historico', fRep);
-      // Automações não têm aba própria no dashboard (ficam no Bitrix), mas
-      // guardamos a flag pra uso futuro. Assinatura fica SEMPRE visível.
-      window._planFeatures = {templates:fTpl,automations:fAut,sms:fSms,reports:fRep};
+      toggleNav('nav-templates', !!p.feat_cloud_api);
+      toggleNav('nav-relatorios', !!p.feat_reports);
+      toggleNav('nav-historico', !!p.feat_reports);
+      // SMS segue oculto por decisao de produto (feature existe no backend).
+      toggleNav('nav-sms', false);
+      window._licenca = p;
     })
     .catch(function(){ /* silencioso */ });
 }
 
-// Popup quando o trial de 7 dias expira. Mostrado 1x por carregamento de
-// pagina. Fechar so' esconde o overlay — o backend BLOQUEIA o envio de verdade
-// (gate de plano em bitrixCRMSend e bitrixConnectorEvent), entao o cliente nao
-// consegue operar ate assinar. O botao principal leva pra aba de assinatura
-// interna (onde PIX/Boleto funcionam), nao pra /planos publica.
-var _popupExpiradoJaMostrado = false;
-function mostrarPopupPlanoExpirado() {
-  if (_popupExpiradoJaMostrado) return;
-  _popupExpiradoJaMostrado = true;
-  if (document.getElementById('plan-expired-overlay')) return;
-  var ov = document.createElement('div');
-  ov.id = 'plan-expired-overlay';
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(2,6,23,.82);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
-  ov.innerHTML =
-    '<div style="max-width:480px;width:100%;background:linear-gradient(160deg,#0f172a,#1e293b);border:1px solid rgba(248,113,113,.35);border-radius:20px;padding:34px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5);">' +
-      '<div style="font-size:44px;margin-bottom:12px;">⏰</div>' +
-      '<h2 style="font-size:22px;font-weight:800;color:#f1f5f9;margin:0 0 10px;">Seu período de teste terminou</h2>' +
-      '<p style="font-size:14px;color:#94a3b8;line-height:1.6;margin:0 0 22px;">Os 7 dias de trial gratuito do UC Talk chegaram ao fim. Pra continuar enviando e recebendo mensagens do WhatsApp no seu Bitrix24, assine um plano. <b style="color:#cbd5e1;">O PIX libera o acesso na hora.</b></p>' +
-      '<div style="display:flex;flex-direction:column;gap:10px;">' +
-        '<button onclick="document.getElementById(\'plan-expired-overlay\').remove();showPage(\'assinatura\');" style="display:block;padding:14px;border-radius:12px;background:linear-gradient(90deg,#25D366,#10b981);color:#fff;font-weight:700;font-size:15px;border:0;cursor:pointer;">Assinar agora (PIX ou Boleto)</button>' +
-        '<button onclick="document.getElementById(\'plan-expired-overlay\').style.display=\'none\'" style="padding:11px;border-radius:12px;background:rgba(255,255,255,.05);color:#64748b;font-size:13px;border:1px solid rgba(255,255,255,.08);cursor:pointer;">Fechar (o acesso segue bloqueado até o pagamento)</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(ov);
-}
 
 function renderizarDispositivos(sessoes) {
   var wrap = document.getElementById('painel-dispositivos');

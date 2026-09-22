@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mdp/qrterminal/v3"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.mau.fi/whatsmeow"
@@ -904,11 +904,11 @@ func extractPhoneFromJID(jid string) string {
 // BANCO, que podem ter um suffix antigo. Com uma linha orfa no banco
 // (ex: ":1" quando o device atual e' ":2"):
 //
-//   Ping(":1")  -> map miss -> false, SEMPRE
-//   watchdog    -> "session not responding" -> Reconnect(":1")
-//   Reconnect   -> abre um SEGUNDO client sobre o mesmo numero
-//   WhatsApp    -> derruba um dos dois (stream:conflict)
-//   ...30s depois, tudo de novo, pra sempre.
+//	Ping(":1")  -> map miss -> false, SEMPRE
+//	watchdog    -> "session not responding" -> Reconnect(":1")
+//	Reconnect   -> abre um SEGUNDO client sobre o mesmo numero
+//	WhatsApp    -> derruba um dos dois (stream:conflict)
+//	...30s depois, tudo de novo, pra sempre.
 //
 // FIX: resolve por numero BASE (resolveSession ja' tolera o suffix). Uma
 // linha orfa do mesmo numero agora encontra a sessao viva e responde true,
@@ -1264,3 +1264,11 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 		}
 	}
 }
+
+// PhoneFromJID expoe extractPhoneFromJID para fora do pacote.
+//
+// Diagnostico de suporte precisa da MESMA normalizacao que o manager usa
+// internamente pra casar sessao. Reimplementar do lado de fora seria repetir
+// a regra do device suffix — justamente a que ja' gerou bug quando duas
+// copias divergiram.
+func PhoneFromJID(jid string) string { return extractPhoneFromJID(jid) }

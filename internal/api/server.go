@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -44,22 +43,6 @@ func New(
 
 	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
 
-	// ─── Reconciliação de boleto (polling) ───────────────────────────────
-	// O boleto do Itaú NÃO tem webhook de "pago" como o PIX. Este job consulta
-	// periodicamente os boletos pendentes e libera o plano quando pagos. Roda
-	// a cada 30min (o cliente que pagou boleto espera no máximo isso pra ser
-	// liberado). No-op se o boleto não estiver configurado.
-	go func() {
-		bgctx := context.Background()
-		time.Sleep(1 * time.Minute) // espera o warmup/migrations antes da 1a rodada
-		for {
-			if n := h.ReconcileBoletos(bgctx); n > 0 {
-				log.Info("reconcile boleto: rodada concluída", zap.Int("liberados", n))
-			}
-			time.Sleep(30 * time.Minute)
-		}
-	}()
-
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o
 	// dropdown de "WhatsApp session" no Bitrix (sem refresh manual). No-op se
@@ -75,8 +58,13 @@ func New(
 	app.Get("/favicon.png", h.serveFavicon)
 
 	// ─── Raiz → Dashboard ───────────────────────────────────────────────
+	// A raiz abre o painel ADMIN (que redireciona pro login sem cookie).
+	//
+	// Antes ia pro /dashboard, que e' a tela do CLIENTE e so' faz sentido
+	// dentro do iframe do Bitrix — quem abria o dominio pelado via um painel
+	// sem contexto de tenant. O dashboard continua em /dashboard.
 	app.Get("/", func(c *fiber.Ctx) error {
-		return c.Redirect("/dashboard", fiber.StatusFound)
+		return c.Redirect("/admin", fiber.StatusFound)
 	})
 
 	// ─── Health ──────────────────────────────────────────────────────────
@@ -85,14 +73,9 @@ func New(
 	// ─── UI de conexão WhatsApp (sem auth — seguro pois usa proxy interno) ─
 	app.Get("/connect", h.connectPage)
 	app.Get("/dashboard", h.dashboardPage)
-	// Welcome screen e pagina de planos publicos (acesso via iframe Bitrix).
+	// Welcome screen (acesso via iframe Bitrix).
 	app.Get("/welcome", h.welcomePage)
 	app.Post("/welcome", h.welcomePage)
-	app.Get("/planos", h.planosPage)
-	app.Post("/planos", h.planosPage)
-	// Lista pública de planos (só dados de venda: nome, preço, features) pra a
-	// página /planos montar os cards mesmo fora do iframe Bitrix. Sem cookie.
-	app.Get("/planos/list", h.publicListPlans)
 	// Grupo /ui/*: protegido por cookie tenant (setado em /bitrix/auth apos
 	// o iframe Bitrix validar com BX24.js) OU cookie admin (super-admin).
 	// SEM o middleware, qualquer um na internet podia ler/escrever dados
@@ -105,17 +88,11 @@ func New(
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
 	ui.Post("/sessions/refresh-status", h.uiRefreshSessionsStatus)
 	ui.Get("/overview", h.uiOverview)
-	ui.Get("/plan", h.uiTenantPlan)
-	// Gestao de assinatura pelo CLIENTE (aba Planos & Assinatura do dashboard).
-	ui.Get("/plans", h.uiListPlans) // planos ativos configurados
-	ui.Post("/coupon/validate", h.uiValidateCoupon) // preview do desconto
-	ui.Post("/coupon/apply", h.uiApplyCoupon)       // aplica cupom de trial_days
-	ui.Get("/plan/details", h.uiPlanDetails)
-	ui.Post("/plan/cancel", h.uiPlanCancel)
-	ui.Post("/plan/reactivate", h.uiPlanReactivate)
+	// O cliente ve (somente leitura) o que o contrato dele libera.
+	ui.Get("/license", h.uiTenantLicense)
 	ui.Post("/welcome/dismiss", h.uiWelcomeDismiss)
-	// ─── Sessões Cloud API (Meta Oficial) — PRO ──────────────────────────
-	ui.Post("/sessions/cloud", h.requireProPlan, h.uiCreateCloudSession)
+	// ─── Sessões Cloud API (Meta Oficial) — feature contratada ───────────
+	ui.Post("/sessions/cloud", h.requireCloudAPI, h.uiCreateCloudSession)
 	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)
 	// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────
 	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
@@ -134,24 +111,21 @@ func New(
 	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
 	ui.Post("/permissions/grant", h.uiPermissionsGrant)
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
-	// ─── Templates de mensagem — PRO ────────────────────────────────────
-	// /list pode ficar publico (UI vazia no Basico, dashboard mostra
-	// upgrade). Os demais (CRUD + import Meta) exigem Pro.
+	// ─── Templates de mensagem — feature contratada ─────────────────────
+	// /list e /debug seguem abertos: a UI so' fica vazia pra quem nao tem
+	// Templates no contrato. O que escreve exige a feature.
 	ui.Get("/templates/list", h.uiTemplatesList)
 	ui.Get("/templates/debug", h.uiTemplatesDebug)
-	ui.Post("/templates/purge-broken", h.requireProPlan, h.uiTemplatesPurgeBroken)
-	ui.Get("/templates/purge-broken", h.requireProPlan, h.uiTemplatesPurgeBroken)
-	ui.Post("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
-	ui.Get("/bp-robots/refresh", h.requireProPlan, h.uiBPRobotsRefresh)
-	// Billing (maxiPago): checkout gera boleto do Pro; charges = historico.
-	// SEM gate de plano: cliente com trial EXPIRADO precisa conseguir pagar.
-	ui.Post("/billing/checkout", h.uiBillingCheckout)
-	ui.Get("/billing/charges", h.uiBillingCharges)
-	ui.Post("/templates/create", h.requireProPlan, h.uiTemplatesCreate)
-	ui.Post("/templates/update", h.requireProPlan, h.uiTemplatesUpdate)
-	ui.Post("/templates/delete", h.requireProPlan, h.uiTemplatesDelete)
-	ui.Get("/templates/meta-list", h.requireProPlan, h.uiTemplatesMetaList)
-	ui.Post("/templates/meta-import", h.requireProPlan, h.uiTemplatesMetaImport)
+	ui.Post("/templates/purge-broken", h.requireCloudAPI, h.uiTemplatesPurgeBroken)
+	ui.Get("/templates/purge-broken", h.requireCloudAPI, h.uiTemplatesPurgeBroken)
+	ui.Post("/templates/create", h.requireCloudAPI, h.uiTemplatesCreate)
+	ui.Post("/templates/update", h.requireCloudAPI, h.uiTemplatesUpdate)
+	ui.Post("/templates/delete", h.requireCloudAPI, h.uiTemplatesDelete)
+	ui.Get("/templates/meta-list", h.requireCloudAPI, h.uiTemplatesMetaList)
+	ui.Post("/templates/meta-import", h.requireCloudAPI, h.uiTemplatesMetaImport)
+	// ─── Automações BizProc — feature contratada ────────────────────────
+	ui.Post("/bp-robots/refresh", h.requireAutomations, h.uiBPRobotsRefresh)
+	ui.Get("/bp-robots/refresh", h.requireAutomations, h.uiBPRobotsRefresh)
 
 	ui.Get("/history/sessions", h.uiHistorySessions)
 	ui.Get("/history/conversations", h.uiHistoryConversations)
@@ -202,14 +176,6 @@ func New(
 	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
 	app.Get("/bitrix-app", h.bitrixAppMenu)           // LEFT_MENU placement — usuarios liberados
 	app.Post("/bitrix-app", h.bitrixAppMenu)
-	// Postback do maxiPago (publico — o gateway chama). Configurar no portal
-	// maxiPago: Configuracoes > URL de notificacao apontando pra este path.
-	// Webhook PIX Itaú: cadastre no Itaú a URL SEM o sufixo /pix
-	// (ex: https://SEU-DOMINIO/billing/itau) — o banco acrescenta /pix.
-	// Registramos AS DUAS (com e sem /pix) por robustez: se o Itaú chamar
-	// exatamente a URL cadastrada, ou acrescentar /pix, cai no mesmo handler.
-	app.Post("/billing/itau/pix", h.billingItauPixWebhook)
-	app.Post("/billing/itau", h.billingItauPixWebhook)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
 	bx.Get("/crm/tab", h.bitrixCRMTab)
@@ -290,26 +256,12 @@ func New(
 	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
 	admin.Get("/api/metrics", h.adminMetrics)              // KPIs globais
-	admin.Get("/api/billing/charges", h.adminBillingCharges) // cobrancas de todos
-	// Construtor de planos (definir preco + features por plano)
-	admin.Get("/api/plan-defs", h.adminListPlanDefs)
-	admin.Post("/api/plan-defs", h.adminSavePlanDef)
-	admin.Post("/api/plan-defs/delete", h.adminDeletePlanDef)
-	// Gateway de pagamento — Itaú (PIX + boleto). Status readonly + teste real.
-	admin.Get("/api/itau-status", h.adminItauStatus)
-	admin.Post("/api/itau-test", h.adminItauTest)
-	admin.Get("/api/itau-diag", h.adminItauDiag) // testa hosts candidatos (debug 404)
-	admin.Post("/api/itau-diag", h.adminItauDiag)
-	admin.Get("/api/itau-chave", h.adminItauChave) // verifica se a chave PIX esta registrada
-	// Legado MaxiPago (mantido só pra compat; a UI já não usa)
-	admin.Get("/api/billing-config", h.adminGetBillingConfig)
-	admin.Post("/api/billing-config", h.adminSaveBillingConfig)
-	admin.Post("/api/billing-config/test", h.adminTestBillingConfig)
-	// Cupons de desconto / promocao
-	admin.Get("/api/coupons", h.adminListCoupons)
-	admin.Post("/api/coupons", h.adminSaveCoupon)
-	admin.Post("/api/coupons/delete", h.adminDeleteCoupon)
 	admin.Get("/api/debug", h.adminDebug)
+	// ─── Licencas: beneficios contratados e pagamentos ──────────────────
+	admin.Get("/api/licenses", h.adminListLicenses)
+	admin.Get("/api/license", h.adminGetLicense)                 // ?domain=...
+	admin.Post("/api/license", h.adminSaveLicense)               // beneficios + vigencia
+	admin.Post("/api/license/payment", h.adminRecordPayment)     // lanca pagamento
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
 	admin.Get("/api/users", h.adminListUsers)
 	admin.Post("/api/users", h.adminCreateUser)
@@ -347,15 +299,8 @@ func New(
 	// Seed de templates Nao Oficiais de exemplo (pra testar automacoes).
 	admin.Post("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
 	admin.Get("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
-	// ─── Sistema de planos ──────────────────────────────────────────────
-	admin.Get("/api/tenant/plan", h.adminTenantGetPlan)         // ?domain=...
-	admin.Post("/api/tenant/plan", h.adminTenantSetPlan)        // body: {domain, plan, status, active_until, notes}
-	admin.Get("/api/tenant/plans", h.adminListTenantPlans)      // lista geral
-	// Atalhos pra UI admin (modal "Gerenciar plano" no card de tenant)
-	admin.Post("/api/tenant/plan/extend-trial", h.adminTenantExtendTrial)
-	admin.Post("/api/tenant/plan/activate-pro", h.adminTenantActivatePro)
-	admin.Post("/api/tenant/plan/suspend", h.adminTenantSuspend)
-	admin.Post("/api/tenant/plan/reactivate", h.adminTenantReactivate)
+	// ─── Saude do cliente (visao de suporte) ────────────────────────────
+	admin.Get("/api/tenant/health", h.adminTenantHealth) // ?domain=...
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────
 	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
 	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)
