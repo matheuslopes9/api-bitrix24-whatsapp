@@ -7,6 +7,7 @@
 package logbuffer
 
 import (
+	"strings"
 	"sync"
 
 	"go.uber.org/zap/zapcore"
@@ -15,9 +16,58 @@ import (
 const ringSize = 500 // ultimas 500 linhas mantidas em memoria
 
 // Line e' uma entrada de log ja serializada (JSON do zap).
+//
+// Domain e Ref sao extraidos do proprio JSON na escrita, pra permitir
+// mostrar o log DE UM CLIENTE sem misturar com os outros. Sem isso, a
+// unica visao possivel e' o fluxo global — inutil pra suporte, porque num
+// servidor com varios tenants o log do cliente que voce investiga fica
+// afogado no dos demais.
 type Line struct {
-	Seq  uint64 `json:"seq"`
-	Text string `json:"text"`
+	Seq    uint64 `json:"seq"`
+	Text   string `json:"text"`
+	Domain string `json:"domain,omitempty"` // dominio Bitrix, quando o log traz
+	Ref    string `json:"ref,omitempty"`    // jid ou phone, quando traz
+}
+
+// extrairCampo pega o valor de "campo":"valor" do JSON ja' serializado.
+//
+// Busca por substring em vez de json.Unmarshal de proposito: isto roda no
+// caminho de escrita de TODO log. Um parse completo aqui custaria caro e
+// so' pra ler dois campos.
+func extrairCampo(texto, campo string) string {
+	chave := `"` + campo + `":"`
+	i := strings.Index(texto, chave)
+	if i < 0 {
+		return ""
+	}
+	i += len(chave)
+	j := strings.IndexByte(texto[i:], '"')
+	if j < 0 {
+		return ""
+	}
+	return texto[i : i+j]
+}
+
+// normalizarDominio tira protocolo, www e barra final, pra casar
+// "https://x.bitrix24.com.br/" com "x.bitrix24.com.br".
+func normalizarDominio(d string) string {
+	d = strings.ToLower(strings.TrimSpace(d))
+	d = strings.TrimPrefix(d, "https://")
+	d = strings.TrimPrefix(d, "http://")
+	d = strings.TrimPrefix(d, "www.")
+	return strings.TrimSuffix(d, "/")
+}
+
+// numeroBase extrai o numero de um JID, sem device suffix nem dominio:
+// "558196807479:5@s.whatsapp.net" -> "558196807479"
+func numeroBase(ref string) string {
+	if i := strings.IndexByte(ref, '@'); i > 0 {
+		ref = ref[:i]
+	}
+	if i := strings.IndexByte(ref, ':'); i > 0 {
+		ref = ref[:i]
+	}
+	return ref
 }
 
 var (
@@ -30,9 +80,15 @@ var (
 
 // push adiciona uma linha ao ring e notifica subscribers (nao-bloqueante).
 func push(text string) {
+	dom := normalizarDominio(extrairCampo(text, "domain"))
+	ref := extrairCampo(text, "jid")
+	if ref == "" {
+		ref = extrairCampo(text, "phone")
+	}
+
 	mu.Lock()
 	seq++
-	ln := Line{Seq: seq, Text: text}
+	ln := Line{Seq: seq, Text: text, Domain: dom, Ref: numeroBase(ref)}
 	ring = append(ring, ln)
 	if len(ring) > ringSize {
 		ring = ring[len(ring)-ringSize:]
@@ -58,6 +114,41 @@ func Snapshot() []Line {
 	defer mu.RUnlock()
 	out := make([]Line, len(ring))
 	copy(out, ring)
+	return out
+}
+
+// Pertence diz se a linha e' do cliente informado. Casa por dominio OU por
+// um dos numeros das sessoes dele — muitos logs do caminho WhatsApp trazem
+// so' o jid, sem dominio, e sao justamente os mais uteis pro suporte.
+func (l Line) Pertence(dominio string, numeros []string) bool {
+	if dominio != "" && l.Domain == normalizarDominio(dominio) {
+		return true
+	}
+	if l.Ref == "" {
+		return false
+	}
+	for _, n := range numeros {
+		if n != "" && numeroBase(n) == l.Ref {
+			return true
+		}
+	}
+	return false
+}
+
+// SnapshotDo devolve so' as linhas do cliente informado, mais recentes por
+// ultimo. limite <= 0 devolve tudo que casar.
+func SnapshotDo(dominio string, numeros []string, limite int) []Line {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make([]Line, 0, 64)
+	for _, l := range ring {
+		if l.Pertence(dominio, numeros) {
+			out = append(out, l)
+		}
+	}
+	if limite > 0 && len(out) > limite {
+		out = out[len(out)-limite:]
+	}
 	return out
 }
 

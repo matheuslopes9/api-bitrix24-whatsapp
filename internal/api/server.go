@@ -317,6 +317,11 @@ func New(
 	admin.Get("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
 	// ─── Saude do cliente (visao de suporte) ────────────────────────────
 	admin.Get("/api/tenant/health", h.adminTenantHealth) // ?domain=...
+	// Reentrega as mensagens presas na dead queue do cliente. Nao e'
+	// destrutiva no sentido de perder dado — ao contrario, recupera
+	// mensagem que estava condenada —, mas mexe em fila de producao, entao
+	// fica com o Administrador.
+	admin.Post("/api/tenant/reprocessar-fila", soAdmin, h.adminReprocessarFila)
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────
 	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
 	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)

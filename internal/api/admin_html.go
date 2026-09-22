@@ -219,7 +219,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item active" data-page="overview" onclick="irPara('overview')"><span class="ic">📊</span> Visão geral</div>
     <div class="sb-item" data-page="tenants" onclick="irPara('tenants')"><span class="ic">🏢</span> Tenants <span class="badge-count" id="cnt-tenants">0</span></div>
     <div class="sb-item" data-page="usage" onclick="irPara('usage')"><span class="ic">📈</span> Consumo</div>
-    <div class="sb-item" data-page="health" onclick="irPara('health')"><span class="ic">🩺</span> Saúde do cliente</div>
+    <div class="sb-item" data-page="health" onclick="irPara('health')"><span class="ic">💚</span> Saúde do cliente</div>
     <div class="sb-group">Contratos</div>
     <div class="sb-item" data-page="licencas" onclick="irPara('licencas')"><span class="ic">📄</span> Licenças <span class="badge-count" id="cnt-vencendo">0</span></div>
     <div class="sb-group">Monitoramento</div>
@@ -232,7 +232,6 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-group">Sistema</div>
     <div class="sb-item" data-page="preview" onclick="irPara('preview')"><span class="ic">👁️</span> Preview do app</div>
     <div class="sb-item" data-page="tools" onclick="irPara('tools')"><span class="ic">🔧</span> Ferramentas</div>
-    <div class="sb-item" data-page="diag" onclick="irPara('diag')"><span class="ic">🩺</span> Diagnóstico</div>
   </nav>
   <div class="sb-foot">
     <div class="env"><span class="dot"></span> <span id="env-txt">online</span></div>
@@ -306,10 +305,10 @@ const adminHomeHTML = `<!doctype html>
     <!-- SAUDE DO CLIENTE -->
     <div class="page" id="page-health">
       <div class="toolbar">
-        <input class="dominput" id="health-domain" placeholder="cliente.bitrix24.com.br" style="flex:1">
-        <button class="btn" onclick="carregarHealth()">🩺 Diagnosticar</button>
+        <select class="filter" id="health-domain" style="flex:1" onchange="carregarHealth()"><option value="">— escolha um cliente —</option></select>
+        <button class="btn" onclick="carregarHealth()">↻ Atualizar</button>
       </div>
-      <div id="health-out"><div class="empty">Informe o domínio do cliente para ver o estado do app dele.</div></div>
+      <div id="health-out"><div class="empty">Escolha um cliente para ver o estado do app dele.</div></div>
     </div>
 
     <div class="page" id="page-usage">
@@ -453,14 +452,6 @@ const adminHomeHTML = `<!doctype html>
     </div>
 
     <!-- DIAG -->
-    <div class="page" id="page-diag">
-      <div class="toolcard" style="margin-bottom:16px">
-        <h3>🩺 Diagnóstico do banco</h3>
-        <p>Contagens das tabelas-chave + amostras. Útil quando o painel mostra zeros e precisamos ver onde está quebrando.</p>
-        <div class="row"><button class="btn" onclick="globalAction('debug','GET')">Rodar diagnóstico</button></div>
-      </div>
-      <pre id="diag-output" style="background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:16px;font-size:.78em;color:var(--muted);overflow:auto;max-height:520px;white-space:pre-wrap;display:none"></pre>
-    </div>
   </div>
 </div>
 
@@ -480,8 +471,7 @@ var PAGES={
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
   audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
   preview:{title:'Preview do app',sub:'Como o cliente vê o UC Talk no Bitrix24'},
-  tools:{title:'Ferramentas',sub:'Ações de manutenção e reparo'},
-  diag:{title:'Diagnóstico',sub:'Estado interno do banco de dados'}
+  tools:{title:'Ferramentas',sub:'Ações de manutenção e reparo'}
 };
 
 function toast(msg,ok){var t=document.getElementById('toast');t.textContent=msg;t.className=ok?'ok':'err';t.style.display='block';clearTimeout(window._tt);window._tt=setTimeout(function(){t.style.display='none';},3800);}
@@ -655,7 +645,7 @@ window.addEventListener('scroll',fechaMenus,true);
 
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
-function globalAction(path,method){var target=path==='debug'?'diag-output':'tool-output';runTool('/admin/api/'+path,method,target);}
+function globalAction(path,method){runTool('/admin/api/'+path,method,'tool-output');}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
 
 // ── LICENCAS ──
@@ -773,69 +763,138 @@ function salvarPagamento(domEnc){
     .catch(function(){toast('erro de conexao',false);});
 }
 
-// ── SAUDE DO CLIENTE ──
+// ── SAUDE DO CLIENTE (monitoramento) ──
 function verSaude(domEnc){
   irPara('health');
   document.getElementById('health-domain').value=decodeURIComponent(domEnc);
   carregarHealth();
 }
-function _card(titulo,corpo,alerta){
-  return '<div class="kpi '+(alerta?'red':'blue')+'" style="display:block;margin-bottom:14px">'+
-    '<div class="label">'+titulo+'</div><div style="margin-top:8px;font-size:.85em;line-height:1.7">'+corpo+'</div></div>';
+function _card(titulo,corpo,estado){
+  var cls = estado==='ruim' ? 'red' : estado==='atencao' ? 'amber' : 'green';
+  return '<div class="kpi '+cls+'" style="display:block">'+
+    '<div class="label">'+titulo+'</div>'+
+    '<div style="margin-top:9px;font-size:.85em;line-height:1.75">'+corpo+'</div></div>';
 }
-function _linha(k,v){return '<div><span class="meta">'+k+':</span> '+v+'</div>';}
-function _alerta(txt){return '<div style="color:var(--red);font-weight:600;margin-top:6px">! '+txt+'</div>';}
+function _l(k,v){return '<div><span class="meta">'+k+':</span> '+v+'</div>';}
+function _alerta(t){return '<div style="color:var(--red);font-weight:600;margin-top:7px">! '+t+'</div>';}
+function _ok(t){return '<div style="color:var(--green);font-weight:600;margin-top:7px">OK '+t+'</div>';}
+
+var HEALTH_DOM='';
 function carregarHealth(){
   var dom=(document.getElementById('health-domain').value||'').trim();
   var out=document.getElementById('health-out');
-  if(!dom){out.innerHTML='<div class="empty">Informe o dominio do cliente.</div>';return;}
-  out.innerHTML='<div class="loading">Diagnosticando '+dom+'...</div>';
-  fetch('/admin/api/tenant/health?domain='+encodeURIComponent(dom)).then(function(r){return r.json();}).then(function(d){
+  if(!dom){out.innerHTML='<div class="empty">Escolha um cliente para ver o estado do app dele.</div>';return;}
+  HEALTH_DOM=dom;
+  out.innerHTML='<div class="loading">Coletando estado de '+dom+'...</div>';
+  fetch('/admin/api/tenant/health?domain='+encodeURIComponent(dom))
+  .then(function(r){return r.json();}).then(function(d){
     if(d.error){out.innerHTML='<div class="empty">'+d.error+'</div>';return;}
-    var html='';
+    var html='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:16px">';
 
-    var b=d.bitrix||{}, t=b.token||{}, cb='';
-    if(!b.instalado){cb=_alerta(b.problema||'app nao instalado');}
+    // 1) Bitrix
+    var b=d.bitrix||{}, t=b.token||{}, c='', est='bom';
+    if(!b.instalado){ c=_alerta(b.problema||'app nao instalado'); est='ruim'; }
     else{
-      cb=_linha('Linha Aberta',b.open_line_id||'-')+_linha('Conector',b.connector_id||'-')+
-         _linha('Instalado em',fmtDate(b.instalado_em))+
-         _linha('Token',t.estado==='ok'?('<span class="tok-valid">ok</span> (expira '+fmtDate(t.expira_em)+')'):('<span class="tok-expired">'+(t.estado||'?')+'</span>'));
-      if(t.problema)cb+=_alerta(t.problema);
-      if(b.problema)cb+=_alerta(b.problema);
-      if(b.problema_conector)cb+=_alerta(b.problema_conector);
-      (b.conectores||[]).forEach(function(c){cb+=_linha('Vinculo',c.session_jid+' -> linha '+c.open_line_id);});
+      c=_l('Linha Aberta',b.open_line_id||'-')+
+        _l('Instalado em',fmtDate(b.instalado_em))+
+        _l('Token', t.estado==='ok'
+             ? '<span class="tok-valid">valido</span> ate '+fmtDate(t.expira_em)
+             : '<span class="tok-expired">'+(t.estado||'?')+'</span>');
+      (b.conectores||[]).forEach(function(x){ c+=_l('Vinculo', x.session_jid+' -> linha '+x.open_line_id); });
+      if(t.estado!=='ok'){ c+=_alerta(t.problema||'token com problema'); est='ruim'; }
+      if(b.problema){ c+=_alerta(b.problema); est='ruim'; }
+      if(b.problema_conector){ c+=_alerta(b.problema_conector); est='ruim'; }
+      if(est==='bom') c+=_ok('integracao saudavel');
     }
-    html+=_card('Conexao Bitrix',cb,!b.instalado||t.estado!=='ok'||!!b.problema_conector);
+    html+=_card('Conexao Bitrix',c,est);
 
-    var ss=d.sessoes||[], cs='', alertaS=false;
-    if(!ss.length){cs='<div class="meta">Nenhuma sessao WhatsApp cadastrada.</div>';alertaS=true;}
+    // 2) Sessoes
+    var ss=d.sessoes||[], cs='', es='bom';
+    if(!ss.length){ cs='<div class="meta">Nenhum numero conectado.</div>'; es='ruim'; }
     else ss.forEach(function(s){
-      cs+='<div style="padding:7px 0;border-bottom:1px solid var(--border)">'+
-        _linha('Numero','<strong>'+(s.numero||'?')+'</strong> '+(s.conectada_agora?'<span class="badge b-active">conectada</span>':'<span class="badge b-expired">offline</span>'))+
-        _linha('JID',s.jid)+_linha('Status no banco',s.status_no_banco)+
-        (s.visto_em?_linha('Visto em',fmtDate(s.visto_em)):'')+
-        (s.problema?_alerta(s.problema):'')+(s.problema_phone?_alerta(s.problema_phone):'')+
+      cs+='<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
+        _l('Numero','<strong>'+(s.numero||'?')+'</strong> '+
+           (s.conectada_agora?'<span class="badge b-active">online</span>'
+                             :'<span class="badge b-expired">offline</span>'))+
+        _l('Device',s.jid)+
+        (s.visto_em?_l('Visto em',fmtDate(s.visto_em)):'')+
+        (s.problema?_alerta(s.problema):'')+
+        (s.problema_phone?_alerta(s.problema_phone):'')+
       '</div>';
-      if(s.problema||s.problema_phone||!s.conectada_agora)alertaS=true;
+      if(!s.conectada_agora||s.problema||s.problema_phone) es='ruim';
     });
-    html+=_card('Sessoes WhatsApp',cs,alertaS);
+    if(es==='bom') cs+=_ok(ss.length+' numero(s) conectado(s)');
+    html+=_card('Sessoes WhatsApp',cs,es);
 
-    var m=d.mensagens||{};
-    var cm=_linha('Entrada 24h',m.entrada_24h||0)+_linha('Saida 24h',m.saida_24h||0)+
-           _linha('Falhas 7d',m.falhas_7d||0)+(m.observacao?_alerta(m.observacao):'');
-    html+=_card('Mensagens',cm,(m.falhas_7d||0)>0||!!m.observacao);
+    // 3) Mensagens
+    var m=d.mensagens||{}, f=d.fila||{};
+    var em = (m.falhas_7d||0)>0 ? 'atencao' : 'bom';
+    var cm=_l('Entrada 24h',m.entrada_24h||0)+_l('Saida 24h',m.saida_24h||0)+
+           _l('Falhas 7 dias',m.falhas_7d||0);
+    if(m.observacao) cm+=_alerta(m.observacao);
+    if((m.falhas_7d||0)===0 && (m.entrada_24h||0)>0) cm+=_ok('fluxo normal');
+    html+=_card('Mensagens',cm,em);
 
-    var l=d.licenca||{};
-    var cl=l.configurada?
-      (_linha('Numeros',l.max_sessions)+_linha('Beneficios',featTags(l))+
-       _linha('Vigencia',l.valid_until?fmtDia(l.valid_until):'sem prazo')+
-       (l.expirada?_alerta('licenca vencida - avisa, mas nao bloqueia o app'):'')+
-       '<div class="meta" style="margin-top:8px">'+((l.pagamentos||[]).length)+' pagamento(s) registrado(s)</div>')
-      :'<div class="meta">Licenca ainda nao configurada.</div>';
-    html+=_card('Licenca',cl,l.expirada||!l.configurada);
+    // 4) Fila presa
+    var presas=f.presas||0, reent=f.reentregaveis||0;
+    var cf, ef;
+    if(presas===0){ cf=_ok('nenhuma mensagem presa'); ef='bom'; }
+    else{
+      ef='ruim';
+      cf=_l('Presas na fila',presas)+_l('Reentregaveis',reent)+
+        '<div class="meta" style="margin-top:6px">Mensagens de clientes que nao chegaram no Contact Center.</div>';
+      if(reent>0) cf+='<div style="margin-top:10px"><button class="btn" onclick="reprocessarFila()">Reentregar '+reent+' mensagem(ns)</button></div>';
+      else cf+=_alerta('nenhuma reentregavel: as sessoes de origem nao existem mais');
+    }
+    html+=_card('Fila de mensagens',cf,ef);
 
+    // 5) Licenca
+    var l=d.licenca||{}, cl, el='bom';
+    if(!l.configurada){ cl='<div class="meta">Licenca nao configurada.</div>'; el='atencao'; }
+    else{
+      cl=_l('Numeros',l.max_sessions)+_l('Beneficios',featTags(l))+
+         _l('Vigencia', l.valid_until?fmtDia(l.valid_until):'sem prazo')+
+         _l('Pagamentos',((l.pagamentos||[]).length)+' registrado(s)');
+      if(l.expirada){ cl+=_alerta('licenca vencida - avisa, mas nao bloqueia o app'); el='atencao'; }
+      else cl+=_ok('licenca em vigor');
+    }
+    html+=_card('Licenca',cl,el);
+    html+='</div>';
+
+    // 6) Log do cliente
+    var lg=d.log||[];
+    html+='<div class="section-title">Log deste cliente <span class="meta">('+lg.length+' linhas, so deste tenant)</span></div>';
+    if(!lg.length){
+      html+='<div class="empty">Nada no buffer para este cliente ainda.</div>';
+    }else{
+      var txt=lg.map(function(x){return x.texto;}).join('\n');
+      html+='<pre id="health-log" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.74em;line-height:1.55;color:#a7f3d0;overflow:auto;max-height:420px;white-space:pre-wrap"></pre>';
+    }
     out.innerHTML=html;
+    if(lg.length){
+      var pre=document.getElementById('health-log');
+      pre.textContent=lg.map(function(x){return x.texto;}).join('\n');
+      pre.scrollTop=pre.scrollHeight;
+    }
   }).catch(function(e){out.innerHTML='<div class="empty">Falha: '+e+'</div>';});
+}
+function reprocessarFila(){
+  if(!HEALTH_DOM) return;
+  if(!confirm('Reentregar as mensagens presas de '+HEALTH_DOM+'?\n\nElas voltam para a fila de entrada e sao processadas de novo. As de sessoes que nao existem mais sao descartadas.')) return;
+  fetch('/admin/api/tenant/reprocessar-fila?domain='+encodeURIComponent(HEALTH_DOM),{method:'POST'})
+    .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+    .then(function(res){
+      if(res.ok){ toast(res.j.reenfileirados+' reenfileirada(s), '+res.j.descartados+' descartada(s)',true); setTimeout(carregarHealth,1500); }
+      else toast(res.j.error||'falha',false);
+    }).catch(function(){toast('erro de conexao',false);});
+}
+function preencherSeletorSaude(){
+  var sel=document.getElementById('health-domain');
+  if(!sel||!TENANTS) return;
+  var atual=sel.value;
+  sel.innerHTML='<option value="">— escolha um cliente —</option>'+
+    TENANTS.map(function(t){return '<option value="'+t.domain+'">'+t.domain+'</option>';}).join('');
+  if(atual) sel.value=atual;
 }
 
 // ── USAGE ──
@@ -968,7 +1027,7 @@ function carregarTudo(){
     if(document.getElementById('page-licencas').classList.contains('active'))renderLicencas();
   }).catch(function(){});
   fetch('/admin/api/metrics').then(function(r){return r.json();}).then(renderKpis).catch(function(){document.getElementById('kpis').innerHTML='<div class="empty">Falha ao carregar métricas.</div>';});
-  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar clientes.</td></tr>';});
+  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();preencherSeletorSaude();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar clientes.</td></tr>';});
 }
 carregarTudo();
 setInterval(carregarTudo,60000);

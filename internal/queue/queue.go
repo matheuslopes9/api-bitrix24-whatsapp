@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -171,6 +172,71 @@ func (q *Queue) PeekDead(ctx context.Context, n int) ([]json.RawMessage, error) 
 		out = append(out, json.RawMessage(s))
 	}
 	return out, nil
+}
+
+// ReprocessarDead devolve os jobs INBOUND da dead queue pra fila de entrada,
+// zerando o contador de tentativas.
+//
+// Existe porque ate' agora a dead queue so' podia ser LIDA ou APAGADA. Uma
+// mensagem que falhou por bug nosso (e nao por ser invalida) ficava presa
+// ali: cliente real esperando resposta que nunca ia chegar, e a unica saida
+// era descartar. Corrigido o bug, faz sentido reentregar.
+//
+// Sessoes aceitas: so' reprocessa job cujo session_jid esteja em
+// sessoesValidas. Jobs de sessao que nao existe mais sao DESCARTADOS — nao
+// ha' por onde entregar, e reenfileirar so' faria a mensagem rodar os 6
+// retries de novo pra morrer igual.
+//
+// Devolve (reenfileirados, descartados, erro). Opera sobre uma copia: le a
+// lista inteira, limpa, e reinsere so' o que vale — assim um job novo que
+// caia na dead queue durante a operacao nao se perde num LPOP parcial.
+func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]bool) (int, int, error) {
+	itens, err := q.rdb.LRange(ctx, keyDead, 0, -1).Result()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(itens) == 0 {
+		return 0, 0, nil
+	}
+	if err := q.rdb.Del(ctx, keyDead).Err(); err != nil {
+		return 0, 0, err
+	}
+
+	var reenfileirados, descartados int
+	for _, raw := range itens {
+		var job InboundJob
+		if err := json.Unmarshal([]byte(raw), &job); err != nil {
+			descartados++
+			continue
+		}
+		if !sessoesValidas[numeroDoJID(job.SessionJID)] {
+			descartados++
+			q.log.Info("dead queue: descartado (sessao nao existe mais)",
+				zap.String("id", job.ID), zap.String("session_jid", job.SessionJID))
+			continue
+		}
+		job.RetryCount = 0
+		if err := q.PushInbound(ctx, &job); err != nil {
+			q.log.Warn("dead queue: falha ao reenfileirar", zap.String("id", job.ID), zap.Error(err))
+			descartados++
+			continue
+		}
+		reenfileirados++
+	}
+	q.log.Info("dead queue reprocessada",
+		zap.Int("reenfileirados", reenfileirados), zap.Int("descartados", descartados))
+	return reenfileirados, descartados, nil
+}
+
+// numeroDoJID tira device suffix e dominio: "5581...:5@s.whatsapp.net" -> "5581..."
+func numeroDoJID(jid string) string {
+	if i := strings.IndexByte(jid, '@'); i > 0 {
+		jid = jid[:i]
+	}
+	if i := strings.IndexByte(jid, ':'); i > 0 {
+		jid = jid[:i]
+	}
+	return jid
 }
 
 // MarkProcessed registra um ID como já processado por TTL segundos.

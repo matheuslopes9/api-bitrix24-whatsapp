@@ -11,10 +11,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/logbuffer"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 )
 
@@ -37,10 +39,13 @@ func (h *handlers) adminTenantHealth(c *fiber.Ctx) error {
 
 	out := fiber.Map{"domain": domain, "gerado_em": time.Now().Format(time.RFC3339)}
 
+	sessoes := h.healthSessoes(ctx, domain)
 	out["bitrix"] = h.healthBitrix(ctx, domain)
-	out["sessoes"] = h.healthSessoes(ctx, domain)
+	out["sessoes"] = sessoes
 	out["mensagens"] = h.healthMensagens(ctx, domain)
 	out["licenca"] = h.healthLicenca(ctx, domain)
+	out["log"] = h.healthLog(domain, sessoes)
+	out["fila"] = h.healthFila(ctx, sessoes)
 
 	return c.JSON(out)
 }
@@ -188,4 +193,100 @@ func (h *handlers) healthLicenca(ctx context.Context, domain string) fiber.Map {
 		res["pagamentos"] = pagamentosToClient(pags)
 	}
 	return res
+}
+
+// healthLog devolve as ultimas linhas de log DESTE cliente.
+//
+// Num servidor com varios tenants, a aba global de logs e' inutil pra
+// suporte: o que interessa fica afogado no fluxo dos outros. Aqui o
+// logbuffer filtra por dominio OU pelos numeros das sessoes do cliente —
+// boa parte dos logs do caminho WhatsApp traz so' o jid, e sao justamente
+// os que importam quando uma mensagem se perde.
+func (h *handlers) healthLog(domain string, sessoes []fiber.Map) []fiber.Map {
+	numeros := make([]string, 0, len(sessoes))
+	for _, s := range sessoes {
+		if n, ok := s["numero"].(string); ok && n != "" {
+			numeros = append(numeros, n)
+		}
+	}
+	linhas := logbuffer.SnapshotDo(domain, numeros, 120)
+	out := make([]fiber.Map, 0, len(linhas))
+	for _, l := range linhas {
+		out = append(out, fiber.Map{"seq": l.Seq, "texto": l.Text})
+	}
+	return out
+}
+
+// healthFila conta o que esta parado na dead queue DESTE cliente, separando
+// o que ainda da' pra reentregar do que nao da'.
+func (h *handlers) healthFila(ctx context.Context, sessoes []fiber.Map) fiber.Map {
+	res := fiber.Map{"presas": 0, "reentregaveis": 0}
+	if h.q == nil {
+		return res
+	}
+	itens, err := h.q.PeekDead(ctx, 500)
+	if err != nil {
+		return res
+	}
+	validos := map[string]bool{}
+	for _, s := range sessoes {
+		if n, ok := s["numero"].(string); ok && n != "" {
+			validos[n] = true
+		}
+	}
+	var presas, reentregaveis int
+	for _, raw := range itens {
+		var j struct {
+			SessionJID string `json:"session_jid"`
+		}
+		if json.Unmarshal(raw, &j) != nil {
+			continue
+		}
+		num := whatsapp.PhoneFromJID(j.SessionJID)
+		if !validos[num] {
+			continue // de outro cliente
+		}
+		presas++
+		// Reentregavel = a sessao daquele job ainda e' uma sessao viva deste
+		// cliente. Job de device que nao existe mais nao tem por onde sair.
+		for _, s := range sessoes {
+			if s["jid"] == j.SessionJID {
+				reentregaveis++
+				break
+			}
+		}
+	}
+	res["presas"] = presas
+	res["reentregaveis"] = reentregaveis
+	return res
+}
+
+// POST /admin/api/tenant/reprocessar-fila?domain=... — reentrega as
+// mensagens presas na dead queue deste cliente.
+func (h *handlers) adminReprocessarFila(c *fiber.Ctx) error {
+	domain := normalizePortalDomain(strings.TrimSpace(c.Query("domain")))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	if h.q == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "fila indisponivel"})
+	}
+	// Sessoes vivas do cliente: so' elas podem receber reentrega.
+	validos := map[string]bool{}
+	for _, s := range h.healthSessoes(c.Context(), domain) {
+		if n, ok := s["numero"].(string); ok && n != "" {
+			validos[n] = true
+		}
+	}
+	if len(validos) == 0 {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "cliente nao tem sessao WhatsApp — nao ha' por onde reentregar"})
+	}
+	reenf, desc, err := h.q.ReprocessarDead(c.Context(), validos)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.repo.WriteAudit(c.Context(), h.adminActor(c), "fila.reprocessar", domain,
+		"reenfileirados="+itoa(reenf)+" descartados="+itoa(desc), clientIP(c))
+	return c.JSON(fiber.Map{"ok": true, "reenfileirados": reenf, "descartados": desc})
 }
