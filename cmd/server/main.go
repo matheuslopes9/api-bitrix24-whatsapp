@@ -412,9 +412,14 @@ func main() {
 		log.Error("http shutdown error", zap.Error(err))
 	}
 
-	for _, jid := range waManager.ListSessions() {
-		waManager.Disconnect(jid)
-	}
+	// CloseAll, NAO Disconnect. Disconnect e' a acao do botao "Desconectar"
+	// da interface: faz Logout no WhatsApp (desvincula o device de forma
+	// PERMANENTE), apaga a linha de whatsapp_sessions e apaga os arquivos
+	// .db. Chamar isso no shutdown significava destruir toda sessao pareada
+	// a cada deploy/restart — o cliente tinha que ler o QR de novo.
+	// Desligar o processo nao e' desconectar o usuario: aqui so' fechamos o
+	// WebSocket e o store, preservando o pareamento pro proximo boot.
+	waManager.CloseAll()
 
 	log.Info("connector stopped gracefully")
 }

@@ -960,6 +960,48 @@ func (m *Manager) Reconnect(ctx context.Context, s *db.WhatsAppSession) error {
 	return m.connectSession(ctx, s)
 }
 
+// CloseAll encerra as conexoes de TODAS as sessoes para desligamento do
+// processo. Fecha o WebSocket, remove os event handlers e fecha o store
+// SQLite — e NADA MAIS.
+//
+// BUG CRITICO QUE ISTO CORRIGE: o graceful shutdown do main() fazia
+//
+//	for _, jid := range waManager.ListSessions() { waManager.Disconnect(jid) }
+//
+// mas Disconnect() e' a acao do botao "Desconectar" da interface. Ela
+// chama Client.Logout(), que DESVINCULA O DEVICE NO WHATSAPP de forma
+// permanente, apaga a linha de whatsapp_sessions e apaga os arquivos
+// .db/.db-shm/.db-wal. Ou seja: todo deploy e todo restart destruia as
+// sessoes pareadas, e o cliente tinha que ler o QR de novo.
+//
+// Isso ficou escondido por anos por um acaso: DeleteSessionsByPhone
+// filtrava por 'WHERE phone = $1' e o caminho do arquivo era montado a
+// partir do mesmo phone — que estava DIVERGENTE do numero real (guardava a
+// string digitada no pareamento). Com phone "81996807479" e numero real
+// "558196807479", nem o DELETE casava linha nem o os.Remove achava
+// arquivo. O logout no WhatsApp, esse SEMPRE acontecia — e' a explicacao
+// de por que o numero vivia caindo e precisando reparear, e de por que
+// sobravam varios .db de devices diferentes: cada re-pareamento digitava o
+// numero de um jeito e criava mais um device.
+//
+// Desligar o processo nao e' desconectar o usuario. Encerrar a sessao de
+// verdade continua sendo Disconnect(), so' quando alguem pedir.
+func (m *Manager) CloseAll() {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, sess := range m.sessions {
+		sessions = append(sessions, sess)
+	}
+	m.sessions = make(map[string]*Session)
+	m.mu.Unlock()
+
+	for _, sess := range sessions {
+		sess.close() // Disconnect + RemoveEventHandlers + container.Close
+	}
+	m.log.Info("sessoes fechadas para shutdown (sem logout, sem apagar nada)",
+		zap.Int("count", len(sessions)))
+}
+
 // ListSessions retorna todos os JIDs ativos.
 func (m *Manager) ListSessions() []string {
 	m.mu.RLock()
