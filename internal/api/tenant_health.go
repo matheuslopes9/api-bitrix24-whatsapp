@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"time"
 
@@ -65,6 +66,12 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 	res["open_line_id"] = portal.OpenLineID
 	res["connector_id"] = portal.ConnectorID
 	res["instalado_em"] = portal.InstalledAt.Format(time.RFC3339)
+	res["atualizado_em"] = portal.UpdatedAt.Format(time.RFC3339)
+	res["master_user_id"] = portal.LegacyAdminUserID
+	// URL que o suporte abre pra ver o app COMO O CLIENTE VE. E' o mesmo
+	// /dashboard servido no iframe do Bitrix, com preview=1 pra silenciar o
+	// SDK BX24 (que so' existe dentro do Bitrix de verdade).
+	res["preview_url"] = "/dashboard?preview=1&domain=" + url.QueryEscape(domain)
 	if portal.OpenLineID == 0 {
 		res["problema"] = "nenhuma Linha Aberta vinculada — mensagens nao tem onde chegar"
 	}
@@ -114,6 +121,11 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		res["conectores"] = []fiber.Map{}
 		res["problema_conector"] = "nenhuma sessao WhatsApp vinculada a uma Linha Aberta — " +
 			"mensagem recebida nao chega no Contact Center"
+	}
+	// Linhas Abertas do portal — o suporte precisa saber POR QUAL linha o
+	// cliente esta atendendo, e quais existem pra escolher.
+	if raw, lerr := h.bitrixClient.ListOpenLines(ctx, creds); lerr == nil {
+		res["linhas_raw"] = string(raw)
 	}
 	return res
 }
@@ -289,4 +301,93 @@ func (h *handlers) adminReprocessarFila(c *fiber.Ctx) error {
 	h.repo.WriteAudit(c.Context(), h.adminActor(c), "fila.reprocessar", domain,
 		"reenfileirados="+itoa(reenf)+" descartados="+itoa(desc), clientIP(c))
 	return c.JSON(fiber.Map{"ok": true, "reenfileirados": reenf, "descartados": desc})
+}
+
+// POST /admin/api/tenant/testar-conexao?domain=... — testa a integracao DE
+// VERDADE, batendo no Bitrix agora.
+//
+// Diferente do GET /health, que le estado guardado, aqui cada item faz uma
+// chamada real. E' a diferenca entre "o banco diz que o token e' valido" e
+// "o token funciona": foi exatamente esse buraco que deixou o teclife com
+// token vazio sem ninguem perceber, porque o expires_at continuava no futuro.
+func (h *handlers) adminTestarConexao(c *fiber.Ctx) error {
+	ctx := c.Context()
+	domain := normalizePortalDomain(strings.TrimSpace(c.Query("domain")))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	portal, err := h.repo.GetBitrixPortalByDomain(ctx, domain)
+	if err != nil || portal == nil {
+		return c.JSON(fiber.Map{"ok": false, "testes": []fiber.Map{{
+			"nome": "Portal instalado", "ok": false,
+			"detalhe": "portal nao encontrado — o app nao esta instalado neste dominio",
+		}}})
+	}
+	creds := h.portalToCreds(portal)
+	testes := make([]fiber.Map, 0, 6)
+	add := func(nome string, ok bool, detalhe string) {
+		testes = append(testes, fiber.Map{"nome": nome, "ok": ok, "detalhe": detalhe})
+	}
+
+	add("Portal instalado", true, "member_id "+portal.MemberID)
+
+	// 1. Token: uma chamada real vale mais que o expires_at do banco.
+	if raw, err := h.bitrixClient.ListOpenLines(ctx, creds); err != nil {
+		add("Token de acesso", false, err.Error())
+	} else {
+		add("Token de acesso", true, "autenticou e listou as Linhas Abertas")
+		_ = raw
+	}
+
+	// 2. Linha Aberta configurada.
+	if portal.OpenLineID == 0 {
+		add("Linha Aberta", false, "nenhuma linha vinculada — mensagem nao tem onde chegar")
+	} else {
+		add("Linha Aberta", true, "linha "+itoa(portal.OpenLineID))
+	}
+
+	// 3. Conector ativo na linha, por vinculo.
+	accts, _ := h.repo.ListBitrixAccountsByDomain(ctx, domain)
+	if len(accts) == 0 {
+		add("Conector", false, "nenhuma sessao WhatsApp vinculada a uma Linha Aberta")
+	}
+	for _, a := range accts {
+		raw, err := h.bitrixClient.GetConnectorStatus(ctx, creds, a.ConnectorID, a.OpenLineID)
+		if err != nil {
+			add("Conector "+a.ConnectorID, false, err.Error())
+			continue
+		}
+		s := string(raw)
+		ativo := strings.Contains(s, `"STATUS":true`) || strings.Contains(s, `"STATUS":"Y"`)
+		det := "linha " + itoa(a.OpenLineID)
+		if !ativo {
+			det += " — registrado mas NAO ativado (imconnector.activate)"
+		}
+		add("Conector "+a.ConnectorID, ativo, det)
+	}
+
+	// 4. Sessao WhatsApp viva em memoria, nao o status do banco.
+	viva := 0
+	if h.waManager != nil {
+		for _, s := range h.healthSessoes(ctx, domain) {
+			if b, _ := s["conectada_agora"].(bool); b {
+				viva++
+			}
+		}
+	}
+	if viva == 0 {
+		add("Sessao WhatsApp", false, "nenhum numero conectado agora")
+	} else {
+		add("Sessao WhatsApp", true, itoa(viva)+" numero(s) conectado(s)")
+	}
+
+	tudoOK := true
+	for _, t := range testes {
+		if b, _ := t["ok"].(bool); !b {
+			tudoOK = false
+		}
+	}
+	h.repo.WriteAudit(ctx, h.adminActor(c), "tenant.testar-conexao", domain,
+		"ok="+boolStr(tudoOK), clientIP(c))
+	return c.JSON(fiber.Map{"ok": tudoOK, "testes": testes})
 }

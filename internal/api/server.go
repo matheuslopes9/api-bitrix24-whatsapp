@@ -87,6 +87,9 @@ func New(
 	ui := app.Group("/ui", h.requireTenantOrAdmin)
 	ui.Post("/sessions", h.uiStartSession)
 	ui.Get("/sessions/:phone/qr", h.uiGetQR)
+	// PNG gerado no proprio app — o QR e' segredo de pareamento e nao pode
+	// ser entregue a servico externo de imagem.
+	ui.Get("/sessions/:phone/qr.png", h.uiGetQRPng)
 	ui.Get("/sessions", h.uiListSessions)
 	ui.Delete("/sessions/remove", h.uiDisconnectSession) // jid via query param ?jid=
 	ui.Delete("/sessions/:jid", h.uiDisconnectSession)   // fallback legado
@@ -322,6 +325,10 @@ func New(
 	// mensagem que estava condenada —, mas mexe em fila de producao, entao
 	// fica com o Administrador.
 	admin.Post("/api/tenant/reprocessar-fila", soAdmin, h.adminReprocessarFila)
+	// Testa a integracao DE VERDADE (chamadas reais ao Bitrix), em vez de
+	// so' ler o estado guardado no banco.
+	admin.Post("/api/tenant/testar-conexao", h.adminTestarConexao)
+	admin.Get("/api/tenant/testar-conexao", h.adminTestarConexao)
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────
 	admin.Get("/api/tenant/placements", h.adminTenantListPlacements)
 	admin.Post("/api/tenant/placements/cleanup", h.adminTenantPlacementsCleanup)

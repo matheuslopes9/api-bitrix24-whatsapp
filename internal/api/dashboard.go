@@ -2214,7 +2214,14 @@ function fazerQRPoll(phone) {
       // Sem isso, cada poll de 2s reseta o contador e a img re-baixa.
       if (d.qr !== qrLastCode) {
         qrLastCode = d.qr;
-        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&ecc=L&data=' + encodeURIComponent(d.qr);
+        // PNG gerado pelo proprio app. Antes a imagem vinha de
+        // api.qrserver.com com o QR na query string — ou seja, o segredo de
+        // pareamento era entregue a um terceiro (e ao proxy, e ao log dele)
+        // a cada exibicao. Quem le esse QR vincula o proprio aparelho a
+        // conta de WhatsApp do cliente.
+        // O cache-buster garante imagem nova a cada QR novo.
+        img.src = apiUrl('/ui/sessions/' + encodeURIComponent(phone) + '/qr.png') +
+                  (apiUrl('/x').indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
         img.style.display = 'block';
         document.getElementById('modal-qr-placeholder').style.display = 'none';
         setBadgeModal('blue', 'Escaneie o QR code');

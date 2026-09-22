@@ -6,6 +6,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
+
+	"rsc.io/qr"
 )
 
 // GET /connect
@@ -462,18 +464,21 @@ function doQRPoll(phone) {
       loadSessions();
     } else if (d.status === 'ready' && d.qr && d.qr !== lastQR) {
       lastQR = d.qr;
-      renderQR(d.qr);
+      renderQR(phone);
     } else if (d.status === 'waiting') {
       setBadge('wait','⏳ Aguardando QR...');
     }
   }).catch(function(){});
 }
 
-function renderQR(text) {
+function renderQR(phone) {
   setBadge('ready','📷 Escaneie o QR code');
   var img = document.getElementById('qr-img');
   img.style.display = 'block';
-  img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=256x256&ecc=L&data=' + encodeURIComponent(text);
+  // PNG gerado pelo proprio app. Antes vinha de api.qrserver.com com o QR na
+  // query string — entregava o segredo de pareamento a um terceiro. Quem le
+  // esse QR vincula o proprio aparelho a conta do cliente.
+  img.src = '/ui/sessions/' + encodeURIComponent(phone) + '/qr.png?t=' + Date.now();
   countdown = 25;
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(function(){
@@ -641,3 +646,33 @@ window.onload = loadSessions;
 </script>
 </body>
 </html>`
+
+// GET /ui/sessions/:phone/qr.png — renderiza o QR de pareamento como PNG,
+// gerado AQUI DENTRO.
+//
+// SEGURANCA: o QR de pareamento do WhatsApp e' um segredo — quem o le
+// vincula o proprio aparelho a conta do cliente. O caminho anterior montava
+// a imagem em "https://api.qrserver.com/...?data=<QR>", ou seja, ENTREGAVA
+// esse segredo a um terceiro em toda exibicao (e ao proxy, e ao log dele).
+// Um QR de WhatsApp vale ~20s, mas e' tempo de sobra pra sequestrar a
+// sessao de quem esta olhando a tela.
+//
+// rsc.io/qr ja' vinha no modulo (dependencia do qrterminal), entao gerar
+// localmente nao adiciona dependencia nenhuma.
+func (h *handlers) uiGetQRPng(c *fiber.Ctx) error {
+	phone := c.Params("phone")
+	texto := h.waManager.GetQR(phone)
+	if texto == "" {
+		return c.Status(404).JSON(fiber.Map{"error": "sem QR disponivel para " + phone})
+	}
+	code, err := qr.Encode(texto, qr.L)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	c.Set("Content-Type", "image/png")
+	// QR de pareamento muda a cada poucos segundos e e' segredo: nao pode
+	// ficar em cache de navegador nem de proxy.
+	c.Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+	c.Set("Pragma", "no-cache")
+	return c.Send(code.PNG())
+}

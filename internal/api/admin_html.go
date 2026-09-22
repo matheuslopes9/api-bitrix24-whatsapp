@@ -763,44 +763,67 @@ function salvarPagamento(domEnc){
     .catch(function(){toast('erro de conexao',false);});
 }
 
-// ── SAUDE DO CLIENTE (monitoramento) ──
+// ── SAUDE DO CLIENTE (monitoramento + acoes de suporte) ──
+var HEALTH_DOM='';
+var HEALTH_QR_T=null;
+
 function verSaude(domEnc){
   irPara('health');
-  document.getElementById('health-domain').value=decodeURIComponent(domEnc);
+  var sel=document.getElementById('health-domain');
+  if(sel) sel.value=decodeURIComponent(domEnc);
   carregarHealth();
 }
-function _card(titulo,corpo,estado){
+function _card(titulo,corpo,estado,acao){
   var cls = estado==='ruim' ? 'red' : estado==='atencao' ? 'amber' : 'green';
   return '<div class="kpi '+cls+'" style="display:block">'+
     '<div class="label">'+titulo+'</div>'+
-    '<div style="margin-top:9px;font-size:.85em;line-height:1.75">'+corpo+'</div></div>';
+    '<div style="margin-top:9px;font-size:.85em;line-height:1.75">'+corpo+'</div>'+
+    (acao?'<div style="margin-top:11px">'+acao+'</div>':'')+'</div>';
 }
 function _l(k,v){return '<div><span class="meta">'+k+':</span> '+v+'</div>';}
 function _alerta(t){return '<div style="color:var(--red);font-weight:600;margin-top:7px">! '+t+'</div>';}
 function _ok(t){return '<div style="color:var(--green);font-weight:600;margin-top:7px">OK '+t+'</div>';}
+function _esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-var HEALTH_DOM='';
 function carregarHealth(){
-  var dom=(document.getElementById('health-domain').value||'').trim();
+  var sel=document.getElementById('health-domain');
+  var dom=(sel&&sel.value||'').trim();
   var out=document.getElementById('health-out');
+  pararQR();
   if(!dom){out.innerHTML='<div class="empty">Escolha um cliente para ver o estado do app dele.</div>';return;}
   HEALTH_DOM=dom;
-  out.innerHTML='<div class="loading">Coletando estado de '+dom+'...</div>';
+  out.innerHTML='<div class="loading">Coletando estado de '+_esc(dom)+'...</div>';
   fetch('/admin/api/tenant/health?domain='+encodeURIComponent(dom))
   .then(function(r){return r.json();}).then(function(d){
-    if(d.error){out.innerHTML='<div class="empty">'+d.error+'</div>';return;}
-    var html='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-bottom:16px">';
+    if(d.error){out.innerHTML='<div class="empty">'+_esc(d.error)+'</div>';return;}
+    var b=d.bitrix||{}, t=b.token||{}, ss=d.sessoes||[], m=d.mensagens||{}, f=d.fila||{}, l=d.licenca||{};
+    var html='';
+
+    // Barra de acoes de suporte
+    html+='<div class="toolbar" style="margin-bottom:14px">'+
+      '<button class="btn" onclick="testarConexao()">Testar conexao</button>'+
+      '<button class="btn" onclick="abrirPareamento()">Conectar WhatsApp</button>'+
+      '<button class="btn" onclick="verComoCliente()">Ver como o cliente ve</button>'+
+      '<span class="meta" style="margin-left:auto;align-self:center">'+_esc(dom)+'</span>'+
+    '</div>';
+    html+='<div id="health-teste"></div>';
+    html+='<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(330px,1fr));margin-bottom:16px">';
 
     // 1) Bitrix
-    var b=d.bitrix||{}, t=b.token||{}, c='', est='bom';
+    var c='', est='bom';
     if(!b.instalado){ c=_alerta(b.problema||'app nao instalado'); est='ruim'; }
     else{
-      c=_l('Linha Aberta',b.open_line_id||'-')+
+      c=_l('Linha Aberta','<strong>'+(b.open_line_id||'-')+'</strong>')+
+        _l('Conector do app',_esc(b.connector_id||'-'))+
+        _l('member_id','<span class="mono">'+_esc(b.member_id||'-')+'</span>')+
+        _l('Usuario master',_esc(b.master_user_id||'nao definido'))+
         _l('Instalado em',fmtDate(b.instalado_em))+
         _l('Token', t.estado==='ok'
              ? '<span class="tok-valid">valido</span> ate '+fmtDate(t.expira_em)
-             : '<span class="tok-expired">'+(t.estado||'?')+'</span>');
-      (b.conectores||[]).forEach(function(x){ c+=_l('Vinculo', x.session_jid+' -> linha '+x.open_line_id); });
+             : '<span class="tok-expired">'+_esc(t.estado||'?')+'</span>');
+      (b.conectores||[]).forEach(function(x){
+        c+=_l('Vinculo','<span class="mono">'+_esc(x.session_jid)+'</span> -> linha '+x.open_line_id);
+      });
       if(t.estado!=='ok'){ c+=_alerta(t.problema||'token com problema'); est='ruim'; }
       if(b.problema){ c+=_alerta(b.problema); est='ruim'; }
       if(b.problema_conector){ c+=_alerta(b.problema_conector); est='ruim'; }
@@ -809,14 +832,15 @@ function carregarHealth(){
     html+=_card('Conexao Bitrix',c,est);
 
     // 2) Sessoes
-    var ss=d.sessoes||[], cs='', es='bom';
+    var cs='', es='bom';
     if(!ss.length){ cs='<div class="meta">Nenhum numero conectado.</div>'; es='ruim'; }
     else ss.forEach(function(s){
       cs+='<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
-        _l('Numero','<strong>'+(s.numero||'?')+'</strong> '+
+        _l('Numero','<strong>'+_esc(s.numero||'?')+'</strong> '+
            (s.conectada_agora?'<span class="badge b-active">online</span>'
                              :'<span class="badge b-expired">offline</span>'))+
-        _l('Device',s.jid)+
+        _l('Device','<span class="mono">'+_esc(s.jid)+'</span>')+
+        _l('Tipo',_esc(s.tipo||'qr'))+
         (s.visto_em?_l('Visto em',fmtDate(s.visto_em)):'')+
         (s.problema?_alerta(s.problema):'')+
         (s.problema_phone?_alerta(s.problema_phone):'')+
@@ -824,32 +848,31 @@ function carregarHealth(){
       if(!s.conectada_agora||s.problema||s.problema_phone) es='ruim';
     });
     if(es==='bom') cs+=_ok(ss.length+' numero(s) conectado(s)');
-    html+=_card('Sessoes WhatsApp',cs,es);
+    html+=_card('Sessoes WhatsApp',cs,es,
+      '<button class="btn" onclick="abrirPareamento()">Conectar outro numero</button>');
 
     // 3) Mensagens
-    var m=d.mensagens||{}, f=d.fila||{};
-    var em = (m.falhas_7d||0)>0 ? 'atencao' : 'bom';
+    var em=(m.falhas_7d||0)>0?'atencao':'bom';
     var cm=_l('Entrada 24h',m.entrada_24h||0)+_l('Saida 24h',m.saida_24h||0)+
            _l('Falhas 7 dias',m.falhas_7d||0);
     if(m.observacao) cm+=_alerta(m.observacao);
-    if((m.falhas_7d||0)===0 && (m.entrada_24h||0)>0) cm+=_ok('fluxo normal');
+    if((m.falhas_7d||0)===0&&(m.entrada_24h||0)>0) cm+=_ok('fluxo normal');
     html+=_card('Mensagens',cm,em);
 
     // 4) Fila presa
-    var presas=f.presas||0, reent=f.reentregaveis||0;
-    var cf, ef;
+    var presas=f.presas||0, reent=f.reentregaveis||0, cf, ef, acaoF='';
     if(presas===0){ cf=_ok('nenhuma mensagem presa'); ef='bom'; }
     else{
       ef='ruim';
       cf=_l('Presas na fila',presas)+_l('Reentregaveis',reent)+
         '<div class="meta" style="margin-top:6px">Mensagens de clientes que nao chegaram no Contact Center.</div>';
-      if(reent>0) cf+='<div style="margin-top:10px"><button class="btn" onclick="reprocessarFila()">Reentregar '+reent+' mensagem(ns)</button></div>';
+      if(reent>0) acaoF='<button class="btn" onclick="reprocessarFila()">Reentregar '+reent+' mensagem(ns)</button>';
       else cf+=_alerta('nenhuma reentregavel: as sessoes de origem nao existem mais');
     }
-    html+=_card('Fila de mensagens',cf,ef);
+    html+=_card('Fila de mensagens',cf,ef,acaoF);
 
     // 5) Licenca
-    var l=d.licenca||{}, cl, el='bom';
+    var cl, el='bom';
     if(!l.configurada){ cl='<div class="meta">Licenca nao configurada.</div>'; el='atencao'; }
     else{
       cl=_l('Numeros',l.max_sessions)+_l('Beneficios',featTags(l))+
@@ -858,26 +881,123 @@ function carregarHealth(){
       if(l.expirada){ cl+=_alerta('licenca vencida - avisa, mas nao bloqueia o app'); el='atencao'; }
       else cl+=_ok('licenca em vigor');
     }
-    html+=_card('Licenca',cl,el);
+    html+=_card('Licenca',cl,el,
+      '<button class="btn" onclick="abrirLicenca(&#39;'+encodeURIComponent(dom)+'&#39;)">Editar contrato</button>');
     html+='</div>';
 
-    // 6) Log do cliente
+    // 6) Preview + log
+    html+='<div id="health-preview"></div>';
     var lg=d.log||[];
     html+='<div class="section-title">Log deste cliente <span class="meta">('+lg.length+' linhas, so deste tenant)</span></div>';
-    if(!lg.length){
-      html+='<div class="empty">Nada no buffer para este cliente ainda.</div>';
-    }else{
-      var txt=lg.map(function(x){return x.texto;}).join('\n');
-      html+='<pre id="health-log" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.74em;line-height:1.55;color:#a7f3d0;overflow:auto;max-height:420px;white-space:pre-wrap"></pre>';
-    }
+    if(!lg.length) html+='<div class="empty">Nada no buffer para este cliente ainda.</div>';
+    else html+='<pre id="health-log" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.74em;line-height:1.55;color:#a7f3d0;overflow:auto;max-height:420px;white-space:pre-wrap"></pre>';
+
     out.innerHTML=html;
     if(lg.length){
       var pre=document.getElementById('health-log');
       pre.textContent=lg.map(function(x){return x.texto;}).join('\n');
       pre.scrollTop=pre.scrollHeight;
     }
-  }).catch(function(e){out.innerHTML='<div class="empty">Falha: '+e+'</div>';});
+    window._healthPreviewURL=b.preview_url||'';
+  }).catch(function(e){out.innerHTML='<div class="empty">Falha: '+_esc(e)+'</div>';});
 }
+
+// ── Testar conexao (chamadas reais ao Bitrix) ──
+function testarConexao(){
+  if(!HEALTH_DOM) return;
+  var box=document.getElementById('health-teste');
+  box.innerHTML='<div class="loading">Testando integracao contra o Bitrix...</div>';
+  fetch('/admin/api/tenant/testar-conexao?domain='+encodeURIComponent(HEALTH_DOM),{method:'POST'})
+  .then(function(r){return r.json();}).then(function(d){
+    if(d.error){box.innerHTML='<div class="empty">'+_esc(d.error)+'</div>';return;}
+    var linhas=(d.testes||[]).map(function(t){
+      return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'+
+        (t.ok?'<span class="badge b-active">ok</span>':'<span class="badge b-expired">falhou</span>')+
+        ' <strong>'+_esc(t.nome)+'</strong>'+
+        '<div class="meta" style="margin-left:2px">'+_esc(t.detalhe)+'</div></div>';
+    }).join('');
+    box.innerHTML='<div class="kpi '+(d.ok?'green':'red')+'" style="display:block;margin-bottom:16px">'+
+      '<div class="label">Teste de conexao — '+(d.ok?'tudo funcionando':'ha problema')+'</div>'+
+      '<div style="margin-top:8px;font-size:.85em">'+linhas+'</div></div>';
+  }).catch(function(e){box.innerHTML='<div class="empty">Falha: '+_esc(e)+'</div>';});
+}
+
+// ── Parear WhatsApp pelo suporte ──
+function abrirPareamento(){
+  if(!HEALTH_DOM) return;
+  _modal('<h3 style="margin:0 0 4px">Conectar WhatsApp — '+_esc(HEALTH_DOM)+'</h3>'+
+    '<div class="meta" style="margin-bottom:14px">Digite o numero com DDI e DDD, so digitos. Ex: 5581999998888</div>'+
+    '<input class="dominput" id="pair-phone" placeholder="5581999998888" inputmode="numeric">'+
+    '<div id="pair-area" style="margin-top:14px"></div>'+
+    '<div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">'+
+      '<button class="btn" onclick="pararQR();fecharModalLic()">Fechar</button>'+
+      '<button class="btn" onclick="iniciarPareamento()">Gerar QR Code</button>'+
+    '</div>');
+}
+function iniciarPareamento(){
+  var el=document.getElementById('pair-phone');
+  var fone=(el.value||'').replace(/\D/g,'');
+  if(fone.length<12){toast('Numero invalido: use DDI+DDD+numero, so digitos',false);return;}
+  var area=document.getElementById('pair-area');
+  area.innerHTML='<div class="loading">Iniciando sessao...</div>';
+  fetch('/ui/sessions?domain='+encodeURIComponent(HEALTH_DOM),{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({phone:fone})})
+  .then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j};});})
+  .then(function(res){
+    if(!res.ok){area.innerHTML='<div style="color:var(--red)">'+_esc(res.j.error||'falha')+'</div>';return;}
+    area.innerHTML='<div class="loading">Aguardando o QR Code...</div>';
+    pollQR(fone,area);
+  }).catch(function(){area.innerHTML='<div style="color:var(--red)">erro de conexao</div>';});
+}
+function pollQR(fone,area){
+  pararQR();
+  var tentativas=0;
+  HEALTH_QR_T=setInterval(function(){
+    tentativas++;
+    if(tentativas>90){pararQR();area.innerHTML='<div style="color:var(--red)">QR expirou. Tente de novo.</div>';return;}
+    fetch('/ui/sessions/'+encodeURIComponent(fone)+'/qr?domain='+encodeURIComponent(HEALTH_DOM))
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.status==='connected'){
+        pararQR();
+        area.innerHTML='<div style="color:var(--green);font-weight:600">Conectado! '+_esc(d.jid||'')+'</div>';
+        toast('WhatsApp conectado',true);
+        setTimeout(function(){fecharModalLic();carregarHealth();},1800);
+        return;
+      }
+      if(d.status==='ready'&&d.qr){
+        // Renderiza o QR por servico externo de imagem seria bloqueado; usa
+        // o texto do QR num canvas simples via API publica do proprio app.
+        // PNG do proprio app: o QR e' segredo de pareamento e nao pode ir
+        // pra servico externo de imagem.
+        area.innerHTML='<div style="background:#fff;padding:12px;border-radius:10px;display:inline-block">'+
+            '<img alt="QR Code" style="width:240px;height:240px;display:block" '+
+            'src="/ui/sessions/'+encodeURIComponent(fone)+'/qr.png?domain='+encodeURIComponent(HEALTH_DOM)+'&t='+Date.now()+'">'+
+          '</div>'+
+          '<div class="meta" style="margin-top:10px">Abra o WhatsApp do cliente > Aparelhos conectados > Conectar aparelho.</div>';
+      }
+    }).catch(function(){});
+  },2000);
+}
+function pararQR(){ if(HEALTH_QR_T){clearInterval(HEALTH_QR_T);HEALTH_QR_T=null;} }
+
+// ── Ver como o cliente ve ──
+function verComoCliente(){
+  var box=document.getElementById('health-preview');
+  if(!box) return;
+  if(box.innerHTML){ box.innerHTML=''; return; }  // toggle
+  var u=window._healthPreviewURL||('/dashboard?preview=1&domain='+encodeURIComponent(HEALTH_DOM));
+  box.innerHTML='<div class="section-title">Como o cliente ve o app no Bitrix24 '+
+      '<span class="meta">(mesma tela servida no iframe do Bitrix)</span></div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:10px">'+
+      '<button class="btn" onclick="document.getElementById(&#39;health-frame&#39;).src=document.getElementById(&#39;health-frame&#39;).src">Recarregar</button>'+
+      '<button class="btn" onclick="window.open(&#39;'+u+'&#39;,&#39;_blank&#39;)">Abrir em nova aba</button>'+
+    '</div>'+
+    '<div style="background:#0b1220;border:1px solid var(--border);border-radius:14px;overflow:hidden;height:70vh;margin-bottom:18px">'+
+      '<iframe id="health-frame" src="'+u+'" style="width:100%;height:100%;border:0;background:#0f172a" title="Visao do cliente"></iframe>'+
+    '</div>';
+}
+
 function reprocessarFila(){
   if(!HEALTH_DOM) return;
   if(!confirm('Reentregar as mensagens presas de '+HEALTH_DOM+'?\n\nElas voltam para a fila de entrada e sao processadas de novo. As de sessoes que nao existem mais sao descartadas.')) return;
@@ -893,7 +1013,7 @@ function preencherSeletorSaude(){
   if(!sel||!TENANTS) return;
   var atual=sel.value;
   sel.innerHTML='<option value="">— escolha um cliente —</option>'+
-    TENANTS.map(function(t){return '<option value="'+t.domain+'">'+t.domain+'</option>';}).join('');
+    TENANTS.map(function(t){return '<option value="'+_esc(t.domain)+'">'+_esc(t.domain)+'</option>';}).join('');
   if(atual) sel.value=atual;
 }
 

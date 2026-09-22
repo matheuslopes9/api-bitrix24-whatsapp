@@ -16,6 +16,7 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20260921121126-35ae40906e74
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.57.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -68,5 +69,4 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )
