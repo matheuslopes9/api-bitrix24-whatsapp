@@ -441,16 +441,18 @@ func (r *Repository) GetContactByJID(ctx context.Context, jid string, sessionID 
 func (r *Repository) InsertMessage(ctx context.Context, m *Message) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO messages (id, wa_message_id, session_id, contact_id, from_jid, to_jid, author_name,
-		                      direction, message_type, content, media_url, media_mime, media_size, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		                      direction, message_type, content, media_url, media_mime, media_size, status,
+		                      sent_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (wa_message_id) DO UPDATE SET
 			from_jid    = EXCLUDED.from_jid,
 			to_jid      = EXCLUDED.to_jid,
 			author_name = EXCLUDED.author_name,
-			status      = EXCLUDED.status
+			status      = EXCLUDED.status,
+			sent_at     = COALESCE(EXCLUDED.sent_at, messages.sent_at)
 	`, m.ID, m.WAMessageID, m.SessionID, m.ContactID, m.FromJID, m.ToJID, m.AuthorName,
 		m.Direction, m.MessageType, m.Content,
-		m.MediaURL, m.MediaMime, m.MediaSize, m.Status)
+		m.MediaURL, m.MediaMime, m.MediaSize, m.Status, m.SentAt)
 	return err
 }
 
