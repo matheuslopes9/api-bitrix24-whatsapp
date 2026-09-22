@@ -95,6 +95,10 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				media_mime    TEXT NOT NULL DEFAULT '',
 				media_size    BIGINT NOT NULL DEFAULT 0,
 				status        TEXT NOT NULL DEFAULT 'received',
+				retry_count   INT NOT NULL DEFAULT 0,
+				error_msg     TEXT,
+				sent_at       TIMESTAMPTZ,
+				delivered_at  TIMESTAMPTZ,
 				created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			);
 
@@ -784,6 +788,30 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- um valor positivo (respeita o que o admin configurou, ex: 3).
 			UPDATE plan_definitions SET trial_days = 7
 			 WHERE code = 'trial' AND (trial_days IS NULL OR trial_days < 1);
+		`},
+		{"043_messages_colunas_faltantes", `
+			-- BUG: a tabela 'messages' criada pela migration 005 deste array e'
+			-- uma copia REDUZIDA do migrations/001_init.sql — perdeu 4 colunas.
+			-- Os arquivos migrations/*.sql NAO sao executados (so' este array
+			-- roda), entao em qualquer banco criado pelo codigo atual essas
+			-- colunas simplesmente nao existem. Consequencias:
+			--
+			--   GetMessagesByPhone  -> SELECT ... retry_count  -> SQLSTATE 42703
+			--                          (a aba Historico nao abre a conversa)
+			--   GetRecentMessages   -> mesmo erro (simulador/diagnostico)
+			--   UpdateMessageStatus -> UPDATE ... error_msg, delivered_at falha.
+			--                          O processor descarta o erro com '_ =',
+			--                          entao a mensagem NUNCA sai de 'received'
+			--                          e nunca marca entrega — falha silenciosa.
+			--   IncrementRetry      -> UPDATE ... retry_count  -> retry nunca
+			--                          e' contabilizado.
+			--
+			-- Idempotente (ADD COLUMN IF NOT EXISTS): em bancos antigos que ja'
+			-- nasceram do 001_init.sql as colunas ja' existem e isto e' no-op.
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS retry_count  INT NOT NULL DEFAULT 0;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS error_msg    TEXT;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS sent_at      TIMESTAMPTZ;
+			ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 		`},
 	}
 

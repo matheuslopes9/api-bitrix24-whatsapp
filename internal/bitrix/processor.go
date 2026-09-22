@@ -34,6 +34,26 @@ func NewProcessor(client *Client, repo *db.Repository, log *zap.Logger) *Process
 	return &Processor{client: client, repo: repo, log: log}
 }
 
+// markStatus atualiza o status da mensagem no banco LOGANDO a falha.
+//
+// BUG HISTORICO: estas chamadas eram '_ = p.repo.UpdateMessageStatus(...)'.
+// A tabela 'messages' estava sem as colunas error_msg/delivered_at (ver
+// migration 043), entao TODO UPDATE de status falhava com SQLSTATE 42703 —
+// e o erro descartado fazia isso passar despercebido: a mensagem chegava no
+// Contact Center mas nunca marcava entrega no banco, e o painel mostrava
+// tudo parado em 'received' sem nenhum sinal de erro nos logs.
+//
+// Nao retorna erro de proposito: falhar em gravar o status nao deve abortar
+// a entrega da mensagem, que ja' aconteceu. Mas TEM que aparecer no log.
+func (p *Processor) markStatus(ctx context.Context, waMessageID string, status db.MessageStatus, errMsg string) {
+	if err := p.repo.UpdateMessageStatus(ctx, waMessageID, status, errMsg); err != nil {
+		p.log.Error("falha ao gravar status da mensagem no banco",
+			zap.String("msg_id", waMessageID),
+			zap.String("status_pretendido", string(status)),
+			zap.Error(err))
+	}
+}
+
 // ProcessInbound entrega uma mensagem do WhatsApp no Bitrix24 Contact Center.
 //
 // Grupos: quando job.IsGroup=true, usa GroupJID como chat key (1 chat
@@ -58,7 +78,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 			zap.String("session_jid", job.SessionJID),
 			zap.Error(err),
 		)
-		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, "bitrix account not configured")
+		p.markStatus(ctx, job.MessageID, db.MsgFailed, "bitrix account not configured")
 		return fmt.Errorf("bitrix account not found for session %s: %w", job.SessionJID, err)
 	}
 
@@ -78,7 +98,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	// 2. Garante que existe um mapeamento contato ↔ bitrix
 	contact, err := p.ensureContact(ctx, job)
 	if err != nil {
-		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
+		p.markStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("ensure contact: %w", err)
 	}
 
@@ -141,7 +161,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	// 4. Envia ao Contact Center
 	chatID, err := p.client.ConnectorSendMessage(ctx, creds, acct.ConnectorID, acct.OpenLineID, msg)
 	if err != nil {
-		_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
+		p.markStatus(ctx, job.MessageID, db.MsgFailed, err.Error())
 		return fmt.Errorf("send to contact center: %w", err)
 	}
 
@@ -160,7 +180,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 	}
 
 	// 7. Marca como entregue no banco
-	_ = p.repo.UpdateMessageStatus(ctx, job.MessageID, db.MsgDelivered, "")
+	p.markStatus(ctx, job.MessageID, db.MsgDelivered, "")
 
 	p.log.Info("inbound delivered to contact center",
 		zap.String("from", job.FromPhone),
