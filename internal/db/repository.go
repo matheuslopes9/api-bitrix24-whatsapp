@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -633,7 +634,67 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 		return nil, err
 	}
 	defer rows.Close()
+	return scanMessages(rows)
+}
 
+// GetMessagesByPhoneForSession e' a versao ESCOPADA POR SESSAO do
+// GetMessagesByPhone.
+//
+// BUG: a aba Historico chamava GetMessagesByPhone(phone) passando so' o
+// telefone do contato, embora a tela ja' soubesse qual sessao o usuario
+// escolheu. Aquela query casa por peer em TODA a tabela messages, sem
+// nenhum filtro de sessao ou de tenant — entao a conversa exibida misturava
+// mensagens de outras sessoes do portal e, se dois tenants distintos ja'
+// conversaram com o mesmo numero, mensagens de OUTRO tenant.
+//
+// O escopo de sessao aqui e' o mesmo do ListHistoryConversations (que ja'
+// estava correto): FK session_id quando existe, com fallback por JID
+// literal tolerante a device suffix pro legado gravado sem session_id.
+func (r *Repository) GetMessagesByPhoneForSession(ctx context.Context, sessionJID, phone string, limit int) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	pattern := phone + "@%"
+	rows, err := r.pool.Query(ctx, `
+		WITH sess AS (
+			SELECT id FROM whatsapp_sessions WHERE jid = $4 LIMIT 1
+		)
+		SELECT id, wa_message_id, session_id, contact_id,
+		       COALESCE(from_jid,''), COALESCE(to_jid,''), COALESCE(author_name,''),
+		       direction, message_type,
+		       COALESCE(content,''), COALESCE(media_url,''), COALESCE(media_mime,''),
+		       COALESCE(media_size,0),
+		       status, retry_count, COALESCE(error_msg,''),
+		       sent_at, delivered_at, created_at
+		FROM messages m
+		WHERE (
+		        from_jid LIKE $1
+		     OR to_jid   LIKE $1
+		     OR from_jid IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		     OR to_jid   IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		     OR contact_id IN (SELECT id FROM contact_mapping WHERE wa_phone = $2)
+		      )
+		  AND (
+		        (m.session_id IS NOT NULL AND m.session_id = (SELECT id FROM sess))
+		     OR (m.direction = 'outbound' AND
+		         REGEXP_REPLACE(m.from_jid, ':[0-9]+@', '@') = REGEXP_REPLACE($4::text, ':[0-9]+@', '@'))
+		     OR (m.direction = 'inbound'  AND
+		         REGEXP_REPLACE(m.to_jid,   ':[0-9]+@', '@') = REGEXP_REPLACE($4::text, ':[0-9]+@', '@'))
+		      )
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, pattern, phone, limit, sessionJID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// scanMessages le as linhas no formato da lista de colunas usada pelas
+// queries de historico. Extraido pra que as variantes escopada e nao
+// escopada nao possam divergir na ordem das colunas.
+func scanMessages(rows pgx.Rows) ([]Message, error) {
 	var msgs []Message
 	for rows.Next() {
 		var m Message

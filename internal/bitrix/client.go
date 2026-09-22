@@ -288,7 +288,15 @@ func (c *Client) callOnce(ctx context.Context, creds TenantCreds, method string,
 		return nil, fmt.Errorf("decode bitrix response (status %d, body: %s): %w", resp.StatusCode, string(rawBody), err)
 	}
 	if result.Error != "" {
-		c.log.Warn("bitrix api error",
+		// Alguns "erros" do Bitrix significam so' "o estado que voce quer ja'
+		// vale" — bind repetido, delete de algo ausente. Os callers tratam
+		// esses casos como sucesso (idempotencia), entao logar WARN aqui so'
+		// gera ruido e mascara falha real. Ficam em Info.
+		nivel := c.log.Warn
+		if ehErroBenigno(result.Error, result.ErrorDescription) {
+			nivel = c.log.Info
+		}
+		nivel("bitrix api error",
 			zap.String("method", method),
 			zap.Int("status", resp.StatusCode),
 			zap.String("error", result.Error),
@@ -662,12 +670,48 @@ func (c *Client) ConnectorSetOutboundError(ctx context.Context, creds TenantCred
 	return errDel
 }
 
+// ehErroBenigno marca as respostas de erro do Bitrix que representam
+// "estado desejado ja' atingido", e nao uma falha que alguem precise
+// investigar. Mantidas em Info pra nao afogar erro de verdade no log.
+func ehErroBenigno(code, description string) bool {
+	if strings.Contains(description, "Handler already binded") {
+		return true
+	}
+	switch code {
+	case "ERROR_ACTIVITY_NOT_FOUND": // delete de robot que nao existe
+		return true
+	}
+	return false
+}
+
+// errHandlerJaRegistrado reconhece a recusa do Bitrix quando o mesmo par
+// (evento, handler) ja' esta registrado no portal. O Bitrix devolve isso
+// como ERROR_CORE com a descricao "Unable to set event handler: Handler
+// already binded".
+func errHandlerJaRegistrado(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Handler already binded")
+}
+
 // BindEvent registra um webhook para um evento do Bitrix24.
+//
+// "Handler already binded" NAO e' falha: e' o Bitrix dizendo que o estado
+// desejado ja' vale. Antes esse caso subia como erro e aparecia no log como
+// "bitrix api error — ERROR_CORE" a cada boot/reinstalacao, o que poluia o
+// log e, pior, mascarava falha de bind de verdade no meio do ruido.
+// Tratamos o bind como idempotente: o que importa e' o handler estar la'.
 func (c *Client) BindEvent(ctx context.Context, creds TenantCreds, event, handlerURL string) error {
 	raw, err := c.call(ctx, creds, "event.bind", map[string]interface{}{
 		"event":   event,
 		"handler": handlerURL,
 	})
+	if errHandlerJaRegistrado(err) {
+		c.log.Info("event.bind: handler ja' registrado, nada a fazer",
+			zap.String("event", event),
+			zap.String("handler", handlerURL),
+			zap.String("domain", creds.Domain),
+		)
+		return nil
+	}
 	c.log.Info("event.bind response",
 		zap.String("event", event),
 		zap.String("handler", handlerURL),
@@ -1417,10 +1461,22 @@ func (c *Client) RegisterBPRobot(ctx context.Context, creds TenantCreds, code, n
 }
 
 // DeleteBPRobot remove a atividade do portal. Usado no uninstall.
+// Remover um robot que nao existe NAO e' erro: o estado desejado (robot
+// ausente) ja' vale. O Bitrix responde ERROR_ACTIVITY_NOT_FOUND nesse caso.
+//
+// Isso importa porque triggerBPRobotRefresh chama DeleteBPRobot(legacy) em
+// TODO refresh, so' pra garantir a limpeza do robot antigo. Na esmagadora
+// maioria dos portais esse robot nunca existiu, entao cada refresh gerava um
+// "bitrix api error — ERROR_ACTIVITY_NOT_FOUND" no log. Combinado com o
+// ciclo de reconexao de 30s (corrigido em outro commit), virava um erro a
+// cada 30s por tenant — ruido que escondia problema de verdade.
 func (c *Client) DeleteBPRobot(ctx context.Context, creds TenantCreds, code string) error {
 	_, err := c.call(ctx, creds, "bizproc.robot.delete", map[string]interface{}{
 		"CODE": code,
 	})
+	if err != nil && strings.Contains(err.Error(), "ERROR_ACTIVITY_NOT_FOUND") {
+		return nil
+	}
 	return err
 }
 

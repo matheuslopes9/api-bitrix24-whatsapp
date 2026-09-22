@@ -713,13 +713,20 @@ func (h *handlers) uiHistoryMessages(c *fiber.Ctx) error {
 	if limit <= 0 || limit > 2000 {
 		limit = 500
 	}
-	msgs, err := h.repo.GetMessagesByPhone(c.Context(), normalizeWAPhone(phone), limit)
+	// Escopado pela sessao escolhida na tela. A versao antiga chamava
+	// GetMessagesByPhone(phone) — sem filtro de sessao nem de tenant — e a
+	// conversa exibida podia trazer mensagens de outra sessao do portal, ou
+	// de outro tenant que ja' tivesse falado com o mesmo numero.
+	msgs, err := h.repo.GetMessagesByPhoneForSession(c.Context(), sessionJID, normalizeWAPhone(phone), limit)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	out := make([]fiber.Map, 0, len(msgs))
-	// Inverte: GetMessagesByPhone vem DESC, queremos ASC pra render cronologico
-	for i := len(msgs) - 1; i >= 0; i-- {
+	// A query ordena DESC mas o scanMessages ja' inverte pra ASC antes de
+	// devolver — o resultado que chega aqui e' CRONOLOGICO. O laco antigo
+	// percorria de tras pra frente ("inverte pra ASC", dizia o comentario),
+	// invertendo de novo: o chat aparecia com a mensagem mais nova no topo.
+	for i := 0; i < len(msgs); i++ {
 		m := msgs[i]
 		text := m.Content
 		mt := string(m.MessageType)
