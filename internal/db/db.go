@@ -790,7 +790,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			 WHERE code = 'trial' AND (trial_days IS NULL OR trial_days < 1);
 		`},
 		{"043_messages_colunas_faltantes", `
-			-- BUG: a tabela 'messages' criada pela migration 005 deste array e'
+			-- BUG: a tabela 'messages' criada pela migration 000_base_schema e'
 			-- uma copia REDUZIDA do migrations/001_init.sql — perdeu 4 colunas.
 			-- Os arquivos migrations/*.sql NAO sao executados (so' este array
 			-- roda), entao em qualquer banco criado pelo codigo atual essas
@@ -819,45 +819,65 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- O upsert e' ON CONFLICT (jid) e o JID de sessao QR carrega o
 			-- device suffix do whatsmeow, que muda a cada re-pareamento
 			-- (":1" -> ":2"). Com suffix novo o ON CONFLICT nao dispara e o
-			-- Postgres INSERE linha nova: sobra a antiga. Efeitos observados
-			-- em producao: numero repetido na tela de Sessoes, 2 chips do
-			-- mesmo numero em Permissoes, e o watchdog tentando reconectar a
-			-- linha orfa — abrindo um 2o client sobre o mesmo device, o que
-			-- o WhatsApp resolve derrubando um dos dois (stream:conflict) e
-			-- gerava o ciclo de desconexao a cada ~30s.
+			-- Postgres INSERE linha nova: sobra a antiga. Efeitos em producao:
+			-- numero repetido na tela de Sessoes, 2 chips do mesmo numero em
+			-- Permissoes, e o watchdog tentando reconectar a linha orfa —
+			-- abrindo um 2o client sobre o mesmo device, o que o WhatsApp
+			-- resolve derrubando um dos dois (stream:conflict). Era a origem
+			-- do ciclo de desconexao a cada ~30s.
 			--
-			-- Mantem, por numero base, a linha mais recente (last_seen, com
-			-- NULL por ultimo; empate resolve por created_at).
-			DELETE FROM whatsapp_sessions ws
-			 WHERE ws.jid NOT LIKE 'cloud:%'
-			   AND EXISTS (
-			     SELECT 1 FROM whatsapp_sessions keep
-			      WHERE keep.jid NOT LIKE 'cloud:%'
-			        AND SPLIT_PART(SPLIT_PART(keep.jid, '@', 1), ':', 1)
-			          = SPLIT_PART(SPLIT_PART(ws.jid,   '@', 1), ':', 1)
-			        AND (keep.last_seen, keep.created_at, keep.jid)
-			          > (ws.last_seen,   ws.created_at,   ws.jid)
-			   );
+			-- Mantem, por numero base, UMA linha: a de last_seen mais recente
+			-- (NULL por ultimo), desempatando por created_at e por jid.
+			--
+			-- ROW_NUMBER em vez de comparacao de tupla de proposito: last_seen
+			-- e' NULLABLE, e "(a,b) > (c,d)" com NULL resulta em NULL (nao em
+			-- true/false). Com duas linhas de last_seen NULL — caso comum em
+			-- sessao que nunca reconectou — a comparacao nunca seria
+			-- verdadeira e NADA seria deletado, deixando a duplicata de pe'
+			-- e fazendo o CREATE UNIQUE INDEX abaixo falhar. Migration que
+			-- falha aborta o boot inteiro, entao isto precisa ser NULL-safe.
+			DELETE FROM whatsapp_sessions
+			 WHERE jid IN (
+			   SELECT jid FROM (
+			     SELECT jid,
+			            ROW_NUMBER() OVER (
+			              PARTITION BY SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+			              ORDER BY last_seen DESC NULLS LAST, created_at DESC, jid DESC
+			            ) AS rn
+			       FROM whatsapp_sessions
+			      WHERE jid NOT LIKE 'cloud:%'
+			   ) ranked
+			   WHERE rn > 1
+			 );
 
 			-- Corrige o campo 'phone' das linhas sobreviventes. Ele guardava a
 			-- string que o usuario DIGITOU ao parear, nunca conferida contra o
 			-- JID real — foi assim que o mesmo numero apareceu como
 			-- "+5581996807479" e "+81996807479" na tela de Permissoes, sendo
-			-- que o numero de verdade e' 558196807479. O JID e' a fonte da
-			-- verdade: quem manda no numero e' o WhatsApp, nao o formulario.
+			-- 558196807479 o numero de verdade. Quem manda no numero e' o
+			-- WhatsApp (o JID do device), nao o formulario.
 			UPDATE whatsapp_sessions
 			   SET phone = SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
 			 WHERE jid NOT LIKE 'cloud:%'
-			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) <> ''
 			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$'
 			   AND phone IS DISTINCT FROM SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1);
 
 			-- Indice unico por numero base pras sessoes QR: barra no BANCO a
 			-- reintroducao de duplicata, mesmo que algum caminho de codigo
 			-- novo esqueca de deduplicar.
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_sessions_numero_base
-				ON whatsapp_sessions ((SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)))
-				WHERE jid NOT LIKE 'cloud:%';
+			--
+			-- Dentro de bloco com EXCEPTION: se por qualquer estado inesperado
+			-- ainda houver duplicata, o indice nao e' criado e o boot segue —
+			-- em vez de derrubar a aplicacao inteira. O log do Postgres avisa,
+			-- e o proximo boot tenta de novo.
+			DO $$
+			BEGIN
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_sessions_numero_base
+					ON whatsapp_sessions ((SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)))
+					WHERE jid NOT LIKE 'cloud:%';
+			EXCEPTION WHEN unique_violation OR duplicate_table THEN
+				RAISE WARNING 'idx_whatsapp_sessions_numero_base nao criado (duplicatas remanescentes); boot segue';
+			END $$;
 		`},
 	}
 

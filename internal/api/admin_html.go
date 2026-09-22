@@ -154,7 +154,14 @@ const adminHomeHTML = `<!doctype html>
   /* actions dropdown */
   .actions{position:relative;display:inline-block}
   .actions>.btn{padding:.35em .7em}
-  .menu{position:absolute;right:0;top:calc(100% + 4px);background:var(--panel);border:1px solid var(--border);border-radius:11px;min-width:216px;box-shadow:0 16px 44px rgba(0,0,0,.55);z-index:30;overflow:hidden;display:none}
+  /* position:fixed, NAO absolute. Um elemento absolute e' recortado por
+     QUALQUER ancestral com overflow != visible — e este menu tem dois:
+     .tablewrap (overflow:hidden) e .tablescroll (overflow-x:auto, que pelo
+     spec torna o eixo Y 'auto' tambem). Por isso o menu sumia dentro da
+     tabela e z-index nao adiantava: z-index ordena o empilhamento, nao
+     impede recorte. Com fixed o menu sai do fluxo de recorte; as
+     coordenadas sao calculadas na abertura por posicionaMenu(). */
+  .menu{position:fixed;left:0;top:0;background:var(--panel);border:1px solid var(--border);border-radius:11px;min-width:216px;box-shadow:0 16px 44px rgba(0,0,0,.55);z-index:9998;overflow:hidden;display:none}
   .menu.open{display:block}
   .menu button{display:block;width:100%;text-align:left;padding:10px 14px;background:none;border:0;color:var(--txt);font-size:.83em;cursor:pointer}
   .menu button:hover{background:var(--hover)}
@@ -696,8 +703,37 @@ function renderTenants(){
       '</div></div></td></tr>';
   }).join('');
 }
-function toggleMenu(btn){var m=btn.nextElementSibling;var was=m.classList.contains('open');document.querySelectorAll('.menu.open').forEach(function(x){x.classList.remove('open');});if(!was)m.classList.add('open');}
-document.addEventListener('click',function(e){if(!e.target.closest('.actions'))document.querySelectorAll('.menu.open').forEach(function(x){x.classList.remove('open');});});
+function fechaMenus(){document.querySelectorAll('.menu.open').forEach(function(x){x.classList.remove('open');});}
+// Ancora o menu ao botao em coordenadas de viewport (o menu e' position:fixed).
+// Alinha pela direita do botao e vira pra cima quando nao cabe embaixo — que
+// e' o caso comum, com a tabela de 1 linha perto do rodape.
+function posicionaMenu(btn,m){
+  var r=btn.getBoundingClientRect();
+  var mw=m.offsetWidth, mh=m.offsetHeight, folga=4, borda=8;
+  var left=r.right-mw;
+  if(left+mw>window.innerWidth-borda) left=window.innerWidth-mw-borda;
+  if(left<borda) left=borda;
+  var top=r.bottom+folga;
+  if(top+mh>window.innerHeight-borda){
+    var acima=r.top-folga-mh;
+    top = acima>=borda ? acima : Math.max(borda, window.innerHeight-mh-borda);
+  }
+  m.style.left=left+'px';
+  m.style.top=top+'px';
+}
+function toggleMenu(btn){
+  var m=btn.nextElementSibling;
+  var was=m.classList.contains('open');
+  fechaMenus();
+  if(was) return;
+  m.classList.add('open');   // precisa estar visivel pra ter offsetWidth/Height
+  posicionaMenu(btn,m);
+}
+document.addEventListener('click',function(e){if(!e.target.closest('.actions'))fechaMenus();});
+// Menu fixed nao acompanha rolagem nem redimensionamento: fecha em vez de
+// ficar flutuando solto. 'true' captura tambem o scroll da .tablescroll.
+window.addEventListener('resize',fechaMenus);
+window.addEventListener('scroll',fechaMenus,true);
 
 function renderBilling(charges){
   var b=document.getElementById('billing-body');

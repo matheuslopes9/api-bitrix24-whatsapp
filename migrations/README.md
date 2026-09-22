@@ -9,7 +9,7 @@ diretório — não há `embed`, `os.ReadDir` nem runner de `.sql`.
 ## Por que isso importa
 
 Essa duplicidade já causou um bug em produção. O `CREATE TABLE messages` do
-array Go (migration `005`) foi escrito como uma cópia do
+array Go (migration `000_base_schema`) foi escrito como uma cópia do
 [001_init.sql](001_init.sql) e **perdeu 4 colunas** no caminho:
 `retry_count`, `error_msg`, `sent_at`, `delivered_at`.
 

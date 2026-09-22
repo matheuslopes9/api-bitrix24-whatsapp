@@ -85,8 +85,9 @@ Deve haver **uma** linha. Mais de uma, ou nenhuma, é o problema.
 ### (b) A mensagem chega mas nunca marca entrega
 
 A tabela `messages` nasceu sem as colunas `retry_count`, `error_msg`,
-`sent_at` e `delivered_at` — o `CREATE TABLE` do array Go era uma cópia
-reduzida do `migrations/001_init.sql`, que não é executado (ver
+`sent_at` e `delivered_at` — o `CREATE TABLE` do array Go
+(`000_base_schema`) era uma cópia reduzida do `migrations/001_init.sql`, que
+não é executado (ver
 [migrations/README.md](../../migrations/README.md)).
 
 Com isso `UpdateMessageStatus` falhava **sempre**, com `SQLSTATE 42703`. E as
