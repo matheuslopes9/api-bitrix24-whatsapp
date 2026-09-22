@@ -1,18 +1,34 @@
 # Base images via espelho publico da AWS (public.ecr.aws/docker/library/*):
 # sao as MESMAS imagens oficiais do Docker Hub, mas sem o rate limit de
 # pulls anonimos (429 Too Many Requests) que derrubava o build no EasyPanel.
-FROM public.ecr.aws/docker/library/golang:1.25-alpine AS builder
+#
+# Go 1.26+ e' OBRIGATORIO: whatsmeow e toda a familia golang.org/x declaram
+# 'go 1.26.0' nos go.mod deles, e a imagem oficial vem com GOTOOLCHAIN=local
+# (nao baixa toolchain novo sozinha). Com 1.25 o build morre logo no inicio
+# com "go.mod requires go >= 1.26.0". Ao subir dependencia, confira se a
+# diretiva 'go' do go.mod ainda cabe nesta imagem.
+FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev git
 
 WORKDIR /app
 
-COPY go.mod ./
-RUN go mod download || true
+# go.sum junto com o go.mod, de proposito: antes so' o go.mod era copiado, o
+# 'go mod download' falhava em silencio (o '|| true' engolia o erro) e as
+# dependencias so' eram resolvidas no 'go mod tidy' abaixo — sem go.sum,
+# portanto sem verificacao de checksum e sem garantia de reproduzir as
+# versoes testadas. Com os dois arquivos o download e' verificado, e esta
+# camada fica em cache enquanto as dependencias nao mudarem.
+COPY go.mod go.sum ./
+RUN go mod download
 
 COPY . .
-RUN go mod tidy && \
-    CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o connector ./cmd/server
+
+# -mod=readonly: falha explicitamente se go.mod/go.sum nao baterem com o
+# codigo, em vez de reescrever as dependencias durante o build (era o que o
+# 'go mod tidy' fazia aqui). O que sobe pra producao passa a ser exatamente
+# o conjunto de versoes commitado e testado.
+RUN CGO_ENABLED=1 GOOS=linux go build -mod=readonly -ldflags="-w -s" -o connector ./cmd/server
 
 FROM public.ecr.aws/docker/library/alpine:3.19
 
