@@ -846,6 +846,11 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			            ) AS rn
 			       FROM whatsapp_sessions
 			      WHERE jid NOT LIKE 'cloud:%'
+			        -- So' deduplica quem tem numero base valido. Um JID
+			        -- malformado produziria base vazia e TODOS eles cairiam
+			        -- na mesma particao, fazendo a limpeza apagar linhas sem
+			        -- nenhuma relacao entre si.
+			        AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$'
 			   ) ranked
 			   WHERE rn > 1
 			 );
@@ -874,7 +879,8 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			BEGIN
 				CREATE UNIQUE INDEX IF NOT EXISTS idx_whatsapp_sessions_numero_base
 					ON whatsapp_sessions ((SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)))
-					WHERE jid NOT LIKE 'cloud:%';
+					WHERE jid NOT LIKE 'cloud:%'
+					  AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1) ~ '^[0-9]+$';
 			EXCEPTION WHEN unique_violation OR duplicate_table THEN
 				RAISE WARNING 'idx_whatsapp_sessions_numero_base nao criado (duplicatas remanescentes); boot segue';
 			END $$;

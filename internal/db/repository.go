@@ -85,6 +85,10 @@ func (r *Repository) UpsertSession(ctx context.Context, s *WhatsAppSession) erro
 			DELETE FROM whatsapp_sessions
 			 WHERE jid <> $1
 			   AND jid NOT LIKE 'cloud:%'
+			   -- Exige numero base valido nos DOIS lados: um JID malformado
+			   -- produz base vazia, e sem esta guarda o vazio casaria com
+			   -- vazio e a limpeza apagaria linhas sem relacao entre si.
+			   AND SPLIT_PART(SPLIT_PART($1::text, '@', 1), ':', 1) ~ '^[0-9]+$'
 			   AND SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
 			     = SPLIT_PART(SPLIT_PART($1::text, '@', 1), ':', 1)
 		`, s.JID); err != nil {
