@@ -219,7 +219,7 @@ func (p *Processor) ensureContact(ctx context.Context, job *queue.InboundJob) (*
 		WAPhone:      phone,
 		WAName:       name,
 		BitrixEntity: "chat",
-		BitrixID:     0,
+		BitrixID:     "", // nunca lido: o vinculo real do chat e o BitrixChatID
 		SessionID:    &job.SessionID,
 	}
 	if err := p.repo.UpsertContact(ctx, contact); err != nil {

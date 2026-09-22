@@ -47,7 +47,14 @@ type ContactMapping struct {
 	WAPhone       string     `db:"wa_phone"`
 	WAName        string     `db:"wa_name"`
 	BitrixEntity  string     `db:"bitrix_entity"`
-	BitrixID      int64      `db:"bitrix_id"`
+	// bitrix_id e' coluna TEXT no Postgres. Era declarado int64 aqui, e o
+	// pgx v5.5 convertia calado; o v5.11 recusa:
+	//   failed to encode args[5]: unable to encode 0 into text format
+	//   for text (OID 25): cannot find encode plan
+	// Como UpsertContact roda dentro do ensureContact, a falha derrubava o
+	// ProcessInbound em TODA mensagem recebida — nada chegava no Contact
+	// Center. O tipo agora acompanha a coluna.
+	BitrixID      string     `db:"bitrix_id"`
 	BitrixChatID  string     `db:"bitrix_chat_id"`
 	SessionID     *uuid.UUID `db:"session_id"`
 	CreatedAt     time.Time  `db:"created_at"`
