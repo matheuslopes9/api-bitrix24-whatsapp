@@ -10,7 +10,9 @@ O que cada tela lê, e onde ela mostrava coisa diferente da realidade.
 | Sessões WhatsApp | `/ui/sessions` | `ListSessionsByDomain` |
 | Permissões | `/ui/history/sessions` + `/ui/permissions/all-users` | `ListSessionsByDomain` + usuários do Bitrix |
 | Histórico | `/ui/history/{sessions,conversations,messages}` | `ListHistoryConversations`, `GetMessagesByPhoneForSession` |
-| Templates / SMS / Relatórios | gate por plano | `resolveTenantFeatures(ctx, domain)` |
+| Templates / Relatórios | gate por benefício contratado | `resolveTenantFeatures(ctx, domain)` |
+| Licenças (admin) | `/admin/api/licenses` | `ListLicenses` |
+| Saúde do cliente (admin) | `/admin/api/tenant/health` | agrega portal, token, sessões, mensagens e licença |
 
 ## ⚠ As telas discordavam entre si
 
@@ -86,6 +88,28 @@ com o mesmo número, a conversa misturava mensagens dos dois. Agora usa
 **Ordem invertida.** A query ordena `DESC`, o scan já inverte pra `ASC`, e o
 handler invertia **de novo** — o chat renderizava a mensagem mais nova no
 topo.
+
+## Tela: Saúde do cliente (admin)
+
+Nasceu do jeito errado de diagnosticar. Durante toda esta semana, descobrir
+por que o app de um cliente estava quebrado exigiu abrir o log do container e
+rodar SQL na mão — foi assim que apareceram o token do Bitrix zerado, a sessão
+duplicada brigando e o ciclo de reconexão de 30s.
+
+Os dados já existiam, espalhados por 11 rotas de diagnóstico.
+`GET /admin/api/tenant/health?domain=` junta tudo num request, em quatro
+blocos, cada um marcando o problema em vermelho quando encontra:
+
+| Bloco | O que revela |
+|---|---|
+| Conexão Bitrix | token ausente/corrompido, Linha Aberta não vinculada, conector sem sessão |
+| Sessões WhatsApp | cruza o status do **banco** com o que está **vivo em memória** — a divergência costuma ser o próprio problema |
+| Mensagens | volume 24h e falhas em 7 dias (só existem desde a migration 043) |
+| Licença | benefícios, vigência e pagamentos registrados |
+
+O cruzamento banco × memória é o ponto: `whatsapp_sessions.status` atrasa em
+relação à realidade, e "banco diz ativa mas não há conexão viva" é exatamente
+o sintoma que o cliente reporta como "o número caiu".
 
 ## Tela: Permissões por Número
 

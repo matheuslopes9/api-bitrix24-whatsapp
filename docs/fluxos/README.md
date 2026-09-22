@@ -13,6 +13,7 @@ descobrir "onde a mensagem se perde", comece por aqui.
 | Operador → cliente | [02-outbound.md](02-outbound.md) | Bitrix → fila → WhatsApp |
 | Ciclo de vida da sessão | [03-sessoes.md](03-sessoes.md) | QR, pareamento, reconexão, watchdog |
 | Telas do painel | [04-telas.md](04-telas.md) | O que cada tela lê e onde ela mente |
+| Licença e contrato | [05-licenca.md](05-licenca.md) | Benefícios, vigência, pagamentos e avisos |
 
 ## Convenção dos diagramas
 
