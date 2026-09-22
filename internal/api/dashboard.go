@@ -95,7 +95,7 @@ func stripBitrixSDK(html string) string {
 //   3. Sec-Fetch-Dest=iframe (iframe Bitrix de primeira abertura)
 //   4. Referer com .bitrix24. (fallback browsers sem Sec-Fetch-*)
 func dashboardCallerAllowed(c *fiber.Ctx, secret string) bool {
-	if verifyAdminCookie(secret, c.Cookies(adminCookieName)) {
+	if _, _, ok := verifyAdminCookie(secret, c.Cookies(adminCookieName)); ok {
 		return true
 	}
 	// Cookie tenant valido = ja' passou pelo handshake do iframe Bitrix.

@@ -212,31 +212,102 @@ func verifyTenantCookie(secret, raw string) (string, bool) {
 	return domain, true
 }
 
-// signAdminCookie gera "exp.hmac" assinado com HMAC-SHA256(APP_SECRET).
-// exp é unix timestamp. Lookup em tempo constante.
-func signAdminCookie(secret string, expiresAt time.Time) string {
+// Papeis do painel admin.
+//
+// So' dois: o suporte faz tudo no dia a dia (clientes, licencas,
+// pagamentos, diagnostico e ate' criar usuarios). O que separa o
+// administrador sao as acoes DESTRUTIVAS — purge de portal, limpeza de
+// arquivos de sessao, flush de fila. A divisao existe pra evitar acidente
+// e dar rastro na auditoria, nao como barreira de seguranca: quem cria
+// usuario pode se promover.
+const (
+	roleAdmin   = "superadmin"
+	roleSupport = "support"
+)
+
+// signAdminCookie gera "exp|email|role|hmac" com HMAC-SHA256(APP_SECRET).
+//
+// BUG HISTORICO: a versao antiga assinava SO' o timestamp de expiracao
+// ("exp.hmac"). O cookie nao carregava identidade nenhuma — dois admins
+// diferentes geravam cookies indistinguiveis. Consequencia: adminActor()
+// nunca sabia quem estava logado e TODA a auditoria registrava o usuario
+// root do .env, mesmo com login de usuario do banco. Registrar "quem fez"
+// era o proposito da tabela admin_users, e nao funcionava.
+//
+// O formato com '|' e' o mesmo ja' usado em signTenantCookie.
+func signAdminCookie(secret, email, role string, expiresAt time.Time) string {
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
+	payload := exp + "|" + email + "|" + role
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(exp))
-	return exp + "." + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(payload))
+	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func verifyAdminCookie(secret, raw string) bool {
+// verifyAdminCookie devolve (email, role, ok). Email e role so' sao
+// confiaveis com ok=true — vem de dentro do payload assinado.
+func verifyAdminCookie(secret, raw string) (string, string, bool) {
 	if raw == "" {
-		return false
+		return "", "", false
 	}
-	parts := strings.SplitN(raw, ".", 2)
-	if len(parts) != 2 {
-		return false
+	// Formato antigo "exp.hmac": ainda valido pra nao deslogar quem esta
+	// com sessao aberta no momento do deploy, mas sem identidade. Some
+	// sozinho quando o cookie expirar (12h).
+	if !strings.Contains(raw, "|") {
+		parts := strings.SplitN(raw, ".", 2)
+		if len(parts) != 2 {
+			return "", "", false
+		}
+		exp, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || time.Now().Unix() > exp {
+			return "", "", false
+		}
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(parts[0]))
+		expected := hex.EncodeToString(mac.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
+			return "", "", false
+		}
+		return "", roleAdmin, true
 	}
-	exp, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || time.Now().Unix() > exp {
-		return false
+
+	i := strings.LastIndex(raw, "|")
+	if i <= 0 {
+		return "", "", false
 	}
+	payload, sig := raw[:i], raw[i+1:]
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(parts[0]))
+	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
-	return subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) == 1
+	if subtle.ConstantTimeCompare([]byte(sig), []byte(expected)) != 1 {
+		return "", "", false
+	}
+	campos := strings.Split(payload, "|")
+	if len(campos) != 3 {
+		return "", "", false
+	}
+	exp, err := strconv.ParseInt(campos[0], 10, 64)
+	if err != nil || time.Now().Unix() > exp {
+		return "", "", false
+	}
+	return campos[1], campos[2], true
+}
+
+// requireAdminRole barra quem nao tem o papel exigido.
+//
+// Usado nas acoes DESTRUTIVAS (purge de portal, limpeza de arquivos de
+// sessao, flush de fila). Nao e' barreira de seguranca — o suporte pode
+// criar usuario e se promover — e' pra evitar acidente e deixar rastro.
+func (h *handlers) requireAdminRole(papel string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		atual, _ := c.Locals("admin_role").(string)
+		if atual == papel || atual == roleAdmin {
+			return c.Next()
+		}
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "esta acao e' restrita ao perfil Administrador",
+			"code":  "papel_insuficiente",
+		})
+	}
 }
 
 // requireTenantOrAdmin — middleware pra rotas /ui/* que precisam saber
@@ -257,7 +328,9 @@ func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
 	}
 	// 2) Cookie admin (super-admin): aceita ?domain= ou ?portal= da query.
 	if adminCookie := c.Cookies(adminCookieName); adminCookie != "" {
-		if verifyAdminCookie(h.cfg.App.Secret, adminCookie) {
+		if email, papel, ok := verifyAdminCookie(h.cfg.App.Secret, adminCookie); ok {
+			c.Locals("admin_actor", email)
+			c.Locals("admin_role", papel)
 			queryDomain := strings.TrimSpace(c.Query("domain"))
 			if queryDomain == "" {
 				queryDomain = strings.TrimSpace(c.Query("portal"))
@@ -277,11 +350,14 @@ func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
 //   - APIs (paths que contém /api/ ou /run, ou método != GET) retornam 401 JSON
 //   - Páginas HTML retornam redirect 302 para /admin/login (UX de browser)
 func (h *handlers) requireAdminAuth(c *fiber.Ctx) error {
-	if h.cfg.App.AdminUser == "" || h.cfg.App.AdminPassword == "" {
-		return c.Status(503).SendString("admin desabilitado: defina ADMIN_USER e ADMIN_PASSWORD no .env")
-	}
+	// Antes isto devolvia 503 quando ADMIN_USER/ADMIN_PASSWORD estavam
+	// vazios, o que impedia operar so' com usuarios do banco — justamente o
+	// modelo que a tabela admin_users existe pra suportar. O root do .env
+	// agora e' bootstrap (pra criar o primeiro usuario), nao requisito.
 	cookie := c.Cookies(adminCookieName)
-	if verifyAdminCookie(h.cfg.App.Secret, cookie) {
+	if email, papel, ok := verifyAdminCookie(h.cfg.App.Secret, cookie); ok {
+		c.Locals("admin_actor", email)
+		c.Locals("admin_role", papel)
 		return c.Next()
 	}
 	path := c.Path()
@@ -335,13 +411,14 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 
 	// Se nao bateu com o root do env, tenta os admins do banco (bcrypt).
 	if !userOK || !passOK {
-		if dbUserOK := h.tryDBAdminLogin(c, user, pass); dbUserOK {
+		if email, papel, dbUserOK := h.tryDBAdminLogin(c, user, pass); dbUserOK {
 			loginRecordSuccess(ip)
-			h.repo.WriteAudit(c.Context(), user, "login.success", "", "db-user", ip)
-			h.log.Info("admin login: sucesso (db user)", zap.String("ip", ip), zap.String("user", user))
+			h.repo.WriteAudit(c.Context(), email, "login.success", "", "db-user papel="+papel, ip)
+			h.log.Info("admin login: sucesso (db user)", zap.String("ip", ip),
+				zap.String("user", email), zap.String("papel", papel))
 			expires := time.Now().Add(adminCookieTTL)
 			c.Cookie(&fiber.Cookie{
-				Name: adminCookieName, Value: signAdminCookie(h.cfg.App.Secret, expires),
+				Name: adminCookieName, Value: signAdminCookie(h.cfg.App.Secret, email, papel, expires),
 				Path: "/", Expires: expires, HTTPOnly: true,
 				Secure: strings.HasPrefix(h.cfg.App.PublicURL, "https://"), SameSite: "Lax",
 			})
@@ -357,7 +434,7 @@ func (h *handlers) adminLoginSubmit(c *fiber.Ctx) error {
 	expires := time.Now().Add(adminCookieTTL)
 	c.Cookie(&fiber.Cookie{
 		Name:     adminCookieName,
-		Value:    signAdminCookie(h.cfg.App.Secret, expires),
+		Value:    signAdminCookie(h.cfg.App.Secret, user, roleAdmin, expires),
 		Path:     "/",
 		Expires:  expires,
 		HTTPOnly: true,

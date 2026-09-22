@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -42,6 +43,9 @@ func New(
 	}))
 
 	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
+
+	// Aviso diario de vencimento de licenca pro financeiro.
+	h.IniciarAvisosDeLicenca(context.Background())
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o
@@ -241,7 +245,10 @@ func New(
 	// /admin/login é público; /admin e /admin/api/* exigem cookie assinado.
 	app.Get("/admin/login", h.adminLoginPage)
 	app.Post("/admin/login", h.adminLoginSubmit)
+	// GET e POST: a rota era so' GET e o formulario da UI envia POST —
+	// o botao "Sair" caia em 404 e ninguem deslogava.
 	app.Get("/admin/logout", h.adminLogout)
+	app.Post("/admin/logout", h.adminLogout)
 	// Security headers no painel admin. NAO global: o resto do app roda em
 	// iframe do Bitrix e headers restritivos (X-Frame-Options DENY) quebrariam
 	// o embed. O admin nunca e' embedado, entao pode ser trancado.
@@ -252,6 +259,10 @@ func New(
 		c.Set("Cache-Control", "no-store")
 		return c.Next()
 	}, h.requireAdminAuth)
+	// Acoes destrutivas so' pro perfil Administrador. O suporte faz todo o
+	// resto — clientes, licencas, pagamentos, diagnostico e usuarios.
+	soAdmin := h.requireAdminRole(roleAdmin)
+
 	admin.Get("/", h.adminHome)
 	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
@@ -274,13 +285,13 @@ func New(
 	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
 	admin.Post("/api/blocked-ips/block", h.adminBlockIP)
 	admin.Post("/api/blocked-ips/unblock", h.adminUnblockIP)
-	admin.Post("/api/queue/flush", h.adminFlushQueue)
-	admin.Post("/api/cleanup/banned-sessions", h.adminCleanupBannedSessions)
-	admin.Post("/api/cleanup/placeholder-portals", h.adminCleanupPlaceholders)
-	admin.Post("/api/cleanup/session-files", h.adminCleanupSessionFiles)
-	admin.Post("/api/cleanup/legacy-messages", h.adminCleanupLegacyMessages)
-	admin.Post("/api/tenant/cleanup/legacy-messages", h.adminTenantCleanupLegacyMessages)
-	admin.Post("/api/tenant/cleanup/session-files", h.adminTenantCleanupSessionFiles)
+	admin.Post("/api/queue/flush", soAdmin, h.adminFlushQueue)
+	admin.Post("/api/cleanup/banned-sessions", soAdmin, h.adminCleanupBannedSessions)
+	admin.Post("/api/cleanup/placeholder-portals", soAdmin, h.adminCleanupPlaceholders)
+	admin.Post("/api/cleanup/session-files", soAdmin, h.adminCleanupSessionFiles)
+	admin.Post("/api/cleanup/legacy-messages", soAdmin, h.adminCleanupLegacyMessages)
+	admin.Post("/api/tenant/cleanup/legacy-messages", soAdmin, h.adminTenantCleanupLegacyMessages)
+	admin.Post("/api/tenant/cleanup/session-files", soAdmin, h.adminTenantCleanupSessionFiles)
 	admin.Get("/api/tenant/users", h.adminTenantListUsers)
 	admin.Get("/api/tenant/user-info", h.adminTenantUserInfo)
 	admin.Post("/api/tenant/permissions", h.adminTenantSetPermission)
@@ -311,8 +322,8 @@ func New(
 	admin.Get("/api/tenant/placements/force-unbind", h.adminTenantPlacementsForceUnbind)
 	// Debug + purge nuclear pra portais fantasma (APPLICATION_NOT_FOUND).
 	admin.Get("/api/tenant/portal-debug", h.adminTenantPortalDebug)
-	admin.Post("/api/tenant/portal-purge", h.adminTenantPortalPurge)
-	admin.Get("/api/tenant/portal-purge", h.adminTenantPortalPurge) // GET alias
+	admin.Post("/api/tenant/portal-purge", soAdmin, h.adminTenantPortalPurge)
+	admin.Get("/api/tenant/portal-purge", soAdmin, h.adminTenantPortalPurge) // GET alias
 
 	// ─── Stress test interno — protegido pelo mesmo middleware admin ──────
 	stress := app.Group("/stress-test", h.requireAdminAuth)

@@ -351,7 +351,7 @@ const adminHomeHTML = `<!doctype html>
           <div style="flex:1;min-width:120px"><label style="font-size:.72em;color:var(--dim)">Nome</label><input class="dominput" id="u-name" placeholder="Nome" style="margin:0"></div>
           <div style="min-width:140px"><label style="font-size:.72em;color:var(--dim)">Senha (8+)</label><input class="dominput" id="u-pass" type="password" placeholder="senha" style="margin:0"></div>
           <div style="min-width:120px"><label style="font-size:.72em;color:var(--dim)">Papel</label>
-            <select class="filter" id="u-role" style="width:100%"><option value="support">Suporte</option><option value="superadmin">Superadmin</option></select></div>
+            <select class="filter" id="u-role" style="width:100%"><option value="support">Suporte</option><option value="superadmin">Administrador</option></select></div>
           <button class="btn btn-primary" onclick="criarUser()" style="height:38px">Criar</button>
         </div>
       </div>
