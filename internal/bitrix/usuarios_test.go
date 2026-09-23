@@ -110,3 +110,40 @@ func TestLoginSocialNaoExcluiInterno(t *testing.T) {
 		t.Error("usuario interno com login social deve aparecer")
 	}
 }
+
+// Contato do WhatsApp que o Bitrix registra como usuario de chat. Medido no
+// portal do cliente: sao 473 deles contra 12 funcionarios. Se o filtro
+// deixar passar, a tela de permissoes vira uma lista de clientes.
+func TestContatoDeWhatsAppNaoEntra(t *testing.T) {
+	// Flags reais de "Curem Compras" (id 71) e "Amor" (id 165).
+	contato := BitrixUser{
+		ID: "71", Name: "Curem Compras",
+		Active: true, Extranet: true, Connector: true, Intranet: boolPtr(false),
+	}
+	if ehInternoAtivo(contato) {
+		t.Error("contato do WhatsApp nao pode aparecer nas permissoes")
+	}
+}
+
+// Funcionario desativado (demitido) nao deve aparecer: nao faz sentido dar
+// permissao de envio a quem saiu. Flags reais dos ids 1, 5, 19, 25, 29.
+func TestFuncionarioDesativadoNaoEntra(t *testing.T) {
+	demitido := BitrixUser{
+		ID: "1", Name: "Rebeca Santos",
+		Active: false, Extranet: false, Connector: false, Intranet: boolPtr(true),
+	}
+	if ehInternoAtivo(demitido) {
+		t.Error("funcionario desativado nao pode aparecer")
+	}
+}
+
+// Funcionario de verdade: flags reais do Valdeir Assis (id 7).
+func TestFuncionarioAtivoEntra(t *testing.T) {
+	func7 := BitrixUser{
+		ID: "7", Name: "Valdeir Assis", Position: "Gerente Financeiro",
+		Active: true, Extranet: false, Connector: false, Intranet: boolPtr(true),
+	}
+	if !ehInternoAtivo(func7) {
+		t.Error("funcionario interno ativo precisa aparecer")
+	}
+}

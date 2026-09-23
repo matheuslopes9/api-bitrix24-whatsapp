@@ -1450,6 +1450,27 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 // Cada fonte que falhar simplesmente nao contribui. O resultado e' a uniao,
 // deduplicada.
 func (c *Client) ListAllUsersDaLinha(ctx context.Context, creds TenantCreds, maxID, lineID int) ([]BitrixUser, error) {
+	users, _, err := c.ListAllUsersComOrigem(ctx, creds, maxID, lineID)
+	return users, err
+}
+
+// ListAllUsersComOrigem devolve tambem se a lista e' COMPLETA.
+//
+// Importa porque, sem o scope `user`, nao existe jeito de enumerar todos os
+// usuarios do portal — medido contra o portal do cliente:
+//
+//	user.get          insufficient_scope
+//	user.search       insufficient_scope
+//	department.get    insufficient_scope
+//	mobile.user.get   funciona, mas devolve sempre os mesmos 10 e ignora
+//	                  start/PAGE — nao pagina
+//	im.user.list.get  exige IDs explicitos
+//
+// Sobram a fila da Linha Aberta (completa so' pros atendentes) e a sondagem
+// de IDs (nao alcanca ID esparso). O resultado e' necessariamente PARCIAL, e
+// a tela precisa dizer isso — senao o operador ve 12 usuarios e conclui que
+// o portal tem 12.
+func (c *Client) ListAllUsersComOrigem(ctx context.Context, creds TenantCreds, maxID, lineID int) ([]BitrixUser, bool, error) {
 	// PRAZO MAXIMO. Sem isto a listagem pode pendurar a tela pra sempre: e'
 	// dezenas de chamadas ao Bitrix, atras de um rate limiter de 2 req/s, e
 	// se o portal ficar lento (ou devolver QUERY_LIMIT_EXCEEDED, que ainda
@@ -1476,103 +1497,67 @@ func (c *Client) ListAllUsersDaLinha(ctx context.Context, creds TenantCreds, max
 
 	// Fonte 2: listagem de verdade, se o portal concedeu o scope `user`.
 	if users, err := c.listarViaUserGet(ctx, creds); err == nil {
-		c.log.Info("ListAllUsers via user.get", zap.Int("total", len(users)))
-		return filtrarInternosAtivos(append(coletados, users...)), nil
+		c.log.Info("ListAllUsers via user.get (lista COMPLETA)", zap.Int("total", len(users)))
+		return filtrarInternosAtivos(append(coletados, users...)), true, nil
 	} else {
 		c.log.Info("user.get indisponivel — sondando IDs (conceda o scope `user` no app pra ficar completo e rapido)",
 			zap.Error(err))
 	}
-	if maxID <= 0 {
-		maxID = 500
-	}
-	const chunkSize = 50
-	const concurrency = 10
-
-	type chunkResult struct {
-		users []BitrixUser
-		err   error
-	}
-
-	// Sondagem ADAPTATIVA, em ondas.
+	// SONDAGEM EM LOTES GRANDES.
 	//
-	// A versao antiga montava os chunks de 1 ate maxID e parava. Usuario com
-	// ID acima do teto nunca era consultado — o bug relatado. Elevar o teto
-	// resolveria, mas nao de graca: o rate limiter e' de 2 req/s por metodo,
-	// entao varrer 5000 IDs levaria quase um minuto em TODA chamada.
+	// im.user.list.get aceita MUITO mais IDs por chamada do que os 50 que
+	// este codigo usava. Medido contra o portal do cliente:
 	//
-	// Aqui a varredura continua enquanto a onda anterior ainda estiver
-	// achando gente. Portal pequeno para na primeira onda (rapido como
-	// antes); portal com IDs altos continua ate' esgotar. O limite duro
-	// existe so' pra nao varrer pra sempre.
-	// Para por EVIDENCIA, nao por teto: segue varrendo enquanto estiver
-	// achando gente, e so' desiste depois de ondas seguidas vazias. Uma onda
-	// vazia sozinha nao basta — portal com muita exclusao tem buracos longos
-	// na numeracao, e parar no primeiro buraco perderia quem vem depois.
-	const ondasVaziasParaDesistir = 3
-	const idMaximoAbsoluto = 1000000 // guarda contra loop, nao limite de portal
+	//     1000 ids -> 1,3s     2000 ids -> 1,5s     5000 ids -> 3,2s
+	//
+	// Com 50 por chamada, cobrir 1..1000 custava 20 chamadas atras de um
+	// rate limiter de 2 req/s — mais de 10s pra alcancar apenas o ID 1000.
+	// Com 5000 por chamada, a MESMA faixa sai em uma chamada, e da' pra
+	// varrer ate' 20 mil em quatro. E' o que finalmente alcanca os
+	// funcionarios de ID alto (1587, 12195) sem depender da fila.
+	//
+	// Para por EVIDENCIA: segue enquanto achar gente, desiste depois de
+	// lotes seguidos vazios. Portal com numeracao esparsa (muita exclusao)
+	// tem buracos longos, entao um lote vazio sozinho nao basta.
+	const tamanhoLote = 5000
+	const lotesVaziosParaDesistir = 3
+	const idMaximoAbsoluto = 200000 // guarda contra loop, nao limite de portal
+
 	brutos := coletados
-	ondasVazias := 0
-	inicioOnda := 1
-	for inicioOnda <= idMaximoAbsoluto {
-		// Prazo estourado: devolve o que ja' tem em vez de seguir varrendo.
+	lotesVazios := 0
+	inicio := 1
+	for inicio <= idMaximoAbsoluto {
 		if ctx.Err() != nil {
-			c.log.Warn("ListAllUsers: prazo esgotado, devolvendo lista parcial",
-				zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicioOnda-1))
+			c.log.Warn("ListAllUsers: prazo esgotado, lista parcial",
+				zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicio-1))
 			break
 		}
-		fimOnda := inicioOnda + maxID - 1
-
-		var chunks [][]string
-		for start := inicioOnda; start <= fimOnda; start += chunkSize {
-			end := start + chunkSize - 1
-			if end > fimOnda {
-				end = fimOnda
-			}
-			ids := make([]string, 0, end-start+1)
-			for id := start; id <= end; id++ {
-				ids = append(ids, fmt.Sprintf("%d", id))
-			}
-			chunks = append(chunks, ids)
+		fim := inicio + tamanhoLote - 1
+		ids := make([]string, 0, tamanhoLote)
+		for id := inicio; id <= fim; id++ {
+			ids = append(ids, strconv.Itoa(id))
 		}
 
-		sem := make(chan struct{}, concurrency)
-		results := make(chan chunkResult, len(chunks))
-		var wg sync.WaitGroup
-		for _, ch := range chunks {
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(ids []string) {
-				defer wg.Done()
-				defer func() { <-sem }()
-				users, err := c.GetUserByIDs(ctx, creds, ids)
-				results <- chunkResult{users: users, err: err}
-			}(ch)
+		users, err := c.GetUserByIDs(ctx, creds, ids)
+		if err != nil {
+			c.log.Warn("ListAllUsers: lote falhou",
+				zap.Int("de", inicio), zap.Int("ate", fim), zap.Error(err))
+			break
 		}
-		wg.Wait()
-		close(results)
-
-		achadosNaOnda := 0
-		for r := range results {
-			if r.err != nil {
-				c.log.Warn("ListAllUsers chunk failed", zap.Error(r.err))
-				continue
-			}
-			brutos = append(brutos, r.users...)
-			achadosNaOnda += len(r.users)
-		}
-		if achadosNaOnda == 0 {
-			ondasVazias++
-			if ondasVazias >= ondasVaziasParaDesistir {
+		if len(users) == 0 {
+			lotesVazios++
+			if lotesVazios >= lotesVaziosParaDesistir {
 				break
 			}
 		} else {
-			ondasVazias = 0
+			lotesVazios = 0
+			brutos = append(brutos, users...)
 		}
-		inicioOnda = fimOnda + 1
+		inicio = fim + 1
 	}
-	c.log.Info("ListAllUsers via sondagem de IDs",
-		zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicioOnda-1))
-	return filtrarInternosAtivos(brutos), nil
+	c.log.Info("ListAllUsers via sondagem em lotes",
+		zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicio-1))
+	return filtrarInternosAtivos(brutos), false, nil
 }
 
 // filtrarInternosAtivos deixa so' quem pode operar atendimento, e ordena por
