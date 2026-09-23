@@ -699,10 +699,12 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	// original NAO estiver no WhatsApp. Assim a mudanca so' pode ajudar
 	// quem hoje falha, e nunca desvia um envio que ja' funcionava.
 	var escolhida types.IsOnWhatsAppResponse
+	var numeroEscolhido string
 	var achou, usouVariante bool
 	for _, c := range candidatos {
 		if r, ok := porNumero[c]; ok && r.IsIn {
 			escolhida, achou = r, true
+			numeroEscolhido = c
 			usouVariante = c != jid.User
 			break
 		}
@@ -726,14 +728,18 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	target := jid
 	switch {
 	case usouVariante:
-		// Trocou de numero de verdade: aqui o destino PRECISA mudar. Prefere a
-		// forma com telefone (@s.whatsapp.net); so' usa o JID resolvido (que
-		// pode ser @lid) se o servidor nao devolver o telefone.
-		switch {
-		case !escolhida.PhoneNumber.IsEmpty():
+		// Trocou de numero de verdade: aqui o destino PRECISA mudar, e sai
+		// sempre na forma com telefone (@s.whatsapp.net).
+		//
+		// Nunca cai no JID resolvido aqui: com addressing_mode=lid ele vem
+		// como @lid, e endereçar por LID e' justamente o que quebrava a
+		// resposta do contato. Se o servidor nao devolver o telefone, monta
+		// o JID de telefone do proprio candidato — que acabou de ser
+		// confirmado como existente no WhatsApp.
+		if !escolhida.PhoneNumber.IsEmpty() {
 			target = escolhida.PhoneNumber
-		case !escolhida.JID.IsEmpty():
-			target = escolhida.JID
+		} else {
+			target = types.NewJID(numeroEscolhido, types.DefaultUserServer)
 		}
 		m.log.Info("resolveRecipient: numero atendido pela variante do 9o digito",
 			zap.String("pedido", jid.User), zap.String("enviado_para", target.String()))
