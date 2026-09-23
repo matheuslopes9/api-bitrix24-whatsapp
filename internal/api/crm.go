@@ -171,7 +171,22 @@ func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
 // buildAllUsersResponse retorna lista de users com as session_jids ja
 // liberadas para cada um, pra dashboard renderizar checkboxes.
 func buildAllUsersResponse(ctx context.Context, h *handlers, domainKey string, users []bitrix.BitrixUser, fromCache bool) fiber.Map {
-	perms, _ := h.repo.ListCrmPermissionsByDomain(ctx, domainKey)
+	// O erro daqui era descartado com "perms, _ :=". Quando a consulta
+	// falhava, a tela mostrava TODO MUNDO SEM PERMISSAO — indistinguivel de
+	// "ninguem foi liberado ainda". Foi visto em producao: esta rota
+	// devolveu granted_users:0 enquanto /ui/permissions/list, com a MESMA
+	// chave, devolvia 10. Silenciosa e plausivel: o pior tipo de falha.
+	perms, err := h.repo.ListCrmPermissionsByDomain(ctx, domainKey)
+	if err != nil {
+		h.log.Error("permissoes: leitura falhou — a tela mostraria todos sem acesso",
+			zap.String("domain_key", domainKey), zap.Error(err))
+		return fiber.Map{
+			"error":      "nao consegui ler as permissoes: " + err.Error(),
+			"users":      []fiber.Map{},
+			"total":      0,
+			"from_cache": fromCache,
+		}
+	}
 	byUser := map[string][]string{}
 	for _, p := range perms {
 		byUser[p.UserID] = append(byUser[p.UserID], p.SessionJID)
