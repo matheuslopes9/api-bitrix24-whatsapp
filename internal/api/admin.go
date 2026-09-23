@@ -1061,7 +1061,7 @@ func (h *handlers) adminTenantMasterStatus(c *fiber.Ctx) error {
 	creds := h.portalToCreds(portal)
 
 	// Internos ativos do Bitrix (mesmo helper do CRM tab)
-	users, err := h.bitrixClient.ListAllUsers(ctx, creds, 1000)
+	users, err := h.bitrixClient.ListAllUsersDaLinha(ctx, creds, 1000, portal.OpenLineID)
 	if err != nil {
 		h.log.Warn("admin master status: ListAllUsers failed", zap.Error(err))
 		users = nil

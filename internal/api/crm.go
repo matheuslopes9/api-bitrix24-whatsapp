@@ -156,7 +156,9 @@ func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado: " + domain})
 	}
 	creds := h.portalToCreds(portal)
-	users, err := h.bitrixClient.ListAllUsers(ctx, creds, 1000)
+	// Passa a Linha Aberta do portal: e' de la' que sai a fila de
+	// atendentes, unica fonte que alcanca ID alto sem adivinhar.
+	users, err := h.bitrixClient.ListAllUsersDaLinha(ctx, creds, 1000, portal.OpenLineID)
 	if err != nil {
 		h.log.Error("ui: ListAllUsers failed", zap.String("domain", domain), zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})

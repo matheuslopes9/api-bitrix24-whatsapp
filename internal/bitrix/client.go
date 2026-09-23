@@ -1305,6 +1305,39 @@ type BitrixUser struct {
 // As chamadas sao feitas em paralelo (10 goroutines simultaneas) com pequeno
 // rate limit interno. Usuarios inexistentes/inativos sao silenciosamente
 // omitidos pelo Bitrix. Retorno: lista deduplicada e ordenada por nome.
+// IDsDaFilaDaLinha devolve os user IDs que atendem a Linha Aberta.
+//
+// POR QUE ISTO E' A FONTE MAIS CONFIAVEL: o metodo de LISTAR usuarios
+// (user.get) exige o scope `user`, que este app nao tem — medido no portal
+// do cliente: "insufficient_scope". E im.user.list.get exige IDs explicitos,
+// o que obrigava a SONDAR faixas de ID. Sondagem nao alcanca ID esparso: o
+// portal do teclife tem usuarios em 7..463 e um em 12195, e nenhuma varredura
+// por faixas razoaveis chega la'.
+//
+// A configuracao da Linha Aberta, por outro lado, JA' LISTA a fila:
+//
+//	QUEUE = ["13","21","463","37","27","12195","7","137"]
+//
+// Sao exatamente as pessoas que atendem — que e' quem precisa de permissao
+// de envio. Sem adivinhar ID nenhum, e com o scope `imopenlines` que o app
+// ja' possui.
+func (c *Client) IDsDaFilaDaLinha(ctx context.Context, creds TenantCreds, lineID int) ([]string, error) {
+	if lineID <= 0 {
+		return nil, nil
+	}
+	raw, err := c.GetOpenLineConfig(ctx, creds, lineID)
+	if err != nil || raw == nil {
+		return nil, err
+	}
+	var cfg struct {
+		Queue []string `json:"QUEUE"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, err
+	}
+	return cfg.Queue, nil
+}
+
 // listarViaUserGet lista usuarios pelo metodo PROPRIO de listagem do Bitrix,
 // com paginacao real — sem precisar adivinhar ID nenhum.
 //
@@ -1389,6 +1422,22 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 // nesse caso a sondagem passou a ser ADAPTATIVA em vez de parar num teto
 // fixo (ver comentario abaixo).
 func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int) ([]BitrixUser, error) {
+	return c.ListAllUsersDaLinha(ctx, creds, maxID, 0)
+}
+
+// ListAllUsersDaLinha e' o ListAllUsers com a fila da Linha Aberta somada.
+//
+// Une TRES fontes, porque nenhuma sozinha e' completa neste app:
+//
+//  1. fila da Linha Aberta — completa pros atendentes, e a unica que
+//     alcanca ID alto (ex: 12195). Nao precisa de scope extra.
+//  2. user.get — completa de verdade, mas exige o scope `user`, que o
+//     portal pode nao ter concedido.
+//  3. sondagem de IDs — ultimo recurso; nao alcanca ID esparso.
+//
+// Cada fonte que falhar simplesmente nao contribui. O resultado e' a uniao,
+// deduplicada.
+func (c *Client) ListAllUsersDaLinha(ctx context.Context, creds TenantCreds, maxID, lineID int) ([]BitrixUser, error) {
 	// PRAZO MAXIMO. Sem isto a listagem pode pendurar a tela pra sempre: e'
 	// dezenas de chamadas ao Bitrix, atras de um rate limiter de 2 req/s, e
 	// se o portal ficar lento (ou devolver QUERY_LIMIT_EXCEEDED, que ainda
@@ -1401,9 +1450,22 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 
+	var coletados []BitrixUser
+
+	// Fonte 1: a fila da Linha Aberta. Barata (1 chamada) e e' a unica que
+	// acha ID alto sem adivinhar.
+	if ids, err := c.IDsDaFilaDaLinha(ctx, creds, lineID); err == nil && len(ids) > 0 {
+		if users, uerr := c.GetUserByIDs(ctx, creds, ids); uerr == nil {
+			coletados = append(coletados, users...)
+			c.log.Info("usuarios da fila da Linha Aberta",
+				zap.Int("line", lineID), zap.Int("total", len(users)))
+		}
+	}
+
+	// Fonte 2: listagem de verdade, se o portal concedeu o scope `user`.
 	if users, err := c.listarViaUserGet(ctx, creds); err == nil {
 		c.log.Info("ListAllUsers via user.get", zap.Int("total", len(users)))
-		return filtrarInternosAtivos(users), nil
+		return filtrarInternosAtivos(append(coletados, users...)), nil
 	} else {
 		c.log.Info("user.get indisponivel — sondando IDs (conceda o scope `user` no app pra ficar completo e rapido)",
 			zap.Error(err))
@@ -1436,7 +1498,7 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 	// na numeracao, e parar no primeiro buraco perderia quem vem depois.
 	const ondasVaziasParaDesistir = 3
 	const idMaximoAbsoluto = 1000000 // guarda contra loop, nao limite de portal
-	var brutos []BitrixUser
+	brutos := coletados
 	ondasVazias := 0
 	inicioOnda := 1
 	for inicioOnda <= idMaximoAbsoluto {
