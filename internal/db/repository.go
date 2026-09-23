@@ -1842,9 +1842,45 @@ func (r *Repository) ListCrmPermissionsByDomain(ctx context.Context, domain stri
 	return out, rows.Err()
 }
 
+// normalizarSessionJID reduz o JID da sessao ao NUMERO BASE, que e' a
+// identidade estavel de uma sessao QR.
+//
+// BUG QUE ISTO CORRIGE: as permissoes de envio eram gravadas e comparadas
+// pelo JID COMPLETO, incluindo o device suffix do whatsmeow (":1", ":5").
+// Esse suffix muda a cada re-pareamento. Consequencia:
+//
+//   - a permissao concedida com ":1" deixava de casar quando a sessao virava
+//     ":5", e o operador levava 403 "voce nao tem permissao pra enviar com
+//     este numero" mesmo estando liberado
+//   - como a unique e' (domain, user_id, session_jid), cada re-pareamento
+//     criava uma LINHA NOVA em vez de atualizar: os usuarios do teclife
+//     estavam com 3 permissoes cada, uma por JID antigo, e nenhuma valendo
+//
+// E' a mesma regra que docs/aprendizados/05-integracao-whatsapp.md ja'
+// prescreve pro resto do sistema — a tabela de permissoes tinha ficado de
+// fora.
+//
+// Preserva dois casos: "" continua sendo o wildcard do master (libera tudo),
+// e sessao Cloud API ("cloud:<phone_id>@...") fica intacta, porque ali o
+// identificador inteiro e' que distingue uma conta oficial da outra.
+func normalizarSessionJID(jid string) string {
+	jid = strings.TrimSpace(jid)
+	if jid == "" || strings.HasPrefix(jid, "cloud:") {
+		return jid
+	}
+	if i := strings.IndexByte(jid, '@'); i > 0 {
+		jid = jid[:i]
+	}
+	if i := strings.IndexByte(jid, ':'); i > 0 {
+		jid = jid[:i]
+	}
+	return jid
+}
+
 // GrantSessionPermission libera UM usuario pra usar UMA sessao (numero
 // especifico). Idempotente — refresh do user_name a cada grant.
 func (r *Repository) GrantSessionPermission(ctx context.Context, domain, userID, userName, sessionJID, grantedBy string) error {
+	sessionJID = normalizarSessionJID(sessionJID)
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO crm_user_permissions (id, domain, user_id, user_name, session_jid, granted_by)
 		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)
@@ -1856,6 +1892,7 @@ func (r *Repository) GrantSessionPermission(ctx context.Context, domain, userID,
 // RevokeSessionPermission remove o vinculo (user, sessao) no dominio.
 // Retorna true se algo foi removido.
 func (r *Repository) RevokeSessionPermission(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
+	sessionJID = normalizarSessionJID(sessionJID)
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM crm_user_permissions
 		  WHERE domain = $1 AND user_id = $2 AND session_jid = $3`,
@@ -1913,6 +1950,9 @@ func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID
 // IsSessionAllowed: o user pode enviar com esta sessao?
 // Match exato + match wildcard (session_jid=”).
 func (r *Repository) IsSessionAllowed(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
+	// O caller manda o JID corrente da sessao (com device suffix). O banco
+	// guarda o numero base. Normaliza os dois lados pra comparar.
+	sessionJID = normalizarSessionJID(sessionJID)
 	var n int
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM crm_user_permissions

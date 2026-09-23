@@ -1389,6 +1389,18 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 // nesse caso a sondagem passou a ser ADAPTATIVA em vez de parar num teto
 // fixo (ver comentario abaixo).
 func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int) ([]BitrixUser, error) {
+	// PRAZO MAXIMO. Sem isto a listagem pode pendurar a tela pra sempre: e'
+	// dezenas de chamadas ao Bitrix, atras de um rate limiter de 2 req/s, e
+	// se o portal ficar lento (ou devolver QUERY_LIMIT_EXCEEDED, que ainda
+	// dispara 3 retries com backoff) o total nao tem teto. Foi o que se viu
+	// em producao: a tela de Permissoes ficou no "Carregando..." e o request
+	// nao voltava nem depois de 5 minutos.
+	//
+	// Lista parcial e' melhor que spinner eterno: o operador ve quem deu
+	// tempo de carregar e o log avisa que truncou.
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+
 	if users, err := c.listarViaUserGet(ctx, creds); err == nil {
 		c.log.Info("ListAllUsers via user.get", zap.Int("total", len(users)))
 		return filtrarInternosAtivos(users), nil
@@ -1428,6 +1440,12 @@ func (c *Client) ListAllUsers(ctx context.Context, creds TenantCreds, maxID int)
 	ondasVazias := 0
 	inicioOnda := 1
 	for inicioOnda <= idMaximoAbsoluto {
+		// Prazo estourado: devolve o que ja' tem em vez de seguir varrendo.
+		if ctx.Err() != nil {
+			c.log.Warn("ListAllUsers: prazo esgotado, devolvendo lista parcial",
+				zap.Int("brutos", len(brutos)), zap.Int("ate_id", inicioOnda-1))
+			break
+		}
 		fimOnda := inicioOnda + maxID - 1
 
 		var chunks [][]string

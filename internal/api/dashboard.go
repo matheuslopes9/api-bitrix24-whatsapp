@@ -2664,6 +2664,18 @@ function excluirIntegracao(enc) {
 
 // ─── Permissões por Número ─────────────────────────────────────────────
 var _permUsers = [];         // [{id, name, email, position, active, allowed_sessions:[jid,...]}]
+// Reduz o JID ao NUMERO BASE, espelhando normalizarSessionJID do backend.
+// O device suffix do whatsmeow (":1", ":5") muda a cada re-pareamento; sem
+// normalizar aqui, o chip aparece desmarcado mesmo com a permissao concedida,
+// porque o banco guarda o numero e a tela compara com o JID corrente.
+// Wildcard ('') e Cloud API ('cloud:...') passam intactos.
+function _permNorm(jid){
+  jid = String(jid||'').trim();
+  if (jid === '' || jid.indexOf('cloud:') === 0) return jid;
+  var i = jid.indexOf('@'); if (i > 0) jid = jid.slice(0, i);
+  i = jid.indexOf(':');     if (i > 0) jid = jid.slice(0, i);
+  return jid;
+}
 var _permSessions = [];      // sessões do portal disponíveis [{jid, phone, type, status, label}]
 var _permLoading = {};       // {userJidKey: true} — evita double-click
 var _permMaster = {configured:false, master_user_id:'', master_user_name:''};
@@ -2953,7 +2965,7 @@ function renderPermUsers() {
     var u = filtered[i];
     var initials = (u.name||'?')[0].toUpperCase();
     var allowedSet = {};
-    (u.allowed_sessions||[]).forEach(function(jid){ allowedSet[jid] = true; });
+    (u.allowed_sessions||[]).forEach(function(jid){ allowedSet[_permNorm(jid)] = true; });
     var hasWildcard = !!allowedSet['']; // grant legacy = libera tudo
     var isMasterRow = _permMaster.configured && u.id === _permMaster.master_user_id;
 
@@ -2961,7 +2973,7 @@ function renderPermUsers() {
     var chips = '';
     for (var j = 0; j < _permSessions.length; j++) {
       var s = _permSessions[j];
-      var on = hasWildcard || !!allowedSet[s.jid];
+      var on = hasWildcard || !!allowedSet[_permNorm(s.jid)];
       var bg = on ? 'rgba(37,211,102,.16)' : 'rgba(255,255,255,.04)';
       var fg = on ? '#25D366' : '#94a3b8';
       var border = on ? '1px solid rgba(37,211,102,.4)' : '1px solid rgba(255,255,255,.08)';
@@ -3032,7 +3044,8 @@ function permToggle(userID, userName, sessionJID, isOn) {
       // Atualiza local
       var u = _permUsers.find(function(x){ return x.id === userID; });
       if (u) {
-        var set = (u.allowed_sessions||[]).filter(function(j){ return j !== sessionJID; });
+        var alvo = _permNorm(sessionJID);
+        var set = (u.allowed_sessions||[]).filter(function(j){ return _permNorm(j) !== alvo; });
         if (!isOn) set.push(sessionJID);
         u.allowed_sessions = set;
       }

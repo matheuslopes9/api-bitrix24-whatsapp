@@ -760,6 +760,48 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			DROP TABLE IF EXISTS plan_definitions;
 			DROP TABLE IF EXISTS tenant_plans;
 		`},
+		{"048_permissoes_por_numero_base", `
+			-- As permissoes de envio guardavam o JID COMPLETO da sessao, com o
+			-- device suffix do whatsmeow (":1", ":5"). Esse suffix muda a cada
+			-- re-pareamento, e a unique e' (domain, user_id, session_jid) —
+			-- entao cada re-pareamento criava LINHA NOVA em vez de atualizar,
+			-- e a permissao antiga deixava de casar com a sessao atual.
+			--
+			-- Resultado observado no teclife: 10 usuarios com 3 permissoes
+			-- cada (uma por JID antigo) e NENHUMA valendo pra sessao corrente.
+			-- O operador levava 403 "voce nao tem permissao pra enviar com
+			-- este numero" estando liberado na tela.
+			--
+			-- Normaliza pro numero base, que e' a identidade estavel da
+			-- sessao. Preserva o wildcard do master ('') e as sessoes Cloud
+			-- API ('cloud:...'), onde o identificador inteiro e' que distingue
+			-- uma conta oficial da outra.
+
+			-- 1. Apaga as duplicatas ANTES de normalizar, senao a normalizacao
+			--    colidiria na unique. Mantem a concedida mais cedo de cada
+			--    (dominio, usuario, numero base) — e' a que o cliente
+			--    realmente autorizou; as outras sao eco de re-pareamento.
+			DELETE FROM crm_user_permissions p
+			 WHERE p.session_jid <> ''
+			   AND p.session_jid NOT LIKE 'cloud:%'
+			   AND EXISTS (
+			     SELECT 1 FROM crm_user_permissions q
+			      WHERE q.domain  = p.domain
+			        AND q.user_id = p.user_id
+			        AND q.session_jid <> ''
+			        AND q.session_jid NOT LIKE 'cloud:%'
+			        AND SPLIT_PART(SPLIT_PART(q.session_jid, '@', 1), ':', 1)
+			          = SPLIT_PART(SPLIT_PART(p.session_jid, '@', 1), ':', 1)
+			        AND (q.granted_at, q.id) < (p.granted_at, p.id)
+			   );
+
+			-- 2. Agora normaliza as sobreviventes.
+			UPDATE crm_user_permissions
+			   SET session_jid = SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1)
+			 WHERE session_jid <> ''
+			   AND session_jid NOT LIKE 'cloud:%'
+			   AND session_jid <> SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1);
+		`},
 	}
 
 	for _, m := range migrations {
