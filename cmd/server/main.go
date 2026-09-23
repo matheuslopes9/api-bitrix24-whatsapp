@@ -279,10 +279,24 @@ func main() {
 				toJIDForDB = contact.WAPhone + "@s.whatsapp.net"
 			}
 		}
+		// session_id precisa ser gravado: a tela de saude conta mensagem por
+		// tenant com JOIN em whatsapp_sessions, entao linha de saida sem
+		// session_id some da contagem — "saida_24h" aparecia como 0 mesmo com
+		// envio funcionando, enquanto o inbound (que ja' preenchia) contava
+		// certo. Best-effort: se a sessao nao for encontrada, grava sem, que e'
+		// o que acontecia antes.
+		var outSessionID *uuid.UUID
+		if sess, serr := repo.GetSessionByJIDTolerante(c, job.SessionJID); serr == nil && sess != nil {
+			outSessionID = &sess.ID
+		} else if serr != nil {
+			log.Warn("outbound: sessao nao encontrada para gravar session_id",
+				zap.String("session_jid", job.SessionJID), zap.Error(serr))
+		}
 		now := time.Now()
 		outMsg := &db.Message{
 			ID:          uuid.New(),
 			WAMessageID: waID,
+			SessionID:   outSessionID,
 			FromJID:     stripDeviceSuffix(job.SessionJID),
 			ToJID:       toJIDForDB,
 			AuthorName:  job.OperatorName,

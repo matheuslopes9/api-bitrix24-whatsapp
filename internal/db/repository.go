@@ -133,6 +133,33 @@ func (r *Repository) GetSessionByJID(ctx context.Context, jid string) (*WhatsApp
 	return &s, nil
 }
 
+// GetSessionByJIDTolerante acha a sessão ignorando o sufixo de device.
+//
+// O JID guardado traz o device ("558196807479:7@s.whatsapp.net") e esse
+// número muda TODA vez que o aparelho é pareado de novo. Um job de envio
+// que ficou na fila antes de um repareamento carrega o sufixo antigo, e o
+// match exato de GetSessionByJID falharia justamente aí. Para sessões QR o
+// que identifica é o número antes do ':'.
+//
+// Cloud API ("cloud:<phone_id>@...") continua com match exato: ali o
+// trecho antes do ':' é sempre "cloud" e colidiria entre contas.
+func (r *Repository) GetSessionByJIDTolerante(ctx context.Context, jid string) (*WhatsAppSession, error) {
+	if strings.HasPrefix(jid, "cloud:") {
+		return r.GetSessionByJID(ctx, jid)
+	}
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+sessionColumns+` FROM whatsapp_sessions
+		 WHERE SPLIT_PART(SPLIT_PART(jid, '@', 1), ':', 1)
+		     = SPLIT_PART(SPLIT_PART($1,  '@', 1), ':', 1)
+		 ORDER BY (status = 'active') DESC, last_seen DESC NULLS LAST
+		 LIMIT 1`, jid)
+	var s WhatsAppSession
+	if err := scanSession(row, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // GetSessionByCloudPhoneID localiza uma sessão Cloud API pelo phone_number_id.
 func (r *Repository) GetSessionByCloudPhoneID(ctx context.Context, phoneID string) (*WhatsAppSession, error) {
 	row := r.pool.QueryRow(ctx,

@@ -699,14 +699,11 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	// original NAO estiver no WhatsApp. Assim a mudanca so' pode ajudar
 	// quem hoje falha, e nunca desvia um envio que ja' funcionava.
 	var escolhida types.IsOnWhatsAppResponse
-	var achou bool
+	var achou, usouVariante bool
 	for _, c := range candidatos {
 		if r, ok := porNumero[c]; ok && r.IsIn {
 			escolhida, achou = r, true
-			if c != jid.User {
-				m.log.Info("resolveRecipient: numero atendido pela variante do 9o digito",
-					zap.String("pedido", jid.User), zap.String("no_whatsapp", c))
-			}
+			usouVariante = c != jid.User
 			break
 		}
 	}
@@ -715,12 +712,39 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 			jid.User, strings.Join(candidatos, ", "))
 	}
 
+	// COMO O DESTINO E' ESCOLHIDO — e por que na maioria dos casos ele NAO muda.
+	//
+	// IsOnWhatsApp e' consultado com addressing_mode=lid, entao o campo JID da
+	// resposta costuma vir como @lid, nao como @s.whatsapp.net. Trocar o destino
+	// pelo @lid muda o enderecamento da conversa, e isso nao pode acontecer com
+	// quem ja' conversa normalmente — a consulta aqui existe pra resolver o 9o
+	// digito, nao pra reescrever o enderecamento de todo mundo.
+	//
+	// Por isso: se o numero que o CRM mandou e' o que esta' no WhatsApp, o envio
+	// sai exatamente pra onde saia antes. So' quem precisou de correcao e' que
+	// tem o destino trocado.
 	target := jid
-	if !escolhida.JID.IsEmpty() {
-		target = escolhida.JID
-		if target.User != jid.User {
-			m.log.Info("resolveRecipient: JID canonico resolvido",
-				zap.String("input", jid.User), zap.String("canonical", target.User))
+	switch {
+	case usouVariante:
+		// Trocou de numero de verdade: aqui o destino PRECISA mudar. Prefere a
+		// forma com telefone (@s.whatsapp.net); so' usa o JID resolvido (que
+		// pode ser @lid) se o servidor nao devolver o telefone.
+		switch {
+		case !escolhida.PhoneNumber.IsEmpty():
+			target = escolhida.PhoneNumber
+		case !escolhida.JID.IsEmpty():
+			target = escolhida.JID
+		}
+		m.log.Info("resolveRecipient: numero atendido pela variante do 9o digito",
+			zap.String("pedido", jid.User), zap.String("enviado_para", target.String()))
+	case brLegado:
+		// Comportamento historico dos 12 digitos, preservado como estava.
+		if !escolhida.JID.IsEmpty() {
+			target = escolhida.JID
+			if target.User != jid.User {
+				m.log.Info("resolveRecipient: JID canonico resolvido",
+					zap.String("input", jid.User), zap.String("canonical", target.User))
+			}
 		}
 	}
 
