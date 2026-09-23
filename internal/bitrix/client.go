@@ -1836,3 +1836,34 @@ func (c *Client) ListSMSSenders(ctx context.Context, creds TenantCreds) (string,
 	}
 	return string(raw), nil
 }
+
+// IDsDeContatosDoNegocio devolve os contatos vinculados a um negocio.
+//
+// Usado quando o negocio nao tem CONTACT_ID primario: no Bitrix um negocio
+// pode ter varios contatos sem nenhum marcado como principal, e nesse caso
+// o campo CONTACT_ID vem 0 — mas ha' contato vinculado.
+func (c *Client) IDsDeContatosDoNegocio(ctx context.Context, creds TenantCreds, dealID string) ([]string, error) {
+	raw, err := c.call(ctx, creds, "crm.deal.contact.items.get", map[string]interface{}{
+		"id": dealID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var itens []struct {
+		ContactID interface{} `json:"CONTACT_ID"`
+	}
+	if err := json.Unmarshal(raw, &itens); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(itens))
+	for _, it := range itens {
+		if it.ContactID == nil {
+			continue
+		}
+		id := fmt.Sprintf("%v", it.ContactID)
+		if id != "" && id != "0" {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}

@@ -43,3 +43,22 @@ func TestMesmoNumeroColapsa(t *testing.T) {
 		t.Fatalf("mesmo numero nao colapsou: %q vs %q", a, b)
 	}
 }
+
+// A permissao e' GRAVADA por numero base (sobrevive ao re-pareamento) mas a
+// interface precisa do JID corrente pra casar com o seletor de numero.
+// Quando os dois formatos se misturavam, o master conseguia enviar e o
+// operador comum ficava sem numero disponivel.
+func TestPermissaoGravadaCasaComSessaoViva(t *testing.T) {
+	gravado := "558196807479"               // como fica no banco
+	vivo := "558196807479:6@s.whatsapp.net" // JID corrente da sessao
+
+	if normalizarSessionJID(gravado) != normalizarSessionJID(vivo) {
+		t.Fatalf("o gravado (%q) precisa casar com a sessao viva (%q)", gravado, vivo)
+	}
+
+	// E nao pode casar com OUTRO numero.
+	outro := "5511999998888:2@s.whatsapp.net"
+	if normalizarSessionJID(gravado) == normalizarSessionJID(outro) {
+		t.Error("numeros diferentes nao podem casar")
+	}
+}

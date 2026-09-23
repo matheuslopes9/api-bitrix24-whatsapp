@@ -88,7 +88,7 @@ func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 	type userEntry struct {
 		UserID    string   `json:"user_id"`
 		UserName  string   `json:"user_name"`
-		Sessions  []string `json:"sessions"`  // session_jids liberados (string vazia = wildcard)
+		Sessions  []string `json:"sessions"` // session_jids liberados (string vazia = wildcard)
 		GrantedAt string   `json:"granted_at"`
 	}
 	byUser := map[string]*userEntry{}
@@ -110,9 +110,9 @@ func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 		out = append(out, e)
 	}
 	return c.JSON(fiber.Map{
-		"users":   out,
-		"total":   len(out),
-		"domain":  domain,
+		"users":  out,
+		"total":  len(out),
+		"domain": domain,
 	})
 }
 
@@ -120,8 +120,8 @@ func (h *handlers) uiPermissionsList(c *fiber.Ctx) error {
 // Sem locks complexos — uma race condition aqui so causa 1 chamada extra ao
 // Bitrix, nao corrompe dado.
 type allUsersCacheEntry struct {
-	users     []bitrix.BitrixUser
-	cachedAt  time.Time
+	users    []bitrix.BitrixUser
+	cachedAt time.Time
 }
 
 var (
@@ -756,13 +756,13 @@ func (h *handlers) uiHistoryMessages(c *fiber.Ctx) error {
 			}
 		}
 		out = append(out, fiber.Map{
-			"id":           m.ID.String(),
-			"direction":    string(m.Direction),
-			"type":         mt,
-			"text":         text,
-			"author_name":  m.AuthorName,
-			"status":       string(m.Status),
-			"created_at":   m.CreatedAt,
+			"id":          m.ID.String(),
+			"direction":   string(m.Direction),
+			"type":        mt,
+			"text":        text,
+			"author_name": m.AuthorName,
+			"status":      string(m.Status),
+			"created_at":  m.CreatedAt,
 		})
 	}
 	return c.JSON(fiber.Map{"messages": out, "count": len(out)})
@@ -837,7 +837,7 @@ func (h *handlers) bitrixCRMMasterStatus(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
 	}
 	out := fiber.Map{
-		"configured":    portal.LegacyAdminUserID != "",
+		"configured":     portal.LegacyAdminUserID != "",
 		"master_user_id": portal.LegacyAdminUserID,
 	}
 	// Se ja tem master, anexa o nome (snapshot) pra UI mostrar
@@ -857,6 +857,7 @@ func (h *handlers) bitrixCRMMasterStatus(c *fiber.Ctx) error {
 // POST /bitrix/crm/master/set — body {domain, caller_user_id, new_master_user_id, new_master_name}
 //   - Se nao tem master ainda: qualquer interno ativo pode setar (onboarding).
 //   - Se tem master: so o master atual pode trocar (caller_user_id == master).
+//
 // Em ambos os casos: validamos que caller e new_master sao internos ativos.
 func (h *handlers) bitrixCRMMasterSet(c *fiber.Ctx) error {
 	var body struct {
@@ -997,6 +998,44 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 	// PHONE é array de objetos [{VALUE: "55...", VALUE_TYPE: "WORK"}, ...]
 	phone := extractPhone(obj)
 
+	// NEGOCIO NAO TEM TELEFONE. Medido no portal do cliente:
+	//
+	//     crm.deal.get 12313 -> PHONE ausente, CONTACT_ID = 11665
+	//
+	// No Bitrix o telefone mora no CONTATO (ou na empresa); o negocio so'
+	// aponta pra ele. A versao anterior procurava PHONE no proprio negocio,
+	// nao achava, e a aba dizia "Nenhum telefone cadastrado neste contato" —
+	// mensagem que ainda por cima culpava o contato, que tinha o numero.
+	//
+	// Abrir a aba pelo contato funcionava; pelo negocio, nao. Aqui o negocio
+	// passa a seguir o vinculo.
+	if phone == "" && entityType == "deal" {
+		contatoID := jsonStr(obj, "CONTACT_ID")
+		if contatoID == "" || contatoID == "0" {
+			// Sem contato primario: tenta o primeiro da lista de contatos
+			// do negocio (negocio pode ter varios, sem "principal" setado).
+			if ids, cerr := h.bitrixClient.IDsDeContatosDoNegocio(c.Context(), creds, entityID); cerr == nil && len(ids) > 0 {
+				contatoID = ids[0]
+			}
+		}
+		if contatoID != "" && contatoID != "0" {
+			if craw, cerr := h.bitrixClient.GetContact(c.Context(), creds, contatoID); cerr == nil {
+				var cobj map[string]json.RawMessage
+				if json.Unmarshal(craw, &cobj) == nil {
+					phone = extractPhone(cobj)
+					// O nome do contato e' mais util que o titulo do negocio
+					// pra quem vai conversar com a pessoa.
+					if n := strings.TrimSpace(jsonStr(cobj, "NAME") + " " + jsonStr(cobj, "LAST_NAME")); n != "" {
+						name = n
+					}
+					h.log.Info("negocio: telefone veio do contato vinculado",
+						zap.String("deal", entityID), zap.String("contato", contatoID),
+						zap.Bool("achou_telefone", phone != ""))
+				}
+			}
+		}
+	}
+
 	// Sessões WA disponíveis
 	sessions := h.waManager.ListSessions()
 
@@ -1012,7 +1051,7 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 //
 // Guard: o user_id precisa ter session_jid liberado em crm_user_permissions
 // (a aba "Permissoes por Numero" no /dashboard). Sem libera o envio retorna
-// 403. Compat: linhas legacy com session_jid='' (pre-migration 018) valem
+// 403. Compat: linhas legacy com session_jid=” (pre-migration 018) valem
 // como wildcard.
 func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	var body struct {
@@ -1155,11 +1194,11 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 // Form fields: domain, phone, session_jid, user_id + file (multipart)
 // Mesmo guard de permissao do bitrixCRMSend.
 func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
-	domain     := c.FormValue("domain")
-	phone      := c.FormValue("phone")
+	domain := c.FormValue("domain")
+	phone := c.FormValue("phone")
 	sessionJID := c.FormValue("session_jid")
-	caption    := c.FormValue("caption") // texto opcional junto ao arquivo
-	userID     := c.FormValue("user_id")
+	caption := c.FormValue("caption") // texto opcional junto ao arquivo
+	userID := c.FormValue("user_id")
 
 	if domain == "" || phone == "" || sessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
@@ -1249,10 +1288,10 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 // GET /bitrix/crm/history?domain=...&entity_type=contact&entity_id=...&phone=...&limit=80
 // Busca histórico do banco local (fonte primária) + fallback Bitrix API.
 func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
-	domain     := c.Query("domain")
+	domain := c.Query("domain")
 	entityType := strings.ToLower(c.Query("entity_type", "contact"))
-	entityID   := c.Query("entity_id")
-	phone      := c.Query("phone") // telefone já conhecido pelo frontend
+	entityID := c.Query("entity_id")
+	phone := c.Query("phone") // telefone já conhecido pelo frontend
 
 	if domain == "" || entityID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e entity_id são obrigatórios"})
@@ -1486,8 +1525,8 @@ func parseSessionHistory(raw json.RawMessage, connectorID string) []crmMessage {
 	}
 
 	var resp struct {
-		ChatID    interface{}                `json:"chatId"`
-		SessionID interface{}                `json:"sessionId"`
+		ChatID    interface{} `json:"chatId"`
+		SessionID interface{} `json:"sessionId"`
 		Message   map[string]struct {
 			ID       interface{} `json:"id"`
 			SenderID interface{} `json:"senderid"`
@@ -1631,10 +1670,21 @@ func parseBitrixMessages(raw json.RawMessage, connectorID string) []crmMessage {
 				for _, a := range attaches {
 					if a.Type == "image" || a.Type == "file" || a.Type == "video" || a.Type == "audio" {
 						mediaURL = a.Link
-						if a.Type == "image" { mediaMime = "image/jpeg"; msgType = "image" }
-						if a.Type == "video" { mediaMime = "video/mp4";  msgType = "video" }
-						if a.Type == "audio" { mediaMime = "audio/ogg";  msgType = "audio" }
-						if a.Type == "file"  { msgType = "document" }
+						if a.Type == "image" {
+							mediaMime = "image/jpeg"
+							msgType = "image"
+						}
+						if a.Type == "video" {
+							mediaMime = "video/mp4"
+							msgType = "video"
+						}
+						if a.Type == "audio" {
+							mediaMime = "audio/ogg"
+							msgType = "audio"
+						}
+						if a.Type == "file" {
+							msgType = "document"
+						}
 						break
 					}
 				}
@@ -1667,7 +1717,6 @@ func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
 	}
 	return c.JSON(stats)
 }
-
 
 // GET /bitrix/crm/sessions?domain=... — lista sessões WA do tenant para o
 // seletor do CRM tab. Le do banco (status='active' + bitrix_accounts.domain)
@@ -1772,12 +1821,12 @@ func guessMime(filename string) string {
 		".gif": "image/gif", ".webp": "image/webp",
 		".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo",
 		".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav", ".m4a": "audio/mp4",
-		".pdf": "application/pdf",
-		".doc": "application/msword",
+		".pdf":  "application/pdf",
+		".doc":  "application/msword",
 		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		".xls": "application/vnd.ms-excel",
+		".xls":  "application/vnd.ms-excel",
 		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		".zip": "application/zip",
+		".zip":  "application/zip",
 	}
 	if v, ok := m[ext]; ok {
 		return v

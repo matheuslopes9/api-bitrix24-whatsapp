@@ -1932,19 +1932,44 @@ func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if hasWildcard {
-		// Wildcard = todas as sessoes ativas do dominio
-		all, err := r.ListActiveSessionsByDomain(ctx, domain)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]string, 0, len(all))
-		for _, s := range all {
-			out = append(out, s.JID)
-		}
-		return out, nil
+	// SEMPRE devolve o JID CORRENTE das sessoes vivas, nos dois casos.
+	//
+	// BUG QUE ISTO CORRIGE: o ramo do wildcard ja' expandia pros JIDs reais
+	// ("558196807479:6@s.whatsapp.net"), mas o ramo do usuario comum
+	// devolvia o que esta gravado — o numero base ("558196807479"). A mesma
+	// rota respondia em DOIS formatos:
+	//
+	//   /bitrix/crm/allowed-sessions?user_id=21 (master) -> ["...:6@s.whatsapp.net"]
+	//   /bitrix/crm/allowed-sessions?user_id=27 (comum)  -> ["558196807479"]
+	//
+	// A aba do CRM monta o seletor de numero casando essa lista com as
+	// sessoes, que vem com JID completo. O numero base nao casa com nada:
+	// o master conseguia enviar e o operador ficava sem numero disponivel.
+	//
+	// O numero base continua sendo a identidade GRAVADA (sobrevive ao
+	// re-pareamento); o JID corrente e' o que a interface precisa. A
+	// traducao acontece aqui, num lugar so'.
+	all, err := r.ListActiveSessionsByDomain(ctx, domain)
+	if err != nil {
+		return nil, err
 	}
-	return specific, nil
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if hasWildcard {
+			out = append(out, s.JID)
+			continue
+		}
+		base := normalizarSessionJID(s.JID)
+		for _, p := range specific {
+			if normalizarSessionJID(p) == base {
+				out = append(out, s.JID)
+				break
+			}
+		}
+	}
+	// Permissao para sessao que nao existe mais simplesmente nao aparece —
+	// nao ha' como enviar por um numero desconectado.
+	return out, nil
 }
 
 // IsSessionAllowed: o user pode enviar com esta sessao?
