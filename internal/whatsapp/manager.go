@@ -44,7 +44,25 @@ type Manager struct {
 	log              *zap.Logger
 	onMsg            MessageHandler
 	onSessionConnect SessionConnectHandler
+
+	// jidCache guarda o JID canonico ja' resolvido por IsOnWhatsApp,
+	// chaveado por "<id da sessao>|<numero pedido>". Sem ele, a resolucao
+	// do 9o digito custaria uma consulta de rede por mensagem enviada —
+	// o WhatsApp limita IsOnWhatsApp e um cliente movimentado seria
+	// sinalizado. Positivos apenas: numero que nao esta no WhatsApp
+	// continua sendo reconsultado (pode entrar depois).
+	jidCache sync.Map // string -> jidResolvido
 }
+
+// jidResolvido e' uma entrada do jidCache.
+type jidResolvido struct {
+	jid types.JID
+	em  time.Time
+}
+
+// jidCacheTTL e' por quanto tempo uma resolucao vale. Numero de WhatsApp
+// praticamente nao muda de titular, entao um dia e' conservador.
+const jidCacheTTL = 24 * time.Hour
 
 func NewManager(cfg *config.WhatsAppConfig, repo *db.Repository, log *zap.Logger, onMsg MessageHandler) *Manager {
 	return &Manager{
@@ -637,31 +655,73 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 		return jid, nil
 	}
 
-	// Otimizacao: so' consulta IsOnWhatsApp (chamada de rede) pra numeros
-	// que PODEM ter o problema do "9" — numeros BR (55) com 12 digitos
-	// (DDD 2 + 8 do celular antigo, sem o 9). Numeros normais (13 digitos
-	// BR, ou qualquer outro pais) passam direto sem custo de rede.
-	needsResolve := len(jid.User) == 12 && strings.HasPrefix(jid.User, "55")
-	if !needsResolve {
+	chave := sess.ID.String() + "|" + jid.User
+	if v, ok := m.jidCache.Load(chave); ok {
+		if e, ok := v.(jidResolvido); ok && time.Since(e.em) < jidCacheTTL {
+			return e.jid, nil
+		}
+		m.jidCache.Delete(chave)
+	}
+
+	// Candidatos: o numero como veio, mais a variante do 9o digito quando
+	// for celular brasileiro. Ver variantesNonoDigito.
+	candidatos := variantesNonoDigito(jid.User)
+
+	// Condicao historica: numero BR de 12 digitos sempre foi resolvido,
+	// porque o WhatsApp devolve um JID canonico que pode divergir do
+	// digitado. Mantida como esta' pra nao alterar caso que ja' funciona
+	// (ex.: fixo comercial no WhatsApp Business, que nao gera variante).
+	brLegado := len(jid.User) == 12 && strings.HasPrefix(jid.User, "55")
+	if len(candidatos) < 2 && !brLegado {
 		return jid, nil
 	}
 
-	phone := "+" + jid.User
-	results, qErr := sess.Client.IsOnWhatsApp(ctx, []string{phone})
+	phones := make([]string, 0, len(candidatos))
+	for _, c := range candidatos {
+		phones = append(phones, "+"+c)
+	}
+	results, qErr := sess.Client.IsOnWhatsApp(ctx, phones)
 	if qErr != nil || len(results) == 0 {
 		m.log.Warn("resolveRecipient: IsOnWhatsApp falhou, usando JID original",
-			zap.String("phone", phone), zap.Error(qErr))
+			zap.Strings("phones", phones), zap.Error(qErr))
 		return jid, nil
 	}
-	r := results[0]
-	if !r.IsIn {
-		return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp", phone)
+
+	// A resposta pode vir fora de ordem e com MENOS itens do que a consulta
+	// (o servidor so' devolve no "user" o que reconheceu), entao o casamento
+	// e' por numero — nunca por indice.
+	porNumero := make(map[string]types.IsOnWhatsAppResponse, len(results))
+	for _, r := range results {
+		porNumero[apenasDigitos(r.Query)] = r
 	}
+
+	// Preferencia: o numero como o CRM mandou. So' cai pra variante se o
+	// original NAO estiver no WhatsApp. Assim a mudanca so' pode ajudar
+	// quem hoje falha, e nunca desvia um envio que ja' funcionava.
+	var escolhida types.IsOnWhatsAppResponse
+	var achou bool
+	for _, c := range candidatos {
+		if r, ok := porNumero[c]; ok && r.IsIn {
+			escolhida, achou = r, true
+			if c != jid.User {
+				m.log.Info("resolveRecipient: numero atendido pela variante do 9o digito",
+					zap.String("pedido", jid.User), zap.String("no_whatsapp", c))
+			}
+			break
+		}
+	}
+	if !achou {
+		return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp (tentado: %s)",
+			jid.User, strings.Join(candidatos, ", "))
+	}
+
 	target := jid
-	if !r.JID.IsEmpty() {
-		target = r.JID
-		m.log.Info("resolveRecipient: JID canonico resolvido",
-			zap.String("input", jid.User), zap.String("canonical", r.JID.User))
+	if !escolhida.JID.IsEmpty() {
+		target = escolhida.JID
+		if target.User != jid.User {
+			m.log.Info("resolveRecipient: JID canonico resolvido",
+				zap.String("input", jid.User), zap.String("canonical", target.User))
+		}
 	}
 
 	// Aquece o mapeamento PN->LID + prekeys do destinatario. Numeros BR
@@ -677,7 +737,69 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 			zap.String("jid", target.String()), zap.Int("device_count", len(devices)))
 	}
 
+	m.jidCache.Store(chave, jidResolvido{jid: target, em: time.Now()})
 	return target, nil
+}
+
+// apenasDigitos tira tudo que nao e' numero. Usado pra casar o campo Query
+// da resposta do IsOnWhatsApp (que volta com "+" e as vezes com sufixo)
+// com o candidato que enviamos.
+func apenasDigitos(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// variantesNonoDigito devolve o numero como veio e, quando for celular
+// brasileiro, a forma alternativa com/sem o 9o digito.
+//
+// O PORQUE: celular no Brasil ganhou um "9" na frente do numero, mas a
+// conta de WhatsApp continua registrada na forma em que foi criada. Base de
+// CRM importada de outra ferramenta costuma ter TODOS os contatos gravados
+// com o 9 — inclusive os que no WhatsApp so' existem sem ele. Mandar pro
+// numero com 9 nesse caso simplesmente nao entrega.
+//
+// Nao da' pra corrigir a base inteira tirando o 9, porque a maioria dos
+// contatos so' existe COM ele. Quem sabe a resposta e' o proprio WhatsApp,
+// e e' por isso que aqui so' se monta o par de candidatos — quem decide e'
+// o IsOnWhatsApp.
+//
+// Formatos (E.164, so' digitos):
+//
+//	55 + DDD(2) + 9 + 8 digitos = 13  -> variante tira o 9
+//	55 + DDD(2) +     8 digitos = 12  -> variante poe o 9
+//
+// Fixo (assinante comecando em 2..5) nao gera variante: nao existe fixo com
+// 9o digito, e inventar um so' geraria consulta inutil.
+func variantesNonoDigito(user string) []string {
+	saida := []string{user}
+	if !strings.HasPrefix(user, "55") {
+		return saida
+	}
+	for _, r := range user {
+		if r < '0' || r > '9' {
+			return saida
+		}
+	}
+	switch len(user) {
+	case 13:
+		// 55 DD 9XXXXXXXX -> so' e' celular se o 5o digito for o 9.
+		if user[4] != '9' {
+			return saida
+		}
+		return append(saida, user[:4]+user[5:])
+	case 12:
+		// 55 DD XXXXXXXX -> celular comeca em 6..9; fixo (2..5) fica fora.
+		if user[4] < '6' || user[4] > '9' {
+			return saida
+		}
+		return append(saida, user[:4]+"9"+user[4:])
+	}
+	return saida
 }
 
 // Send envia uma mensagem de texto.
