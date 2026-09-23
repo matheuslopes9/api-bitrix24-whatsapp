@@ -106,7 +106,7 @@ func (wp *WorkerPool) inboundLoop(ctx context.Context, id int, processor Inbound
 				zap.String("job_id", job.ID),
 				zap.Int("retry", job.RetryCount),
 				zap.Error(err))
-			_ = wp.q.RetryInbound(ctx, job)
+			_ = wp.q.RetryInbound(ctx, job, err)
 		}
 	}
 }
@@ -140,7 +140,7 @@ func (wp *WorkerPool) outboundLoop(ctx context.Context, id int, processor Outbou
 				zap.String("job_id", job.ID),
 				zap.Int("retry", job.RetryCount),
 				zap.Error(err))
-			_ = wp.q.RetryOutbound(ctx, job)
+			_ = wp.q.RetryOutbound(ctx, job, err)
 		}
 
 		mu.Unlock()

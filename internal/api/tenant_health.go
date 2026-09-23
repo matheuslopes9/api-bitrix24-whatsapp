@@ -236,6 +236,13 @@ func (h *handlers) healthFila(ctx context.Context, sessoes []fiber.Map) fiber.Ma
 	if h.q == nil {
 		return res
 	}
+	// Profundidade das filas VIVAS. So' a dead queue era reportada, entao
+	// fila de entrada empilhando sem ninguem consumir ficava invisivel: o
+	// painel dizia "0 presas" com mensagem de cliente parada esperando.
+	// Estes numeros sao globais, nao por tenant — a fila e' uma so'.
+	entrada, saida, _ := h.q.Lengths(ctx)
+	res["aguardando_entrada"] = entrada
+	res["aguardando_saida"] = saida
 	itens, err := h.q.PeekDead(ctx, 500)
 	if err != nil {
 		return res

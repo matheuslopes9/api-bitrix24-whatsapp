@@ -44,6 +44,10 @@ type InboundJob struct {
 	GroupName   string    `json:"group_name,omitempty"`
 	RetryCount  int       `json:"retry_count"`
 	CreatedAt   time.Time `json:"created_at"`
+	// LastError guarda o motivo da ultima falha. Sem isso o job morria na
+	// dead queue mudo: dava pra ver QUE falhou, nunca POR QUE — e o
+	// diagnostico virava adivinhacao.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // OutboundJob representa uma resposta do Bitrix aguardando envio para o WhatsApp.
@@ -73,6 +77,9 @@ type OutboundJob struct {
 
 	// Nome do operador que enviou (para salvar no histórico)
 	OperatorName string `json:"operator_name,omitempty"`
+
+	// LastError: ver InboundJob.LastError.
+	LastError string `json:"last_error,omitempty"`
 }
 
 // Queue gerencia as filas via Redis.
@@ -137,10 +144,15 @@ func (q *Queue) PopOutbound(ctx context.Context) (*OutboundJob, error) {
 }
 
 // RetryInbound recoloca um job na fila com backoff exponencial.
-func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob) error {
+func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob, motivo error) error {
+	if motivo != nil {
+		job.LastError = motivo.Error()
+	}
 	job.RetryCount++
 	if job.RetryCount > q.cfg.MaxRetry {
-		q.log.Warn("job moved to dead queue", zap.String("id", job.ID), zap.Int("retries", job.RetryCount))
+		q.log.Warn("job moved to dead queue",
+			zap.String("id", job.ID), zap.Int("retries", job.RetryCount),
+			zap.String("motivo", job.LastError))
 		return q.push(ctx, keyDead, job)
 	}
 	delay := q.backoff(job.RetryCount)
@@ -150,10 +162,14 @@ func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob) error {
 }
 
 // RetryOutbound recoloca um job de saída na fila.
-func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob) error {
+func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob, motivo error) error {
+	if motivo != nil {
+		job.LastError = motivo.Error()
+	}
 	job.RetryCount++
 	if job.RetryCount > q.cfg.MaxRetry {
-		q.log.Warn("outbound job moved to dead queue", zap.String("id", job.ID))
+		q.log.Warn("outbound job moved to dead queue",
+			zap.String("id", job.ID), zap.String("motivo", job.LastError))
 		return q.push(ctx, keyDead, job)
 	}
 	delay := q.backoff(job.RetryCount)

@@ -710,8 +710,24 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 		}
 	}
 	if !achou {
-		return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp (tentado: %s)",
-			jid.User, strings.Join(candidatos, ", "))
+		// NAO falhar aqui quando o numero veio completo do CRM.
+		//
+		// IsOnWhatsApp devolve IsIn=false tambem por motivo que nao e' "o
+		// numero nao existe": privacidade do destinatario, resposta parcial,
+		// limite de consulta. Antes desta funcao passar a cobrir 13 digitos,
+		// esses envios eram simplesmente TENTADOS — e entregavam. Transformar
+		// isso em erro duro faz a mensagem esgotar as tentativas e morrer na
+		// dead queue, que e' pior que tentar e falhar de verdade.
+		//
+		// So' o caminho historico de 12 digitos mantem o erro, porque ali ele
+		// sempre existiu e o comportamento e' conhecido.
+		if brLegado {
+			return types.JID{}, fmt.Errorf("numero %s nao esta no WhatsApp (tentado: %s)",
+				jid.User, strings.Join(candidatos, ", "))
+		}
+		m.log.Warn("resolveRecipient: IsOnWhatsApp nao confirmou nenhum candidato — tentando o numero original mesmo assim",
+			zap.String("pedido", jid.User), zap.Strings("tentados", candidatos))
+		return jid, nil
 	}
 
 	// COMO O DESTINO E' ESCOLHIDO — e por que na maioria dos casos ele NAO muda.
