@@ -1249,6 +1249,35 @@ func (m *Manager) ResolveSessionInfo(jid string) (uuid.UUID, string, bool) {
 	return sess.ID, sess.JID, true
 }
 
+// ResolverNumeroReal devolve o numero que de fato existe no WhatsApp para o
+// telefone informado, em digitos.
+//
+// POR QUE PRECISA EXISTIR FORA DO ENVIO: o numero guardado no CRM e o numero
+// que o WhatsApp reconhece podem diferir no 9o digito. O envio ativo faz DUAS
+// coisas com esse numero — manda pro WhatsApp e espelha o dialogo no Open
+// Channel. Se o envio usa a forma corrigida e o espelho usa a forma do CRM, a
+// conversa nasce com uma identidade e a resposta do cliente chega com a
+// outra: o Bitrix abre um SEGUNDO dialogo, desvinculado do contato que ja'
+// existia. Resolvendo antes, os dois lados usam a mesma identidade.
+//
+// Em qualquer falha devolve o numero como veio. O objetivo e' unificar quando
+// da' pra ter certeza, nunca bloquear o envio.
+func (m *Manager) ResolverNumeroReal(ctx context.Context, sessionJID, phone string) string {
+	digitos := apenasDigitos(phone)
+	if digitos == "" {
+		return phone
+	}
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok || sess == nil || sess.Client == nil {
+		return digitos
+	}
+	alvo, err := m.resolveRecipient(ctx, sess, digitos+"@"+types.DefaultUserServer)
+	if err != nil || alvo.User == "" || alvo.Server != types.DefaultUserServer {
+		return digitos
+	}
+	return alvo.User
+}
+
 // ConnectedSession representa uma sessao QR realmente conectada em memoria.
 type ConnectedSession struct {
 	JID   string // JID atual do device (com suffix corrente)

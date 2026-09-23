@@ -1107,6 +1107,21 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 
 	phone := normalizeWAPhone(body.Phone)
+	phoneCRM := phone // guarda a forma do CRM antes de corrigir
+	// CANONICALIZA ANTES DE QUALQUER COISA.
+	//
+	// O numero do CRM pode diferir do numero real do WhatsApp no 9o digito
+	// (base importada do Wazzup guardou todo mundo COM o 9; parte das contas
+	// so' existe SEM). Este envio usa o numero em DOIS lugares: manda pro
+	// WhatsApp e espelha o dialogo no Open Channel. Se cada um usar uma forma,
+	// a conversa nasce com uma identidade e a resposta do cliente chega com a
+	// outra — o Bitrix abre um segundo dialogo, desvinculado do contato que ja'
+	// existia. Resolver aqui faz os dois lados falarem do mesmo numero.
+	if real := h.waManager.ResolverNumeroReal(c.Context(), body.SessionJID, phone); real != "" && real != phone {
+		h.log.Info("crm send: numero canonicalizado pelo WhatsApp",
+			zap.String("crm", phone), zap.String("real", real))
+		phone = real
+	}
 	toJID := phone + "@s.whatsapp.net"
 
 	connectorID := portal.ConnectorID
@@ -1162,11 +1177,16 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if sessID, realJID, ok := h.waManager.ResolveSessionInfo(body.SessionJID); ok {
 		mirrorID := "crmext-" + uuid.New().String()
 		mirror := &queue.InboundJob{
-			ID:          mirrorID,
-			SessionJID:  realJID,
-			SessionID:   sessID,
-			FromJID:     toJID,
-			FromPhone:   phone,
+			ID:         mirrorID,
+			SessionJID: realJID,
+			SessionID:  sessID,
+			FromJID:    toJID,
+			FromPhone:  phone,
+			// O Bitrix casa o contato pelo telefone. Se o CRM guarda a forma
+			// com o 9 e mandamos a real sem o 9, ele nao acha o contato que
+			// ja' existe e cria outro — a conversa fica certa e o cadastro
+			// errado. A identidade segue sendo o numero real (FromJID).
+			CRMPhone:    phoneCRM,
 			MessageID:   mirrorID,
 			MessageType: "text",
 			Text:        fmt.Sprintf("📤 *Mensagem enviada externamente (%s):*\n%s", operatorName, body.Message),

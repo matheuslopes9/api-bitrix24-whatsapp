@@ -668,12 +668,19 @@ func (h *handlers) processBPRobotSend(j *bpSendJob) {
 	// So' pro modo unofficial (QR): sessoes Cloud nao vivem no waManager.
 	if !isCloud {
 		if sessID, realJID, ok := h.waManager.ResolveSessionInfo(j.sessionJID); ok {
+			// Mesma canonicalizacao do envio ativo: o espelho precisa usar o
+			// numero que o WhatsApp reconhece, senao a resposta do cliente
+			// chega noutra identidade e abre um segundo dialogo.
+			numero := h.waManager.ResolverNumeroReal(ctx, j.sessionJID, j.toPhone)
+			if numero == "" {
+				numero = j.toPhone
+			}
 			mirror := &queue.InboundJob{
 				ID:          waMsgID,
 				SessionJID:  realJID,
 				SessionID:   sessID,
-				FromJID:     j.toPhone + "@s.whatsapp.net",
-				FromPhone:   j.toPhone,
+				FromJID:     numero + "@s.whatsapp.net",
+				FromPhone:   numero,
 				MessageID:   waMsgID,
 				MessageType: "text",
 				Text:        "🤖 *Automação:* " + j.bodyText,

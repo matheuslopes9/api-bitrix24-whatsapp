@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	keyInbound  = "queue:inbound"   // mensagens WA → Bitrix
-	keyOutbound = "queue:outbound"  // mensagens Bitrix → WA
-	keyDead     = "queue:dead"      // falhou após todos os retries
+	keyInbound  = "queue:inbound"  // mensagens WA → Bitrix
+	keyOutbound = "queue:outbound" // mensagens Bitrix → WA
+	keyDead     = "queue:dead"     // falhou após todos os retries
 )
 
 // InboundJob representa uma mensagem recebida pelo WhatsApp aguardando entrega no Bitrix.
@@ -32,22 +32,33 @@ type InboundJob struct {
 	Text        string    `json:"text,omitempty"`
 	MediaURL    string    `json:"media_url,omitempty"`
 	MediaMime   string    `json:"media_mime,omitempty"`
-	MediaData   []byte    `json:"media_data,omitempty"`  // bytes da mídia já baixada
+	MediaData   []byte    `json:"media_data,omitempty"` // bytes da mídia já baixada
 	MediaName   string    `json:"media_name,omitempty"` // nome do arquivo para exibição
 	// Grupo: se a msg veio de grupo, GroupJID e' o JID do grupo (XXX@g.us)
 	// e GroupName e' o nome do grupo. Quando preenchido, o chat e' aberto
 	// no Bitrix como 1 chat unico do grupo (em vez de 1 chat por participante),
 	// e Text recebe prefixo "*Nome do remetente:* texto" pra atendente
 	// distinguir quem mandou.
-	IsGroup     bool      `json:"is_group,omitempty"`
-	GroupJID    string    `json:"group_jid,omitempty"`
-	GroupName   string    `json:"group_name,omitempty"`
-	RetryCount  int       `json:"retry_count"`
-	CreatedAt   time.Time `json:"created_at"`
+	IsGroup    bool      `json:"is_group,omitempty"`
+	GroupJID   string    `json:"group_jid,omitempty"`
+	GroupName  string    `json:"group_name,omitempty"`
+	RetryCount int       `json:"retry_count"`
+	CreatedAt  time.Time `json:"created_at"`
 	// LastError guarda o motivo da ultima falha. Sem isso o job morria na
 	// dead queue mudo: dava pra ver QUE falhou, nunca POR QUE — e o
 	// diagnostico virava adivinhacao.
 	LastError string `json:"last_error,omitempty"`
+
+	// CRMPhone e' o telefone NA FORMA QUE O CRM GUARDA, quando ela difere do
+	// numero real do WhatsApp (tipicamente o 9o digito).
+	//
+	// Sao dois papeis diferentes que antes eram o mesmo campo:
+	//   - identidade da conversa -> tem que ser o numero REAL, senao ida e
+	//     volta discordam e o Bitrix abre dois dialogos;
+	//   - telefone pra casar o contato -> tem que ser a forma do CRM, senao
+	//     o Bitrix nao acha o contato que ja' existe e cria outro.
+	// Vazio = usar FromPhone pros dois.
+	CRMPhone string `json:"crm_phone,omitempty"`
 }
 
 // OutboundJob representa uma resposta do Bitrix aguardando envio para o WhatsApp.
@@ -63,17 +74,17 @@ type OutboundJob struct {
 	CreatedAt  time.Time `json:"created_at"`
 
 	// Campos para confirmar delivery ao Bitrix após envio no WA
-	BitrixConnector  string `json:"bitrix_connector,omitempty"`
-	BitrixLine       int    `json:"bitrix_line,omitempty"`
-	BitrixImChatID   string `json:"bitrix_im_chat_id,omitempty"`
-	BitrixImMsgID    string `json:"bitrix_im_msg_id,omitempty"`
-	BitrixChatExtID  string `json:"bitrix_chat_ext_id,omitempty"` // chat.id do evento
+	BitrixConnector string `json:"bitrix_connector,omitempty"`
+	BitrixLine      int    `json:"bitrix_line,omitempty"`
+	BitrixImChatID  string `json:"bitrix_im_chat_id,omitempty"`
+	BitrixImMsgID   string `json:"bitrix_im_msg_id,omitempty"`
+	BitrixChatExtID string `json:"bitrix_chat_ext_id,omitempty"` // chat.id do evento
 
 	// Arquivo enviado pelo operador (outbound)
-	FileURL      string `json:"file_url,omitempty"`      // downloadLink do evento
-	FileName     string `json:"file_name,omitempty"`
-	FileMime     string `json:"file_mime,omitempty"`
-	FileSize     int64  `json:"file_size,omitempty"`     // bytes — vem no webhook do Bitrix (files[0][size])
+	FileURL  string `json:"file_url,omitempty"` // downloadLink do evento
+	FileName string `json:"file_name,omitempty"`
+	FileMime string `json:"file_mime,omitempty"`
+	FileSize int64  `json:"file_size,omitempty"` // bytes — vem no webhook do Bitrix (files[0][size])
 
 	// Nome do operador que enviou (para salvar no histórico)
 	OperatorName string `json:"operator_name,omitempty"`

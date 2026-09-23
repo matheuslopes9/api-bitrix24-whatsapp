@@ -221,7 +221,12 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		}
 		chatExtID = normalizeChatID(job.FromJID)
 		chatName = nomeDoContato(job.FromName, contact, job.FromPhone)
+		// Identidade (chatExtID) e telefone de casamento (chatPhone) podem
+		// divergir de proposito — ver queue.InboundJob.CRMPhone.
 		chatPhone = job.FromPhone
+		if strings.TrimSpace(job.CRMPhone) != "" {
+			chatPhone = job.CRMPhone
+		}
 		msgText = job.Text
 	}
 
