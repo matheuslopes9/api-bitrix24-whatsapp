@@ -2664,6 +2664,9 @@ function excluirIntegracao(enc) {
 
 // ─── Permissões por Número ─────────────────────────────────────────────
 var _permUsers = [];         // [{id, name, email, position, active, allowed_sessions:[jid,...]}]
+var _permPagina = 1;         // pagina atual da lista de usuarios
+var _permPorPagina = 20;     // usuarios por pagina
+var _permUltimaBusca = '';   // detecta mudanca de filtro pra voltar pra pagina 1
 // Reduz o JID ao NUMERO BASE, espelhando normalizarSessionJID do backend.
 // O device suffix do whatsmeow (":1", ":5") muda a cada re-pareamento; sem
 // normalizar aqui, o chip aparece desmarcado mesmo com a permissao concedida,
@@ -2941,6 +2944,7 @@ function renderPermUsers() {
   }
 
   var q = (document.getElementById('perm-search-input').value || '').trim().toLowerCase();
+  if (q !== _permUltimaBusca) { _permPagina = 1; _permUltimaBusca = q; }
   var filtered = q ? _permUsers.filter(function(u){
     return (u.name||'').toLowerCase().indexOf(q) !== -1
         || (u.email||'').toLowerCase().indexOf(q) !== -1
@@ -2959,10 +2963,19 @@ function renderPermUsers() {
     return;
   }
 
+  // Paginacao: portais grandes tem centenas de colaboradores, e renderizar
+  // todos de uma vez gera milhares de chips — a tela fica pesada e o
+  // operador nao acha ninguem. Pagina de 20.
+  var totalPaginas = Math.max(1, Math.ceil(filtered.length / _permPorPagina));
+  if (_permPagina > totalPaginas) _permPagina = totalPaginas;
+  if (_permPagina < 1) _permPagina = 1;
+  var ini = (_permPagina - 1) * _permPorPagina;
+  var pagina = filtered.slice(ini, ini + _permPorPagina);
+
   var canEdit = permCanEdit();
   var html = '';
-  for (var i = 0; i < filtered.length; i++) {
-    var u = filtered[i];
+  for (var i = 0; i < pagina.length; i++) {
+    var u = pagina[i];
     var initials = (u.name||'?')[0].toUpperCase();
     var allowedSet = {};
     (u.allowed_sessions||[]).forEach(function(jid){ allowedSet[_permNorm(jid)] = true; });
@@ -3012,7 +3025,34 @@ function renderPermUsers() {
          +    '<div style="padding-left:40px;">' + chips + '</div>'
          +  '</div>';
   }
+
+  if (totalPaginas > 1) {
+    var de = ini + 1, ate = Math.min(ini + _permPorPagina, filtered.length);
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 16px;border-top:1px solid rgba(255,255,255,.06);">'
+         +   '<span style="font-size:12px;color:#64748b;">' + de + '–' + ate + ' de ' + filtered.length + '</span>'
+         +   '<div style="display:flex;gap:6px;align-items:center;">'
+         +     _permBtnPagina('‹ Anterior', _permPagina - 1, _permPagina <= 1)
+         +     '<span style="font-size:12px;color:#94a3b8;padding:0 6px;">' + _permPagina + ' / ' + totalPaginas + '</span>'
+         +     _permBtnPagina('Próxima ›', _permPagina + 1, _permPagina >= totalPaginas)
+         +   '</div>'
+         + '</div>';
+  }
   box.innerHTML = html;
+}
+
+function _permBtnPagina(rotulo, destino, desabilitado) {
+  var base = 'padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,.1);';
+  if (desabilitado) {
+    return '<button disabled style="' + base + 'background:rgba(255,255,255,.02);color:#334155;cursor:not-allowed;">' + rotulo + '</button>';
+  }
+  return '<button onclick="_permIrPara(' + destino + ')" style="' + base + 'background:rgba(255,255,255,.06);color:#cbd5e1;cursor:pointer;">' + rotulo + '</button>';
+}
+
+function _permIrPara(p) {
+  _permPagina = p;
+  renderPermUsers();
+  var box = document.getElementById('perm-user-list');
+  if (box && box.scrollIntoView) box.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function permCanEdit() {

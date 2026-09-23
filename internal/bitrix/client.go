@@ -1295,6 +1295,16 @@ type BitrixUser struct {
 	// Bot: usuarios sinteticos (bots de chat, integracoes). Tambem nao
 	// devem aparecer no painel de permissoes.
 	Bot bool `json:"bot"`
+	// Sinais explicitos de "e' gente de fora", que o im.user.list.get
+	// devolve e que nao estavam sendo usados:
+	//   Network   — usuario da Rede Bitrix24 (parceiro de outro portal)
+	//   Connector — usuario criado por conector (contato externo virando user)
+	//   Intranet  — colaborador interno. TRI-ESTADO de proposito: ver
+	//               ehInterno(). Nem toda resposta traz o campo, e tratar
+	//               ausencia como "false" filtraria TODO MUNDO.
+	Network   bool  `json:"network"`
+	Connector bool  `json:"connector"`
+	Intranet  *bool `json:"intranet_user,omitempty"`
 }
 
 // ListAllUsers tenta listar TODOS os usuarios ativos do portal iterando IDs
@@ -1379,7 +1389,9 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 			vistos[id] = true
 			novos++
 			tipo := strings.ToLower(stringField(r, "USER_TYPE"))
+			interno := tipo == "employee"
 			todos = append(todos, BitrixUser{
+				Intranet: &interno,
 				ID:       stringField(r, "ID"),
 				Name:     stringField(r, "NAME"),
 				LastName: stringField(r, "LAST_NAME"),
@@ -1566,6 +1578,31 @@ func (c *Client) ListAllUsersDaLinha(ctx context.Context, creds TenantCreds, max
 // filtrarInternosAtivos deixa so' quem pode operar atendimento, e ordena por
 // nome. Compartilhado pelos dois caminhos (user.get e sondagem) pra que a
 // regra de quem aparece no painel nao possa divergir entre eles.
+// ehInternoAtivo decide quem pode operar atendimento e portanto aparecer no
+// painel de permissoes.
+//
+// Exclui, em ordem de evidencia:
+//   - inativo: demitido/desativado
+//   - bot / type != "user": usuario sintetico (chatbot, integracao)
+//   - extranet: convidado externo (parceiro, cliente)
+//   - network: usuario da Rede Bitrix24, de OUTRO portal
+//   - connector: contato externo que virou usuario por um conector
+//   - intranet_user == false: o Bitrix afirmando que nao e' do quadro
+//
+// intranet_user e' TRI-ESTADO de proposito. Nem toda fonte traz o campo, e
+// tratar ausencia como "nao e' interno" esvaziaria a lista inteira — falha
+// bem pior que deixar passar um externo. So' exclui quando o campo VEM e
+// diz false.
+func ehInternoAtivo(u BitrixUser) bool {
+	if !u.Active || u.Bot || u.Extranet || u.Network || u.Connector {
+		return false
+	}
+	if u.Intranet != nil && !*u.Intranet {
+		return false
+	}
+	return true
+}
+
 func filtrarInternosAtivos(brutos []BitrixUser) []BitrixUser {
 	seen := map[string]bool{}
 	all := make([]BitrixUser, 0, len(brutos))
@@ -1573,12 +1610,7 @@ func filtrarInternosAtivos(brutos []BitrixUser) []BitrixUser {
 		if u.ID == "" || seen[u.ID] {
 			continue
 		}
-		// So colaboradores INTERNOS ATIVOS aparecem no painel de permissoes:
-		// - !Active: usuario demitido/desativado, nao deve operar atendimento.
-		// - Extranet: convidados externos (parceiros, clientes), nao sao
-		//   atendentes — Bitrix mistura na mesma lista mas separa pelo flag.
-		// - Bot: usuarios sinteticos (chatbots, integracoes do proprio Bitrix).
-		if !u.Active || u.Extranet || u.Bot {
+		if !ehInternoAtivo(u) {
 			continue
 		}
 		seen[u.ID] = true
@@ -1661,6 +1693,18 @@ func (c *Client) GetUserByIDs(ctx context.Context, creds TenantCreds, userIDs []
 		// extranet / bot — vem como bool no im.user.list.get
 		u.Extranet = boolField(r, "extranet")
 		u.Bot = boolField(r, "bot")
+		u.Network = boolField(r, "network")
+		u.Connector = boolField(r, "connector")
+		// intranet_user so' e' considerado quando VEM na resposta. Ausente
+		// nao significa "externo" — significa que aquela fonte nao informa.
+		if v, ok := r["intranet_user"]; ok && v != nil {
+			b := boolField(r, "intranet_user")
+			u.Intranet = &b
+		}
+		// type: "user" e' pessoa; qualquer outra coisa (bot etc.) nao entra.
+		if t := strings.ToLower(stringField(r, "type")); t != "" && t != "user" {
+			u.Bot = true
+		}
 		// O 'name' completo (se o backend ja juntou) pode estar em 'name'
 		if u.Name == "" && u.LastName == "" {
 			full := stringField(r, "name")

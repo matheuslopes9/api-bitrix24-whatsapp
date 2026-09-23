@@ -73,3 +73,40 @@ func TestParadaPorOndasVazias(t *testing.T) {
 		}
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+// Quem pode operar atendimento. Errar aqui tem dois custos opostos: deixar
+// passar externo da' acesso indevido ao WhatsApp do cliente; excluir demais
+// esvazia a tela de permissoes e ninguem consegue enviar.
+func TestEhInternoAtivo(t *testing.T) {
+	casos := []struct {
+		nome   string
+		u      BitrixUser
+		aceita bool
+	}{
+		{"interno ativo", BitrixUser{Active: true, Intranet: boolPtr(true)}, true},
+		{"sem o campo intranet passa", BitrixUser{Active: true}, true},
+		{"inativo", BitrixUser{Active: false, Intranet: boolPtr(true)}, false},
+		{"bot", BitrixUser{Active: true, Bot: true}, false},
+		{"extranet", BitrixUser{Active: true, Extranet: true}, false},
+		{"rede bitrix24", BitrixUser{Active: true, Network: true}, false},
+		{"criado por conector", BitrixUser{Active: true, Connector: true}, false},
+		{"intranet explicitamente false", BitrixUser{Active: true, Intranet: boolPtr(false)}, false},
+	}
+	for _, c := range casos {
+		if got := ehInternoAtivo(c.u); got != c.aceita {
+			t.Errorf("%s: ehInternoAtivo = %v, queria %v", c.nome, got, c.aceita)
+		}
+	}
+}
+
+// Caso real: a Gabrielly tem external_auth_id "socservices" (entrou por
+// login social) mas intranet_user true. E' do quadro e PRECISA aparecer —
+// filtrar por origem de login a excluiria por engano.
+func TestLoginSocialNaoExcluiInterno(t *testing.T) {
+	g := BitrixUser{ID: "12195", Name: "Gabrielly", Active: true, Intranet: boolPtr(true)}
+	if !ehInternoAtivo(g) {
+		t.Error("usuario interno com login social deve aparecer")
+	}
+}
