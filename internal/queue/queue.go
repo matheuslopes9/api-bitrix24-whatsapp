@@ -174,22 +174,74 @@ func (q *Queue) PeekDead(ctx context.Context, n int) ([]json.RawMessage, error) 
 	return out, nil
 }
 
-// ReprocessarDead devolve os jobs INBOUND da dead queue pra fila de entrada,
-// zerando o contador de tentativas.
+// DirecaoDead diz de que fila um item da dead queue veio.
+type DirecaoDead int
+
+const (
+	// DirecaoIndefinida: nao da' pra saber a direcao, o item nao e'
+	// processavel.
+	DirecaoIndefinida DirecaoDead = iota
+	DirecaoEntrada
+	DirecaoSaida
+)
+
+// SondaDead e' o minimo que precisa ser lido de um item da dead queue pra
+// decidir o que fazer com ele.
+type SondaDead struct {
+	ID         string
+	SessionJID string
+	Direcao    DirecaoDead
+}
+
+// classificarDead descobre se um item bruto da dead queue e' de entrada ou
+// de saida.
 //
-// Existe porque ate' agora a dead queue so' podia ser LIDA ou APAGADA. Uma
-// mensagem que falhou por bug nosso (e nao por ser invalida) ficava presa
-// ali: cliente real esperando resposta que nunca ia chegar, e a unica saida
-// era descartar. Corrigido o bug, faz sentido reentregar.
+// Nao da' pra confiar em "decodificou sem erro": encoding/json ignora campo
+// desconhecido e zera campo ausente, entao QUALQUER um dos dois jobs
+// decodifica limpo em qualquer um dos dois structs. O que separa e' campo
+// exclusivo: to_jid so' existe na saida, from_jid so' na entrada.
 //
-// Sessoes aceitas: so' reprocessa job cujo session_jid esteja em
-// sessoesValidas. Jobs de sessao que nao existe mais sao DESCARTADOS — nao
-// ha' por onde entregar, e reenfileirar so' faria a mensagem rodar os 6
-// retries de novo pra morrer igual.
+// A ordem importa: to_jid e' checado primeiro porque confundir saida com
+// entrada e' o erro caro — devolve a mensagem do atendente pro Contact
+// Center como se fosse cliente novo e anonimo.
+func classificarDead(raw []byte) (SondaDead, error) {
+	var bruto struct {
+		ID         string `json:"id"`
+		SessionJID string `json:"session_jid"`
+		FromJID    string `json:"from_jid"`
+		ToJID      string `json:"to_jid"`
+	}
+	if err := json.Unmarshal(raw, &bruto); err != nil {
+		return SondaDead{}, err
+	}
+	s := SondaDead{ID: bruto.ID, SessionJID: bruto.SessionJID}
+	switch {
+	case strings.TrimSpace(bruto.ToJID) != "":
+		s.Direcao = DirecaoSaida
+	case strings.TrimSpace(bruto.FromJID) != "":
+		s.Direcao = DirecaoEntrada
+	}
+	return s, nil
+}
+
+// ReprocessarDead devolve os jobs da dead queue para as filas de origem.
 //
-// Devolve (reenfileirados, descartados, erro). Opera sobre uma copia: le a
-// lista inteira, limpa, e reinsere so' o que vale — assim um job novo que
-// caia na dead queue durante a operacao nao se perde num LPOP parcial.
+// BUG QUE ISSO CORRIGE: a dead queue e' UMA lista so' — RetryInbound e
+// RetryOutbound empurram para a mesma chave. A versao anterior desta funcao
+// decodificava TUDO como InboundJob e reenfileirava tudo como entrada.
+//
+// encoding/json nao reclama disso: campos desconhecidos sao ignorados e os
+// ausentes ficam zerados. Um OutboundJob virava um InboundJob "valido" com
+// from_jid, from_phone e from_name VAZIOS, e o texto ainda trazia o prefixo
+// do operador ("*Fulano:* oi"). O processador entao abria um chat no Contact
+// Center sem identidade nenhuma — e o Bitrix rotula isso como "Guest".
+// Resultado: a propria mensagem do atendente voltava como se fosse um cliente
+// novo e anonimo, um chat "Guest" por mensagem reprocessada.
+//
+// Agora cada item e' classificado antes de voltar pra fila. O discriminador
+// e' estrutural e vale tambem pros itens antigos ja' gravados: to_jid so'
+// existe na saida, from_jid so' na entrada. Quem nao tem nenhum dos dois nao
+// da' pra processar e e' descartado em vez de virar um chat fantasma.
 func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]bool) (int, int, error) {
 	itens, err := q.rdb.LRange(ctx, keyDead, 0, -1).Result()
 	if err != nil {
@@ -204,24 +256,52 @@ func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]b
 
 	var reenfileirados, descartados int
 	for _, raw := range itens {
-		var job InboundJob
-		if err := json.Unmarshal([]byte(raw), &job); err != nil {
+		sonda, err := classificarDead([]byte(raw))
+		if err != nil {
 			descartados++
 			continue
 		}
-		if !sessoesValidas[numeroDoJID(job.SessionJID)] {
+		if !sessoesValidas[numeroDoJID(sonda.SessionJID)] {
 			descartados++
 			q.log.Info("dead queue: descartado (sessao nao existe mais)",
-				zap.String("id", job.ID), zap.String("session_jid", job.SessionJID))
+				zap.String("id", sonda.ID), zap.String("session_jid", sonda.SessionJID))
 			continue
 		}
-		job.RetryCount = 0
-		if err := q.PushInbound(ctx, &job); err != nil {
-			q.log.Warn("dead queue: falha ao reenfileirar", zap.String("id", job.ID), zap.Error(err))
+
+		switch sonda.Direcao {
+		case DirecaoSaida:
+			var job OutboundJob
+			if err := json.Unmarshal([]byte(raw), &job); err != nil {
+				descartados++
+				continue
+			}
+			job.RetryCount = 0
+			if err := q.PushOutbound(ctx, &job); err != nil {
+				q.log.Warn("dead queue: falha ao reenfileirar saida",
+					zap.String("id", job.ID), zap.Error(err))
+				descartados++
+				continue
+			}
+			reenfileirados++
+		case DirecaoEntrada:
+			var job InboundJob
+			if err := json.Unmarshal([]byte(raw), &job); err != nil {
+				descartados++
+				continue
+			}
+			job.RetryCount = 0
+			if err := q.PushInbound(ctx, &job); err != nil {
+				q.log.Warn("dead queue: falha ao reenfileirar entrada",
+					zap.String("id", job.ID), zap.Error(err))
+				descartados++
+				continue
+			}
+			reenfileirados++
+		default:
 			descartados++
-			continue
+			q.log.Warn("dead queue: descartado (sem from_jid nem to_jid — nao da' pra saber a direcao)",
+				zap.String("id", sonda.ID))
 		}
-		reenfileirados++
 	}
 	q.log.Info("dead queue reprocessada",
 		zap.Int("reenfileirados", reenfileirados), zap.Int("descartados", descartados))

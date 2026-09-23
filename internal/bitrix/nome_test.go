@@ -32,8 +32,11 @@ func TestNomeDoContatoOrdemDeFallback(t *testing.T) {
 	if got := nomeDoContato("   ", nil, "558199809595"); got != "+55 81 9980-9595" {
 		t.Errorf("push name so' com espaco conta como vazio, veio %q", got)
 	}
-	if got := nomeDoContato("", nil, ""); got != "" {
-		t.Errorf("sem nada deve devolver vazio, veio %q", got)
+	// Nome vazio e' o que faz o Bitrix rotular a conversa como "Guest", e
+	// duas conversas "Guest" sao indistinguiveis pro atendente. Entao o
+	// ultimo elo NAO pode devolver vazio, mesmo sem nome e sem numero.
+	if got := nomeDoContato("", nil, ""); got == "" {
+		t.Error("sem nome e sem numero nao pode devolver vazio: vazio vira \"Guest\" no Bitrix")
 	}
 
 	// Elo do meio: sem push name, usa o nome ja' gravado do contato.

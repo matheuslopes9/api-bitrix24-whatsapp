@@ -74,7 +74,23 @@ func nomeDoContato(pushName string, contato *db.ContactMapping, fone string) str
 			return n
 		}
 	}
-	return telefoneLegivel(fone)
+	if n := telefoneLegivel(fone); n != "" {
+		return n
+	}
+	// Ultimo recurso. Nunca devolve vazio: nome vazio faz o Bitrix rotular a
+	// conversa como "Guest", e duas conversas "Guest" sao indistinguiveis na
+	// lista do atendente. Um rotulo generico ao menos diz que o contato nao
+	// se identificou — e a trava em ProcessInbound impede que se chegue aqui
+	// por job malformado.
+	return "Contato WhatsApp"
+}
+
+// primeirosChars corta texto pra log sem estourar a linha.
+func primeirosChars(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // Processor implementa a lógica de negócio: inbound WA → Bitrix, outbound Bitrix → WA.
@@ -185,6 +201,24 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 			msgText = "*" + sender + ":* [" + job.MessageType + "]"
 		}
 	} else {
+		// TRAVA: sem remetente nao existe conversa. Um job que chega aqui sem
+		// from_jid E sem from_phone nao e' mensagem de cliente — e' job
+		// malformado (ja' aconteceu com job de SAIDA reenfileirado como
+		// entrada pela dead queue). Mandar isso pro Contact Center criava um
+		// chat sem identidade, que o Bitrix rotula "Guest": o atendente via
+		// a propria mensagem dele voltar como cliente novo e anonimo.
+		//
+		// Falhar aqui e' melhor que criar o chat fantasma: o job fica
+		// registrado como falha, com motivo, em vez de sujar a lista de
+		// atendimento.
+		if strings.TrimSpace(job.FromJID) == "" && strings.TrimSpace(job.FromPhone) == "" {
+			p.markStatus(ctx, job.MessageID, db.MsgFailed, "job sem remetente (from_jid e from_phone vazios)")
+			p.log.Warn("inbound descartado: job sem remetente",
+				zap.String("job_id", job.ID),
+				zap.String("session_jid", job.SessionJID),
+				zap.String("texto", primeirosChars(job.Text, 60)))
+			return fmt.Errorf("job sem remetente: nao da' pra identificar o contato")
+		}
 		chatExtID = normalizeChatID(job.FromJID)
 		chatName = nomeDoContato(job.FromName, contact, job.FromPhone)
 		chatPhone = job.FromPhone
