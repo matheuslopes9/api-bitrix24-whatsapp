@@ -15,7 +15,9 @@ package email
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
@@ -111,11 +113,41 @@ func (r *Remetente) montar(assunto, corpoHTML string) string {
 	if r.cfg.ReplyTo != "" {
 		b.WriteString("Reply-To: " + r.cfg.ReplyTo + "\r\n")
 	}
-	b.WriteString("Subject: " + assunto + "\r\n")
+	// Assunto codificado: ele carrega acento e o dominio do cliente. Sem isto
+	// chega com caractere trocado em alguns leitores.
+	b.WriteString("Subject: " + mime.QEncoding.Encode("UTF-8", assunto) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: base64\r\n")
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(corpoHTML)
+	b.WriteString(base64Quebrado(corpoHTML))
+	return b.String()
+}
+
+// base64Quebrado codifica o corpo e quebra em linhas de 76 caracteres.
+//
+// POR QUE: o corpo HTML sai numa linha so', e SMTP limita linha a 1000
+// octetos (RFC 5321 4.5.3.1.6). O servidor recusava com
+//
+//	500 "Line too long (see RFC5321 4.5.3.1.6)"
+//
+// e o e-mail nunca saia — com o proxy funcionando perfeitamente.
+//
+// base64 resolve as duas coisas de uma vez: garante o limite de linha e
+// entrega acento intacto, sem depender do servidor tratar UTF-8 cru. 76 e' a
+// largura classica de MIME (RFC 2045), com folga larga sobre o limite.
+func base64Quebrado(s string) string {
+	cod := base64.StdEncoding.EncodeToString([]byte(s))
+	const largura = 76
+	var b strings.Builder
+	for i := 0; i < len(cod); i += largura {
+		fim := i + largura
+		if fim > len(cod) {
+			fim = len(cod)
+		}
+		b.WriteString(cod[i:fim])
+		b.WriteString("\r\n")
+	}
 	return b.String()
 }
