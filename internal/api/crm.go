@@ -2336,25 +2336,113 @@ function loadEntity() {
     document.getElementById('conv-list').innerHTML = '<div class="conv-empty">Abra um Contato,<br>Lead ou Deal para<br>ver o histórico.</div>';
     return;
   }
-  var url = _baseUrl + '/bitrix/crm/entity?domain=' + enc(_domain) + '&entity_type=' + _entityType + '&entity_id=' + _entityId;
-  fetch(url).then(function(r){ return r.json(); }).then(function(d) {
-    _contactName     = d.name  || 'Contato';
-    _contactPhone    = d.phone || '';
-    _contactInitials = initials(_contactName);
+  // PRIMEIRO pelo BX24, DEPOIS pelo backend.
+  //
+  // O token do app age como o usuario que INSTALOU o app, com as permissoes
+  // dele. Medido no portal do cliente: o app responde como Walison Teles
+  // (ADMIN=false) e crm.deal.get do negocio 12313 volta VAZIO, enquanto
+  // outros negocios funcionam. A aba entao dizia "Nenhum telefone cadastrado
+  // neste contato" — culpando o cadastro, que estava certo.
+  //
+  // BX24.callMethod roda como o usuario LOGADO, dentro da sessao dele no
+  // Bitrix. Quem abriu o negocio obviamente enxerga o negocio, entao aqui a
+  // leitura funciona sem depender de reinstalar o app nem de mexer em
+  // permissao. E e' mais correto: cada operador ve o que ele pode ver.
+  resolverEntidadePeloBX24(function(via) {
+    if (via && via.phone) { aplicarEntidade(via.name, via.phone); return; }
+    var url = _baseUrl + '/bitrix/crm/entity?domain=' + enc(_domain) + '&entity_type=' + _entityType + '&entity_id=' + _entityId;
+    fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+      if (d && d.error && !(via && via.name)) {
+        document.getElementById('conv-list').innerHTML = '<div class="conv-empty" style="color:#fbbf24">Não foi possível ler este registro.<br><span style="font-size:11px">Sem permissão ou registro inexistente.</span></div>';
+        return;
+      }
+      aplicarEntidade((d && d.name) || (via && via.name) || 'Contato', (d && d.phone) || '');
+    }).catch(function() {
+      document.getElementById('conv-list').innerHTML = '<div class="conv-empty" style="color:#f87171">Erro ao carregar contato.</div>';
+    });
+  });
+}
 
-    if (!_contactPhone) {
-      document.getElementById('conv-list').innerHTML = '<div class="conv-empty">Nenhum telefone<br>cadastrado neste contato.</div>';
-      document.getElementById('chat-hdr-name').textContent  = _contactName;
-      document.getElementById('chat-hdr-avatar').textContent = _contactInitials;
-      return;
-    }
+// aplicarEntidade e' o ponto unico que pinta a tela, venha o dado de onde vier.
+function aplicarEntidade(nome, fone) {
+  _contactName     = nome || 'Contato';
+  _contactPhone    = fone || '';
+  _contactInitials = initials(_contactName);
 
-    // Adiciona o contato na lista e abre o chat imediatamente
-    _allConvs = [{ name: _contactName, phone: _contactPhone, preview: _contactPhone, time: '', unread: 0, active: true }];
-    renderConvList();
-    openChat(_contactName, _contactPhone);
-  }).catch(function() {
-    document.getElementById('conv-list').innerHTML = '<div class="conv-empty" style="color:#f87171">Erro ao carregar contato.</div>';
+  document.getElementById('chat-hdr-name').textContent   = _contactName;
+  document.getElementById('chat-hdr-avatar').textContent = _contactInitials;
+
+  if (!_contactPhone) {
+    document.getElementById('conv-list').innerHTML = '<div class="conv-empty">Nenhum telefone<br>cadastrado neste contato.</div>';
+    return;
+  }
+  _allConvs = [{ name: _contactName, phone: _contactPhone, preview: _contactPhone, time: '', unread: 0, active: true }];
+  renderConvList();
+  openChat(_contactName, _contactPhone);
+}
+
+// telefoneDoRegistro tira o primeiro numero do campo PHONE do CRM, que e'
+// um array de objetos [{VALUE:"+55...", VALUE_TYPE:"WORK"}, ...].
+function telefoneDoRegistro(o) {
+  if (!o || !o.PHONE || !o.PHONE.length) return '';
+  for (var i = 0; i < o.PHONE.length; i++) {
+    var v = (o.PHONE[i] && o.PHONE[i].VALUE) || '';
+    if (v) return v;
+  }
+  return '';
+}
+
+function nomeDoRegistro(o) {
+  if (!o) return '';
+  var n = ((o.NAME || '') + ' ' + (o.LAST_NAME || '')).trim();
+  return n || o.TITLE || '';
+}
+
+// resolverEntidadePeloBX24 devolve {name, phone} ou null (ai' o chamador cai
+// no backend). NUNCA rejeita: falha aqui e' so' "nao consegui por este
+// caminho", nao erro de tela.
+function resolverEntidadePeloBX24(cb) {
+  if (typeof BX24 === 'undefined' || !BX24.callMethod || !_entityId) { cb(null); return; }
+  var metodo = _entityType === 'deal' ? 'crm.deal.get'
+             : _entityType === 'lead' ? 'crm.lead.get'
+             : 'crm.contact.get';
+  try {
+    BX24.callMethod(metodo, { id: _entityId }, function(res) {
+      var o = null;
+      try { o = (res && !res.error()) ? res.data() : null; } catch (e) { o = null; }
+      if (!o) { cb(null); return; }
+
+      var nome = nomeDoRegistro(o);
+      var fone = telefoneDoRegistro(o);
+      if (fone || _entityType !== 'deal') { cb({ name: nome, phone: fone }); return; }
+
+      // NEGOCIO NAO TEM TELEFONE: no Bitrix o numero mora no CONTATO e o
+      // negocio so' aponta pra ele. Segue o vinculo.
+      var contatoID = o.CONTACT_ID;
+      if (!contatoID || contatoID === '0') {
+        // Negocio sem contato principal: tenta o primeiro da lista.
+        BX24.callMethod('crm.deal.contact.items.get', { id: _entityId }, function(r2) {
+          var itens = null;
+          try { itens = (r2 && !r2.error()) ? r2.data() : null; } catch (e) { itens = null; }
+          if (!itens || !itens.length) { cb({ name: nome, phone: '' }); return; }
+          buscarContatoPeloBX24(itens[0].CONTACT_ID, nome, cb);
+        });
+        return;
+      }
+      buscarContatoPeloBX24(contatoID, nome, cb);
+    });
+  } catch (e) { cb(null); }
+}
+
+function buscarContatoPeloBX24(contatoID, nomeAlternativo, cb) {
+  if (!contatoID) { cb({ name: nomeAlternativo, phone: '' }); return; }
+  BX24.callMethod('crm.contact.get', { id: contatoID }, function(r) {
+    var c = null;
+    try { c = (r && !r.error()) ? r.data() : null; } catch (e) { c = null; }
+    if (!c) { cb({ name: nomeAlternativo, phone: '' }); return; }
+    // O nome do contato e' mais util que o titulo do negocio pra quem vai
+    // conversar com a pessoa.
+    cb({ name: nomeDoRegistro(c) || nomeAlternativo, phone: telefoneDoRegistro(c) });
   });
 }
 
