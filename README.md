@@ -1,12 +1,32 @@
 # UC Talk — Conector WhatsApp ↔ Bitrix24
 
 Conector multi-tenant entre WhatsApp e o Contact Center do Bitrix24, com
-painel administrativo, cobrança recorrente (PIX + Boleto via Itaú), planos
-configuráveis, cupons e auditoria. Escrito em Go, deploy no EasyPanel.
+painel de suporte, controle de licença por cliente e alertas por e-mail.
+Escrito em Go, deploy no EasyPanel.
 
-> **Documentação profunda:** os aprendizados detalhados (arquitetura,
-> integrações, pendências, PIX Itaú) ficam em [`docs/aprendizados/`](docs/aprendizados).
-> Este README é o mapa geral.
+> **Documentação por tema:** [`docs/fluxos/`](docs/fluxos) descreve cada fluxo
+> ponta a ponta; [`docs/aprendizados/`](docs/aprendizados) guarda o porquê das
+> decisões e os bugs que custaram caro. Este README é o mapa geral.
+
+---
+
+## O que o sistema faz
+
+1. **Liga WhatsApp ao Bitrix24.** Mensagem do cliente chega no Contact Center;
+   resposta do operador volta pro WhatsApp. Multi-tenant: N números × N portais.
+2. **Dá ao suporte uma tela de estado.** Token, conexões, mensagens, fila e
+   licença de cada cliente num lugar só — sem abrir log de container nem rodar
+   SQL na mão.
+3. **Avisa quando algo para de atender.** Token vencido, número caído e licença
+   vencendo viram e-mail pro time.
+
+### O que ele NÃO faz mais
+
+Cobrança, planos, cupons, trial e gateway de pagamento **foram removidos**. O
+app não vai ao marketplace do Bitrix: quem instala é a UC Technology, direto no
+portal do cliente, e o cliente paga pelo comercial. O que ficou no lugar é uma
+**licença por cliente**, registrada à mão, com os benefícios do contrato e o
+histórico de pagamentos.
 
 ---
 
@@ -14,268 +34,323 @@ configuráveis, cupons e auditoria. Escrito em Go, deploy no EasyPanel.
 
 | Componente | Tecnologia |
 |---|---|
-| Linguagem | Go 1.25 |
-| WhatsApp | whatsmeow |
+| Linguagem | Go 1.26 |
+| WhatsApp | whatsmeow (multi-device, via QR) |
+| WhatsApp oficial | Meta Cloud API (opcional, por licença) |
 | HTTP | Fiber v2 |
-| Banco de dados | PostgreSQL (pgx/pgxpool) |
-| Cache / Filas | Redis |
-| Persistência de sessões WA | SQLite (um arquivo por número) |
-| Pagamentos | **Itaú** — Recebimentos PIX (mTLS) + Boleto Cash Management V2 |
+| Banco | PostgreSQL (pgx/pgxpool) |
+| Filas | Redis |
+| Sessões WA | SQLite — um arquivo por número |
+| E-mail | SMTP → proxy OAuth2 → Microsoft 365 |
 | Logs | zap |
 | Métricas | Prometheus |
 | Deploy | EasyPanel + Docker |
 
 ---
 
-## O que o sistema faz
-
-1. **Conecta WhatsApp ao Bitrix24** — mensagens do cliente no WhatsApp chegam
-   no Contact Center; respostas do operador voltam pro WhatsApp. Multi-tenant:
-   N números WA × N portais Bitrix.
-2. **Cobra pelo uso** — cada portal (tenant) tem um plano. Novos clientes
-   entram em **Trial**; depois assinam **Básico** ou **Pro** pagando por
-   **PIX** ou **Boleto** direto no Itaú. Pagamento confirmado libera o plano
-   automaticamente (webhook).
-3. **Administra tudo num painel** (`/admin`) — tenants, planos, cupons,
-   gateway de pagamento, auditoria e ferramentas de diagnóstico.
-
----
-
-## Arquitetura geral
+## Arquitetura
 
 ```
-WhatsApp ──► Manager ──► Redis Queue ──► Worker Pool ──► Bitrix24 REST API
-               │                                              │
-               │◄──────────────────────────────────────────────┘
-                     (resposta do operador via webhook Bitrix)
+WhatsApp ──► Manager ──► Redis queue:inbound  ──► Workers ──► Bitrix24 REST
+                                                                    │
+WhatsApp ◄── Manager ◄── Redis queue:outbound ◄── Workers ◄─────────┘
+                                                   (webhook do operador)
 
-Cliente paga PIX/Boleto ──► Itaú ──► webhook /billing/itau ──► libera plano
+Alertas ──► SMTP simples ──► uctalk_email (proxy OAuth2) ──► Microsoft 365
 ```
 
-### Componentes principais
+### Componentes
 
-| Componente | Arquivo | Função |
+| Componente | Onde | Função |
 |---|---|---|
-| **Manager** | `internal/whatsapp/manager.go` | N sessões WhatsApp em goroutines independentes. |
-| **Processor** | `internal/bitrix/processor.go` | Converte mensagem WA em chamada REST ao Bitrix24. |
-| **Bitrix Client** | `internal/bitrix/client.go` | REST Bitrix24 com OAuth2 + refresh automático. |
-| **Queue / Workers** | `internal/queue/` | Filas Redis `queue:inbound`/`queue:outbound` com retry. |
-| **Watchdog** | `internal/watchdog/watchdog.go` | Reconecta sessões automaticamente. |
-| **API** | `internal/api/` | Handlers Fiber: dashboard, admin, webhooks, billing. |
-| **Itaú** | `internal/itau/` | Cliente PIX (`itau.go`) + Boleto (`boleto.go`) + webhook (`webhook.go`). |
-| **Repository** | `internal/db/repository.go` | Acesso ao PostgreSQL. Migrations em `internal/db/db.go`. |
+| **Manager** | `internal/whatsapp/manager.go` | N sessões WhatsApp, cada uma em goroutine própria. |
+| **Processor** | `internal/bitrix/processor.go` | Traduz mensagem WA em chamada ao Contact Center. |
+| **Bitrix Client** | `internal/bitrix/client.go` | REST do Bitrix24 com OAuth2 e refresh serializado. |
+| **Queue / Workers** | `internal/queue/` | `queue:inbound`, `queue:outbound`, `queue:dead`, com retry e reprocesso. |
+| **Watchdog** | `internal/watchdog/` | Reconecta sessão que caiu. |
+| **Alertas** | `internal/api/alertas.go` | Verifica token e conexões a cada 5min e avisa por e-mail. |
+| **E-mail** | `internal/email/` | Envio e o template de alerta da UC Technology. |
+| **Repository** | `internal/db/repository.go` | PostgreSQL. Migrations em `internal/db/db.go`. |
 
 ---
 
-## Billing (Itaú)
+## Licença por cliente
 
-Todo o pagamento é **direto no Itaú** (MaxiPago foi aposentado).
+Substituiu planos e cobrança. Cada portal tem uma linha em `tenant_licenses`
+com o que o **contrato** dá — não um pacote fechado:
 
-| Recurso | Como funciona |
+| Benefício | Efeito |
 |---|---|
-| **PIX** | Recebimentos PIX (`pix-pj.api.itau.com`). mTLS + OAuth `client_credentials` (credenciais no *body*, não Basic). O CN do certificado == Client ID. |
-| **Boleto** | Cash Management V2 (`api.itau.com.br/cash_management/v2`). Carteira 109, "nosso número" crescente/único (contador atômico no banco). |
-| **Webhook** | O Itaú chama `/billing/itau` (aceita também `/billing/itau/pix`) quando um PIX é pago. Reconcilia por `txid`, marca a cobrança paga (idempotente) e ativa o plano. |
-| **Certificado** | Montado no volume em `/app/certs/itau.crt` + `itau.key`. **Nunca** versionado (está no `.gitignore`). O boot NÃO testa o cert — use o botão *"Testar PIX (R$1)"* no painel. |
+| Números WhatsApp | Quantas sessões o cliente pode parear. |
+| Cloud API + Templates | Libera WhatsApp oficial e templates HSM. |
+| Automações | Robôs BizProc. |
+| Relatórios | Aba de relatórios no painel do cliente. |
 
-> Guia completo de setup Itaú: [`docs/aprendizados/07-integracao-pix-itau.md`](docs/aprendizados/07-integracao-pix-itau.md).
+Pagamento é registrado pelo suporte (`license_payments`) e **estende** a
+vigência. O financeiro não tem login: é avisado por e-mail.
 
-### Planos
-
-Três planos, definidos em `plan_definitions` (editáveis na aba **Planos**):
-
-| Plano | Preço | Papel |
-|---|---|---|
-| **Trial** | grátis | Concedido automaticamente no install (`is_trial_default`). Não aparece nos cards de compra. |
-| **Básico** | R$ 99/mês | 1 sessão, sem features avançadas. |
-| **Pro** | R$ 199/mês | Múltiplas sessões + templates, automações, SMS, relatórios. |
-
-As migrations garantem a ordem Trial → Básico → Pro (migration `042`).
+**Licença vencida avisa, não bloqueia.** Ninguém fica sem atendimento por
+boleto atrasado — decisão de projeto, não esquecimento.
 
 ---
 
-## Painel Admin (`/admin`)
+## Painel de suporte (`/admin`)
 
-Protegido por `ADMIN_USER`/`ADMIN_PASSWORD` (cookie assinado com `APP_SECRET`,
-HMAC-SHA256). Todas as rotas `/admin/api/*` retornam **401** sem login.
-
-| Aba | O que faz |
+| Aba | Para quê |
 |---|---|
-| **Visão geral** | KPIs (tenants, em trial, ativos, expirados, receita, sessões) + últimos pagamentos. |
-| **Tenants** | Lista de portais com plano, status, conexões, mensagens 24h, token. Ações: ativar Pro/Básico, +7d trial, reativar, suspender, abrir em Ferramentas. Busca + filtros por status/plano. |
-| **Planos** | Construtor de planos: preço, features, sessões, trial, formas de pagamento. |
-| **Cupons** | Desconto %, valor fixo ou dias extras de trial. |
-| **Gateway** | Status (somente leitura) do Itaú + botões de teste real (PIX R$1 / Boleto validação). |
-| **Auditoria** | Histórico de mudanças: login, planos, cupons, tenants (ativar/suspender/reativar/pagamento), IP block. |
-| **Ferramentas** | Diagnósticos por tenant (placements, master, SMS, BizProc, portal). |
+| **Visão geral** | Números conectados vs ativos, mensagens por direção, falhas, filas, últimas mensagens de todos os clientes e alertas do que exige ação agora. |
+| **Tenants** | Portais instalados, com licença, conexões e token. |
+| **Consumo** | Mensagens por período contra o contratado, com vigência. |
+| **Saúde do cliente** | Estado real de um cliente: Bitrix, sessões, mensagens, fila e licença. Ações: testar conexão, parear WhatsApp, reentregar fila, cadastrar credenciais do app, ver como o cliente vê. |
+| **Licenças** | Benefícios contratados, vigência e pagamentos. |
+| **Alertas** | Para onde enviar, o que avisar, de quanto em quanto tempo, e o histórico do que saiu. |
+| **Sistema / Logs** | Processo em tempo real e stream de log. |
+| **Minha conta** | Troca da própria senha. |
+| **Usuários admin / IPs / Auditoria** | Quem acessa, bloqueio por IP, trilha de ações. |
+| **Preview do app** | Como o cliente vê o UC Talk, por cliente ou em modo demonstração. |
+| **Ferramentas** | Reparo pontual — cada ação diz quando usar. |
 
 ---
 
-## Endpoints principais
+## Alertas por e-mail
 
-### Público / UI (sem auth de admin)
+O app **não fala com a Microsoft**: manda SMTP simples para o proxy
+(`tools/oauth2-email-service`), que resolve o OAuth2 com o Azure AD. Nenhuma
+credencial do Azure entra no processo do UC Talk — é a razão de existirem dois
+serviços.
 
-| Método | Rota | Descrição |
+| Alerta | Quando | Janela padrão |
 |---|---|---|
-| `GET` | `/health` | Health check (status + filas). |
-| `GET` | `/metrics` | Métricas Prometheus. |
-| `GET` | `/dashboard` | Dashboard do tenant (gated: só iframe Bitrix / cookie válido). |
-| `GET` | `/welcome`, `/planos`, `/connect` | Telas públicas / onboarding. |
-| `POST` | `/billing/itau`, `/billing/itau/pix` | Webhook de PIX pago (Itaú). |
+| Token do Bitrix vencido | O token não renova; nenhuma mensagem chega no Contact Center. | 6h |
+| Número desconectado | O banco diz ativo, mas não há conexão viva. | 30min |
+| Licença vencendo/vencida | Aviso pro financeiro. | diário |
 
-### Bitrix24
+Tudo configurável na aba **Alertas**, sem reiniciar: a configuração vive em
+`config_alertas` e o job relê a cada ciclo. As variáveis de ambiente valem
+apenas como carga inicial.
 
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET/POST` | `/bitrix/callback` | Instalação do app local (ONAPPINSTALL). |
-| `POST` | `/bitrix/connector/event` | Resposta do operador (ONIMCONNECTORMESSAGEADD). |
-| `POST` | `/bitrix/auth` | Token BX24.js do iframe. |
-| `GET` | `/bitrix-connect` | Application URL do Partner App. |
+O e-mail usa o template da UC Technology (`internal/email/template.go`), o
+mesmo layout do backend de ferramentas.
 
-### Admin (requer login)
-
-`GET /admin` · `/admin/api/tenants` · `/admin/api/metrics` ·
-`/admin/api/plan-defs` · `/admin/api/coupons` · `/admin/api/itau-status` ·
-`POST /admin/api/itau-test` · `/admin/api/tenant/plan/*` · `/admin/api/audit`
+> Setup do serviço de e-mail: [`tools/oauth2-email-service/README.md`](tools/oauth2-email-service/README.md).
 
 ---
 
 ## Banco de dados
 
 Migrations rodam **em todo boot**, na ordem do array em
-[`internal/db/db.go`](internal/db/db.go), **sem ledger** — por isso toda
-migration é **idempotente** (`ADD COLUMN IF NOT EXISTS`, `ON CONFLICT DO
-NOTHING`, `UPDATE` direto).
+[`internal/db/db.go`](internal/db/db.go), **sem ledger**. Por isso toda
+migration precisa ser idempotente (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
+
+> A pasta `migrations/*.sql` é **código morto** — ver [`migrations/README.md`](migrations/README.md).
 
 | Tabela | Descrição |
 |---|---|
-| `whatsapp_sessions` | Sessões WA — JID, telefone, status, path SQLite. |
-| `bitrix_accounts` | Vínculo sessão WA ↔ conta Bitrix — domain, connector, open line. |
-| `bitrix_tokens` | Tokens OAuth2 por domain. |
-| `bitrix_portals` | Portais instalados (Partner App) — member_id, tokens, `installed_at`. |
-| `messages` | Log de mensagens — direção, tipo, status. |
-| `tenant_plans` | Plano de cada portal — plan, status, active_until, trial_ends_at. |
-| `plan_definitions` | Catálogo de planos (preço, features, trial, pagamento). |
-| `billing_charges` | Cobranças geradas — método, valor, txid/nosso-número, pago. |
-| `coupons` | Cupons de desconto. |
-| `boleto_numeracao` | Contador atômico do "nosso número" (carteira 109). |
-| `audit_log` | Trilha de auditoria. |
-| `blocked_ips` | Bloqueio de IPs. |
+| `whatsapp_sessions` | Sessões WA — JID, telefone, status, arquivo SQLite. |
+| `bitrix_accounts` | Vínculo sessão ↔ portal: domínio, conector, linha aberta, credenciais OAuth. |
+| `bitrix_tokens` | Tokens OAuth2 por domínio e `client_id`. |
+| `bitrix_portals` | Portais instalados. |
+| `messages` | Log de mensagens — direção, tipo, status, erro. |
+| `contact_mapping` | Contato WA ↔ chat do Bitrix. |
+| `lid_phone_map` | LID do WhatsApp ↔ telefone real. |
+| `tenant_licenses` | Benefícios contratados e vigência. |
+| `license_payments` | Pagamentos registrados pelo suporte. |
+| `license_notifications` | Avisos de vencimento já enviados. |
+| `config_alertas` | Configuração dos alertas (linha única). |
+| `alertas_operacionais` | Alertas enviados — evita repetir o mesmo aviso. |
+| `crm_user_permissions` | Quem pode enviar por qual número. |
+| `message_templates` | Respostas prontas do operador. |
+| `admin_users` · `admin_audit_log` · `blocked_ips` | Acesso ao painel e trilha. |
 
 ---
 
-## Deploy no EasyPanel
+## Endpoints principais
 
-O EasyPanel faz deploy a partir da branch `main` do GitHub
-(`matheuslopes9/api-bitrix24-whatsapp`).
+### Público
 
-> **Importante:** não use `#` em valores de env — o EasyPanel trunca no `#`.
+| Rota | Descrição |
+|---|---|
+| `GET /health` | Status + profundidade das filas. |
+| `GET /metrics` | Prometheus. |
+| `GET /dashboard` | Painel do cliente (iframe Bitrix ou cookie válido). |
+| `GET /assets/logo-email.png` | Logo dos alertas — buscada pelo cliente de e-mail. |
 
-### Variáveis obrigatórias (resumo)
+### Bitrix24
+
+| Rota | Descrição |
+|---|---|
+| `GET/POST /bitrix/callback` | Instalação do app. |
+| `POST /bitrix/connector/event` | Resposta do operador. |
+| `POST /bitrix/auth` | Token do BX24.js. |
+| `GET /bitrix/crm/tab` | Aba no contato, lead e negócio. |
+
+### Admin (exige login)
+
+`/admin/api/tenants` · `/metrics` · `/usage` · `/mensagens-recentes` ·
+`/licenses` · `/license` · `/tenant/health` · `/tenant/credenciais` ·
+`/tenant/reprocessar-fila` · `/alertas/config` · `/alertas/teste` ·
+`/alertas/historico` · `/me/password` · `/audit`
+
+---
+
+## Deploy
+
+Dois serviços no mesmo projeto do EasyPanel, para compartilharem a rede interna.
+
+### 1. `connector` — o app
+
+Build a partir da raiz do repositório, branch `main`.
 
 ```env
 APP_PORT=3000
 APP_ENV=production
 APP_SECRET=<string-forte>
-APP_BASE_URL=https://<dominio>          # OBRIGATÓRIO p/ webhooks Bitrix
-ADMIN_USER=<usuario-admin>
+APP_BASE_URL=https://<dominio>/          # usado em webhooks e nos e-mails
+ADMIN_USER=<usuario>
 ADMIN_PASSWORD=<senha-forte>
 
 POSTGRES_HOST=... POSTGRES_PORT=5432 POSTGRES_USER=... POSTGRES_PASSWORD=...
 POSTGRES_DB=... POSTGRES_SSLMODE=disable
 REDIS_HOST=... REDIS_PORT=6379 REDIS_PASSWORD=...
 
-# Itaú (billing). O SECRET vem do .env do servidor — nunca colar em chat/git.
-ITAU_CLIENT_ID=...
-ITAU_CLIENT_SECRET=...
-ITAU_CHAVE_PIX=...
-ITAU_ENV=producao                       # ou sandbox
-ITAU_CERT_PATH=/app/certs/itau.crt      # montar no volume
-ITAU_KEY_PATH=/app/certs/itau.key
-ITAU_AGENCIA=... ITAU_CONTA=... ITAU_CONTA_DAC=... ITAU_CARTEIRA=109
+BITRIX_REDIRECT_URI=https://<dominio>/bitrix/callback
 ```
 
-### Setup
+`BITRIX_CLIENT_ID` e `BITRIX_CLIENT_SECRET` são **opcionais**: o app é
+instalado por cliente, e cada portal tem o seu. Cadastre em **Saúde do
+cliente → Credenciais do app**. A env global só serve quando há um app único.
 
-1. Serviço App no EasyPanel apontando pro repo, branch `main`.
-2. Configurar as envs (incluindo `APP_BASE_URL` e as `ITAU_*`).
-3. Subir o certificado Itaú (`itau.crt` + `itau.key`) no volume `/app/certs`.
-4. Deploy. As migrations rodam sozinhas no boot.
-5. No Itaú: cadastrar o webhook `https://<dominio>/billing/itau` (**sem** `/pix`).
-6. No painel `/admin` → **Gateway** → *Testar PIX (R$1)* pra validar o cert.
+As de e-mail (`SMTP_HOST`, `EMAIL_SENDER`, `ALERT_RECIPIENTS`) também são
+opcionais — valem como carga inicial da aba **Alertas**.
+
+### 2. `uctalk_email` — o proxy de e-mail
+
+Mesmo repositório, com **Build Path `tools/oauth2-email-service`**.
+
+```env
+AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=...
+SENDER_EMAIL=<conta com licença de envio>
+EMAIL_SENDER=<endereço que aparece no From>
+PROXY_HOST=0.0.0.0                       # 127.0.0.1 o torna inalcançável
+PROXY_PORT=2526
+```
+
+**Não publique domínio** nesse serviço: o proxy aceita e-mail sem autenticação
+e só deve ser alcançado pela rede interna.
+
+> **`#` em valor de env:** o EasyPanel trunca no `#`. Evite.
 
 ---
 
 ## Testes
 
-### Smoke test (valida um deploy no ar)
-
-Roda **da sua máquina** contra a URL pública — não precisa de login admin.
-Ver [`scripts/smoke/README.md`](scripts/smoke/README.md).
-
-```powershell
-./scripts/smoke/smoke.ps1          # Windows
-```
 ```bash
-./scripts/smoke/smoke.sh           # Linux/macOS/CI
+go build ./... && go vet ./... && go test ./...
 ```
 
-Cobre: health, rotas públicas, proteção do admin (401/302) e robustez do
-webhook Itaú. Sai com código 1 se algo falhar.
+| Pacote | Cobre |
+|---|---|
+| `internal/bitrix` | Nome do contato, listagem de usuários, fila da linha. |
+| `internal/db` | Normalização de permissões por número. |
+| `internal/queue` | Direção do job na dead queue, limite de taxa, falha permanente. |
+| `internal/whatsapp` | Variantes do 9º dígito. |
+| `internal/email` | Limite de linha SMTP, multipart, template e categorias. |
 
-### Stress test (carga do webhook Bitrix)
+### JavaScript dentro do Go
 
-Ver [`scripts/stress_test/README.md`](scripts/stress_test/README.md).
+O painel e a aba do CRM têm milhares de linhas de JS dentro de string Go — o
+`go build` **não** as enxerga, e um erro de sintaxe derruba a tela inteira sem
+aviso. Antes de subir mudança de UI:
+
+```bash
+python - <<'PY'
+import io,re
+s=io.open('internal/api/admin_html.go',encoding='utf-8').read()
+js='\n;\n'.join(re.findall(r'<script>(.*?)</script>', s, re.S))
+io.open('/tmp/check.js','w',encoding='utf-8').write(js)
+ch=set(re.findall(r'onclick="([A-Za-z_$][\w$]*)\(', s))
+de=set(re.findall(r'function\s+([A-Za-z_$][\w$]*)\s*\(', js))
+print('handlers sem definicao:', sorted(ch-de) or 'nenhum')
+PY
+node --check /tmp/check.js
+```
+
+Isso já pegou três erros que teriam ido a produção, incluindo uma função
+apagada por engano junto de um bloco substituído.
+
+### Smoke test
+
+```bash
+./scripts/smoke/smoke.sh      # ou smoke.ps1 no Windows
+```
 
 ---
 
-## Estrutura do projeto
+## Estrutura
 
 ```
 .
-├── cmd/server/main.go              # Entrypoint — wiring dos componentes
+├── cmd/server/main.go           # Entrypoint e wiring
 ├── internal/
-│   ├── api/                        # Handlers Fiber
-│   │   ├── server.go               # Rotas
-│   │   ├── admin.go / admin_html.go / admin_platform.go  # Painel admin
-│   │   ├── billing.go / billing_itau.go                  # Checkout + webhook
-│   │   ├── gateway_itau_admin.go   # Status + teste do gateway Itaú
-│   │   ├── plan_admin.go           # Planos + ações de tenant
-│   │   ├── dashboard.go            # Dashboard do tenant
-│   │   └── partner.go              # Partner App (Marketplace)
-│   ├── itau/                       # PIX + Boleto Itaú (mTLS)
-│   ├── bitrix/                     # REST Bitrix24
-│   ├── db/                         # Pool, models, repository, migrations
-│   ├── queue/                      # Redis + worker pool
-│   ├── whatsapp/                   # Sessões whatsmeow
-│   ├── watchdog/ · telemetry/ · config/
-├── docs/aprendizados/              # Documentação profunda por tema
-├── scripts/smoke/                  # Smoke test (ps1 + sh)
-├── scripts/stress_test/            # Stress test do webhook
-└── Dockerfile · docker-compose.yml
+│   ├── api/                     # Handlers Fiber
+│   │   ├── server.go            # Rotas
+│   │   ├── admin_html.go        # Painel de suporte (HTML + JS)
+│   │   ├── tenant_health.go     # Saúde do cliente
+│   │   ├── alertas.go           # Job de alertas
+│   │   ├── alertas_admin.go     # Configuração dos alertas
+│   │   ├── reprocesso.go        # Reprocesso automático da fila
+│   │   ├── conta.go             # Senha do admin e teste de e-mail
+│   │   ├── license_admin.go     # Licenças e pagamentos
+│   │   ├── crm.go               # Aba do CRM
+│   │   └── dashboard.go         # Painel do cliente
+│   ├── email/                   # Envio + template de alerta
+│   ├── bitrix/ · whatsapp/ · queue/ · db/ · watchdog/ · config/
+├── docs/fluxos/                 # Cada fluxo ponta a ponta
+├── docs/aprendizados/           # Decisões e bugs que custaram caro
+├── tools/oauth2-email-service/  # Proxy SMTP OAuth2 (serviço separado)
+└── Dockerfile
 ```
 
 ---
 
-## Segurança — regras do projeto
+## Segurança
 
-- **Certificados** (`*.crt`, `*.key`, `*.pfx`) e a pasta `certs/` **nunca** vão
-  pro git. Já estão no `.gitignore`.
-- **Secrets** (`ITAU_CLIENT_SECRET`, `APP_SECRET`, senhas de banco) vêm das
-  envs do servidor — nunca colados em chat, commit ou log.
-- O painel admin é o único com headers restritivos (`X-Frame-Options: DENY`);
-  o resto roda em iframe Bitrix.
+- **Segredos vêm do ambiente ou do banco** — nunca de commit, chat ou log. Isso
+  inclui `client_secret` do Bitrix e do Azure, `APP_SECRET` e senhas de banco.
+- O `client_secret` do Bitrix **aparece** na tela de credenciais, com
+  mostrar/ocultar: o suporte precisa conferir, e regravar no escuro a cada
+  dúvida derruba a renovação do token. Não vai para log nem para a tela de
+  saúde, que mostra apenas se existe.
+- **QR de pareamento é renderizado no próprio app** (`rsc.io/qr`). Já foi
+  enviado a um serviço externo de imagem — era vazamento de segredo de
+  pareamento.
+- `tools/**/.env`, `tools/*.msg` e certificados estão no `.gitignore`.
+- O painel admin é o único com `X-Frame-Options: DENY`; o resto roda em iframe.
 
 ---
 
-## Status
+## Estado atual
 
-| Área | Status |
+| Área | Situação |
 |---|---|
-| WA → Bitrix24 (texto + mídias) | ✅ Funcionando |
-| Bitrix24 → WA (resposta do operador) | ✅ Funcionando |
-| Multi-tenant (N sessões × N portais) | ✅ Funcionando |
-| Painel admin (tenants, planos, cupons, auditoria) | ✅ Funcionando |
-| Billing PIX + Boleto (Itaú) | ✅ Implementado — validar pagamento real em homolog |
-| Smoke test | ✅ 18/18 no homolog |
-| Testes automatizados (unit) | ❌ Não implementado |
+| WA → Bitrix (texto e mídia) | Funcionando |
+| Bitrix → WA | Funcionando |
+| Multi-tenant | Funcionando |
+| Painel de suporte | Funcionando |
+| Licenças e pagamentos | Funcionando |
+| Alertas por e-mail | Funcionando |
+| Permissões por número | Funcionando — lista pela estrutura da empresa |
+| Testes automatizados | Parcial — ver tabela acima |
+| WhatsApp oficial (Cloud API) | Implementado, pouco exercitado |
+
+### Limites conhecidos
+
+- **`user.get` não é concedido** ao app no portal do cliente. A listagem de
+  usuários usa a estrutura da empresa (`mobile.intranet.departments.get` +
+  `im.department.employees.get`), que é rápida e completa. Se o portal não
+  tiver o quadro montado, cai numa sondagem por IDs, lenta e parcial.
+- **O token do app age como quem instalou.** Registro fora do alcance desse
+  usuário volta vazio do Bitrix. Na aba do CRM isso é contornado lendo pelo
+  `BX24` do usuário logado; no backend, não.
+- **Alerta de sessão não cobre Cloud API.** Ela é stateless por HTTPS e não
+  vive no manager, então ausência ali não significa queda.

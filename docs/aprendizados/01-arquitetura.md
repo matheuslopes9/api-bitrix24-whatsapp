@@ -7,8 +7,11 @@ via whatsmeow/Multi-Device) ao **Bitrix24** (CRM + Open Channels/Linhas Abertas)
 Escrito em **Go**, servido por **Fiber**, com **PostgreSQL** (pgx/pgxpool),
 **Redis** (filas) e **zap** (logs). Deploy em **EasyPanel** (Docker).
 
-Modelo comercial: SaaS multi-tenant com trial de 7 dias, planos (Trial / Básico /
-Pro), cupons e cobrança via MaxiPago.
+Modelo comercial: **instalação local pela UC Technology**, uma licença por
+cliente. Não há trial, planos, cupons nem cobrança online — o cliente paga pelo
+comercial, e o contrato vira benefícios em `tenant_licenses`. O modelo antigo
+(SaaS de marketplace com trial e gateway) foi removido; o histórico dessa
+mudança está em [`docs/fluxos/05-licenca.md`](../fluxos/05-licenca.md).
 
 ## Componentes centrais (god nodes do grafo)
 
@@ -25,9 +28,11 @@ seguram o sistema:
 
 ## Decisão: `Repository` é um God Object (dívida técnica conhecida)
 
-**O que é:** o `Repository` conecta 15 comunidades diferentes do grafo (sessões,
-cloud, billing, OAuth, planos, auditoria, templates, cupons...). Betweenness
-centrality **0.104** — de longe a maior ponte do sistema.
+**O que é:** o `Repository` conecta praticamente todos os domínios do sistema
+(sessões, cloud, licenças, OAuth, permissões, auditoria, templates, alertas...).
+Betweenness centrality **0.104** na medição original — de longe a maior ponte
+do sistema. A remoção do módulo de cobrança tirou algumas comunidades, mas a
+natureza de God Object continua.
 
 **Por que ficou assim:** velocidade. Centralizar todo acesso a dados num único
 tipo foi mais rápido do que criar repositórios por domínio. Funcionou bem
@@ -37,7 +42,7 @@ enquanto o projeto era pequeno.
 testar isoladamente, e qualquer mudança de schema toca tudo.
 
 **Quando refatorar:** se/quando o time crescer ou o arquivo passar de ~alguns
-milhares de linhas. Fatiar por domínio: `SessionRepo`, `BillingRepo`,
+milhares de linhas. Fatiar por domínio: `SessionRepo`, `LicenseRepo`,
 `TenantRepo`, `BitrixRepo`. **Não é urgente** — é uma decisão consciente, não um
 acidente.
 
@@ -86,7 +91,7 @@ WhatsApp manager e watchdog, nessa ordem.
 | Homologação | (novo) | `uctalk-homolog-connector.omva7z.easypanel.host` |
 
 Os dois rodam no mesmo host EasyPanel (`omva7z`), portanto compartilham o mesmo
-**IP de saída** (`187.110.174.122`) — relevante para o allowlist da MaxiPago.
+**IP de saída** (`187.110.174.122`) — relevante para allowlist de serviço externo.
 
 ## Segurança (mecanismos usados)
 

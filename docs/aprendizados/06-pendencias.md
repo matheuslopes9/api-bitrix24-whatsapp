@@ -1,91 +1,158 @@
 # Pendências & Próximos Passos
 
-Estado em que o projeto está parado, o que falta, e os riscos a tratar antes de
-produção.
+Onde o projeto está, o que falta, e o que precisa ser checado antes e durante a
+fase de testes.
 
-## 🔴 Segurança — ANTES de produção (crítico)
+---
 
-Vários segredos foram expostos durante o desenvolvimento (chat, envs de
-homolog). **Rotacionar TODOS antes de ir a produção** e nunca commitar:
+## 🔴 Segurança — fazer agora
 
-- [ ] `ADMIN_PASSWORD`
-- [ ] `POSTGRES_PASSWORD`, `REDIS_PASSWORD`
-- [ ] `BITRIX_CLIENT_SECRET`
-- [ ] `APP_SECRET`
-- [ ] `ITAU_CLIENT_SECRET` — foi manuseado no setup; rotacionar via gerente antes de prod
-- [ ] Token GitHub PAT exposto no chat — **revogar** em github.com/settings/tokens
-- [ ] Senha do servidor de faturamento — exposta no chat; trocar independentemente
+Vários segredos circularam em chat durante o desenvolvimento e a operação.
+**Rotacionar todos**, em ordem de dano potencial:
 
-**Nota:** o `.env` e os certificados (`itau.crt`/`itau.key`) **nunca** vão pro
-git — estão no `.gitignore` (`faturamento/`, `*.key`, `*.crt`, `certs/`). Usar
-env do EasyPanel + volume pros certificados.
+- [ ] **`AZURE_CLIENT_SECRET`** — o mais grave. Permite enviar e-mail como
+      `@uctechnology.com.br`; vale para o **domínio inteiro**, não só para este
+      app. Rotacionar no Azure AD e atualizar o serviço `uctalk_email`.
+- [ ] **`BITRIX_CLIENT_SECRET`** do app instalado no portal do cliente.
+      Ao rotacionar, atualizar em **Saúde do cliente → Credenciais do app**
+      *antes* de testar, senão volta o `wrong_client`.
+- [ ] `APP_SECRET` — assina os cookies de tenant e de admin. Trocar invalida
+      as sessões abertas, o que é aceitável.
+- [ ] `ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`.
+- [ ] Token GitHub PAT, se ainda existir — revogar em
+      github.com/settings/tokens.
 
-**Regra do EasyPanel:** senhas **não podem conter `#`** — o EasyPanel interpreta
-como comentário e trunca o valor.
+**Regra do EasyPanel:** valor de env **não pode conter `#`** — ele trunca ali.
 
-## 🟢 Pagamentos — Itaú (PIX + Boleto)
+---
 
-**Estado:** código completo e commitado. Checkout usa Itaú direto pros dois
-métodos. MaxiPago aposentada (código morto, limpeza na fase 2).
+## 🔴 Banco de dados — investigar
 
-### O que falta pra funcionar em homologação
-- [x] Cliente PIX + Boleto Itaú implementados
-- [x] Certificado da empresa já existe (`faturamento/app/certs/`, válido 2027)
-- [x] Produto PIX habilitado pelo gerente
-- [ ] **Copiar** `itau.crt`/`itau.key` pro volume `/app/certs/` do EasyPanel
-- [ ] **Setar** as envs `ITAU_*` (secret vem de `faturamento/app/.env`)
-- [ ] **Cadastrar webhook** no Itaú: `https://SEU-DOMINIO/billing/itau` (SEM `/pix`)
-- [ ] **Validar mTLS do webhook** atrás do Traefik/EasyPanel (pode precisar ajuste)
-- [ ] Confirmar **DNS de homologação** com o gerente (pra `ITAU_ENV=sandbox`);
-      sem ele, teste roda em `producao` — **PIX/boleto reais** (usar R$1 e
-      `ITAU_ETAPA=validacao` pro boleto não emitir de verdade)
+Em 24/09 o Postgres entrou em **recovery mode** e demorou mais de 10 minutos
+sem aceitar conexão, chegando a voltar ao estágio inicial. Isso derruba o
+sistema inteiro: sem banco, mensagem de cliente não é entregue.
 
-### ⚠️ Sobre testar em homologação
-Não há sandbox Itaú configurado (falta o DNS). Então:
-- **Boleto:** `ITAU_ETAPA=validacao` → valida mas não emite real. Seguro.
-- **PIX:** `ITAU_ENV=producao` → **cobrança real**. Testar com R$1, QR não circula.
+- [ ] Descobrir **por que** houve desligamento sujo (reinício do host, falta de
+      memória, disco cheio). Se foi disco, volta a acontecer.
+- [ ] Conferir espaço livre e política de retenção de `messages`
+      (migration `020_messages_retention`).
+- [ ] Confirmar que existe **backup recente e restaurável** — houve um
+      `pg_dump` antes da migração de licenças, mas não há rotina automática.
 
-Ver setup completo em [07-integracao-pix-itau.md](07-integracao-pix-itau.md).
+> Nunca reiniciar o Postgres durante recovery: reinicia o processo do zero e é
+> o caminho mais rápido de transformar um susto em perda real.
 
-## 🟡 Bitrix (ambiente de teste)
+---
 
-- [ ] Registrar o app no Bitrix de **teste/homologação** (deixado para depois —
-      "essa parte do bitrix vamos ver depois"). Produção já está no ar para a
-      empresa.
+## 🟡 Fase de testes — roteiro
 
-## 🟢 Evoluções de automação (não implementadas)
+O que exercitar, com o resultado esperado. Cada item que falhar deve virar
+issue com o log correspondente.
 
-Três melhorias de automação idealizadas mas nunca construídas:
+### Fluxo básico
+
+- [ ] Cliente manda mensagem → chega no Contact Center com **nome correto**
+      (não "Guest") e no chat certo.
+- [ ] Operador responde pelo Contact Center → chega no WhatsApp do cliente.
+- [ ] Operador envia pela **aba do CRM**, a partir de um **contato**.
+- [ ] Operador envia pela aba do CRM a partir de um **negócio** — o telefone
+      vem do contato vinculado.
+- [ ] Mídia nos dois sentidos: imagem, áudio, documento.
+
+### 9º dígito
+
+- [ ] Enviar para contato cujo WhatsApp existe **sem** o 9, com o CRM
+      guardando **com** o 9. Deve entregar, e o cliente deve conseguir
+      **responder** (o log mostra `enviado_para` terminando em
+      `@s.whatsapp.net`, nunca `@lid`).
+- [ ] A resposta cai na **mesma conversa**, não numa nova.
+- [ ] Enviar para número que não existe no WhatsApp → falha **na primeira
+      tentativa**, com motivo legível, sem gastar 6 retentativas.
+
+### Permissões
+
+- [ ] A aba de permissões lista **todos** os funcionários ativos do portal.
+- [ ] Operador sem permissão no número não consegue enviar.
+- [ ] Usuário desativado no Bitrix **não** aparece.
+
+### Licença
+
+- [ ] Marcar Cloud API → a aba Templates aparece no painel do cliente.
+      Desmarcar → some.
+- [ ] Reduzir o número de sessões abaixo do usado → o painel avisa.
+- [ ] Pôr `valid_until` no passado → aviso no painel, **e o atendimento
+      continua funcionando** (vencida avisa, não bloqueia).
+
+### Alertas
+
+- [ ] **Enviar teste** em Alertas → e-mail chega no padrão da empresa.
+- [ ] Desconectar um número de teste → em até 5min chega o alerta
+      "Número desconectado", com o cliente e o que fazer.
+- [ ] O mesmo alerta **não** se repete dentro da janela configurada.
+- [ ] Alterar destinatário na tela → vale **sem reiniciar** o app.
+
+### Resiliência
+
+- [ ] Derrubar e subir o `connector` → as sessões reconectam sozinhas.
+- [ ] Fila presa → o reprocesso automático devolve em até 15min, e o botão
+      manual funciona a qualquer momento.
+- [ ] Token vencido → alerta chega, e após cadastrar credencial a renovação
+      volta sozinha.
+
+---
+
+## 🟡 Bitrix — resolver com o cliente
+
+- [ ] **Reinstalar o app por um administrador.** Hoje o token age como o
+      usuário que instalou (`ADMIN=false`), e registro fora do alcance dele
+      volta vazio — foi o caso do negócio 12313. A aba do CRM contorna lendo
+      pelo `BX24` do usuário logado, mas o backend não tem esse recurso.
+      Reinstalar **muda** `client_id`/`client_secret`: atualizar em Credenciais
+      do app antes de testar.
+- [ ] Avaliar conceder o escopo **`user`** ao app. Sem ele, `user.get` é
+      recusado. A listagem atual pela estrutura da empresa é rápida e completa,
+      então isso deixou de ser urgente.
+- [ ] **Conector duplicado:** `bitrix_accounts.connector_id` é
+      `wa_qr_<numero>` e `bitrix_portals.connector_id` é `whatsapp_uc_v2`. Os
+      dois estão registrados e ativos, então não quebra — mas são duas fontes
+      para a mesma coisa e vão divergir de novo.
+- [ ] Há outros conectores de WhatsApp ativos no portal do teclife (`WhatCrm`).
+      Dois sistemas pareando o mesmo número brigam entre si.
+
+---
+
+## 🟢 Evoluções não construídas
 
 - [ ] Robô "**aguardar resposta do cliente**" (pausa o fluxo até o cliente
-      responder)
-- [ ] **Retorno de status** para o workflow (o robô devolve resultado ao BizProc)
-- [ ] **Templates de fluxo prontos** (fluxos pré-montados para o cliente usar)
+      responder).
+- [ ] **Retorno de status** para o workflow BizProc.
+- [ ] **Templates de fluxo prontos** para o cliente usar.
+- [ ] Alerta de desconexão para **Cloud API** — exige checar a API da Meta,
+      já que a sessão oficial não vive no manager.
+- [ ] Limpeza de linhas órfãs em `bitrix_tokens` (sem `access_token`). Não
+      atrapalha mais desde que a leitura passou a escolher o token utilizável.
 
-## 🟢 Dívida técnica (ver [01-arquitetura.md](01-arquitetura.md))
+---
 
-- [ ] `Repository` é um God Object (147 arestas, ponte de 15 comunidades).
-      Refatorar por domínio quando o projeto/time crescer. Não urgente.
-- [ ] Chart.js minificado embutido em `internal/api/assets/` infla o grafo de
-      conhecimento (~15 comunidades de ruído). Considerar servir via CDN ou marcar
-      como ignorado no graphify.
+## 🟢 Dívida técnica
 
-## Ferramentas de desenvolvimento instaladas (Protocolo Desenvolvedor)
+- [ ] **`Repository` é um God Object.** Fatiar por domínio (`SessionRepo`,
+      `LicenseRepo`, `MessageRepo`) quando o time crescer. Não urgente.
+- [ ] **JS dentro de string Go.** `admin_html.go` e `crm.go` somam milhares de
+      linhas que o `go build` não enxerga. A checagem com `node --check` está
+      documentada no README e já pegou três erros que iriam a produção — mas o
+      certo é extrair para arquivo servido, e aí o próprio compilador de front
+      valida.
+- [ ] **Chart.js embutido** em `internal/api/assets/` infla o binário e o grafo
+      de conhecimento.
+- [ ] **`migrations/*.sql` é código morto** — as migrations que valem estão no
+      array de `internal/db/db.go`. Manter a pasta só confunde; ver
+      [`migrations/README.md`](../../migrations/README.md).
 
-- [x] **graphify** — mapa mental do projeto (`graphify-out/`)
-- [x] **playwright-mcp** — QA de front (Chromium baixado)
-- [x] **chrome-devtools-mcp** — DevTools do Chrome
-- [ ] **glyph** — busca por símbolos. **Não instalado**: falta compilador C na
-      máquina (tree-sitter usa cgo). Instalar MSYS2/MinGW e recompilar, ou seguir
-      sem — o graphify cobre parte do que ele faria.
-
-Config dos MCPs em [.mcp.json](../../.mcp.json).
+---
 
 ## Como manter esta base viva
 
-Depois de resolver qualquer item aqui, ou aprender algo novo, edite o doc do tema
-e rode:
-```bash
-graphify . --update
-```
-para o grafo de conhecimento refletir o novo estado.
+Depois de resolver qualquer item aqui, ou aprender algo que custou tempo,
+edite o doc do tema. A convenção é **Sintoma → Causa-raiz → Fix → Lição**, para
+que a lição sobreviva mesmo depois que o código mudar.

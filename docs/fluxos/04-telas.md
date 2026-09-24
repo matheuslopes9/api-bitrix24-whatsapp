@@ -152,7 +152,8 @@ Um card por portal Bitrix. Agrega numa query só:
   token vive ~1h e é renovado automaticamente; só é `expired` de verdade se
   passou de 30 dias sem renovar, sinal de que o refresh também morreu e o app
   precisa ser reinstalado.
-- **Plano** — Trial / Básico / Pro, com dias restantes do trial
+- **Licença** — benefícios contratados e vigência. Sem prazo, em vigor,
+  vencendo (7 dias) ou vencida. Vencida **avisa, não bloqueia**.
 
 Portais com `domain == member_id` são escondidos: são placeholders criados
 pelo install do Marketplace antes de o domínio real chegar pelo
