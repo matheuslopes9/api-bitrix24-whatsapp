@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,6 +31,18 @@ type handlers struct {
 	q            *queue.Queue
 	metrics      *telemetry.Metrics
 	log          *zap.Logger
+
+	// pareamentos registra quem pediu o pareamento de cada numero, enquanto
+	// o vinculo em bitrix_accounts ainda nao existe.
+	//
+	// Sem isso, a checagem de dono do QR barraria o proprio pareamento: entre
+	// clicar em "Conectar WhatsApp" e concluir o QR, o numero nao pertence a
+	// ninguem no banco. Ver tenant_isolation.go.
+	//
+	// Em memoria de proposito: e' estado de segundos. Se o processo reiniciar
+	// no meio, o pareamento e' refeito — melhor que persistir intencao que
+	// pode nunca se concretizar.
+	pareamentos sync.Map // numero base -> dominio
 }
 
 func newHandlers(
@@ -50,11 +63,11 @@ func (h *handlers) health(c *fiber.Ctx) error {
 	sessions := h.waManager.ListSessions()
 	in, out, dead := h.q.Lengths(c.Context())
 	return c.JSON(fiber.Map{
-		"status":           "ok",
-		"active_sessions":  len(sessions),
-		"queue_inbound":    in,
-		"queue_outbound":   out,
-		"queue_dead":       dead,
+		"status":          "ok",
+		"active_sessions": len(sessions),
+		"queue_inbound":   in,
+		"queue_outbound":  out,
+		"queue_dead":      dead,
 	})
 }
 
@@ -180,7 +193,9 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		h.log.Info("partner app install via /bitrix/callback",
 			zap.String("member_id", partnerMemberID),
 			zap.String("token_prefix", func() string {
-				if len(partnerToken) > 8 { return partnerToken[:8] + "..." }
+				if len(partnerToken) > 8 {
+					return partnerToken[:8] + "..."
+				}
 				return partnerToken
 			}()),
 		)
@@ -377,9 +392,9 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			params map[string]interface{}
 		}{
 			{"imconnector.register", map[string]interface{}{
-				"ID":   connectorID,
-				"NAME": "UC Talk",
-				"ICON": map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
+				"ID":                connectorID,
+				"NAME":              "UC Talk",
+				"ICON":              map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
 				"PLACEMENT_HANDLER": appBase + "/bitrix-connect",
 			}},
 			{"imconnector.activate", map[string]interface{}{
@@ -549,7 +564,6 @@ func (h *handlers) uiDeleteBitrixAccount(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "deleted", "jid": jid})
 }
 
-
 // GET /ui/bitrix/lines?domain=empresa.bitrix24.com — retorna todas as Open Lines do portal
 // Usa imopenlines.config.list.get — uma única chamada REST, sem varredura.
 func (h *handlers) uiListOpenLines(c *fiber.Ctx) error {
@@ -714,6 +728,7 @@ func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 // Cada sessão WhatsApp ganha um connector_id PRÓPRIO no Bitrix:
 //   - Cloud API: usa o phone_number_id (ex: "wa_cloud_123456789012345")
 //   - QR Code:   usa "whatsapp_uc_v2" (default — não muda o que já funciona)
+//
 // Sem isso, múltiplas sessões disputam o mesmo connector e mensagens vão pra
 // linha errada (ou nem chegam).
 func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
@@ -897,9 +912,15 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	//  - portal.ConnectorID (default — usado pelas sessões QR)
 	//  - cada connector_id único de bitrix_accounts vinculados a este portal
 	//    (sessões Cloud API têm "wa_cloud_<phone_id>" próprio)
-	connectors := map[string]struct{ Name string; LineID int }{}
+	connectors := map[string]struct {
+		Name   string
+		LineID int
+	}{}
 	if portal.ConnectorID != "" {
-		connectors[portal.ConnectorID] = struct{ Name string; LineID int }{"UC Talk", lineID}
+		connectors[portal.ConnectorID] = struct {
+			Name   string
+			LineID int
+		}{"UC Talk", lineID}
 	}
 	if accts, err := h.repo.ListBitrixAccounts(c.Context()); err == nil {
 		for _, a := range accts {
@@ -918,7 +939,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 					name = "UC Talk Oficial"
 				}
 			}
-			connectors[a.ConnectorID] = struct{ Name string; LineID int }{name, a.OpenLineID}
+			connectors[a.ConnectorID] = struct {
+				Name   string
+				LineID int
+			}{name, a.OpenLineID}
 		}
 	}
 
@@ -1008,7 +1032,7 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 	// Se não veio form-encoded, tenta JSON (send_message via connector.data.set)
 	if connector == "" && strings.Contains(c.Get("Content-Type"), "application/json") {
 		var payload struct {
-			Connector string `json:"CONNECTOR"`
+			Connector string      `json:"CONNECTOR"`
 			Line      interface{} `json:"LINE"`
 			Messages  []struct {
 				Chat struct {
@@ -1677,11 +1701,11 @@ func (h *handlers) bitrixWebhook(c *fiber.Ctx) error {
 	var payload struct {
 		Event string `json:"event"`
 		Data  struct {
-			SessionID string `json:"SESSION_ID"`
-			Message   string `json:"MESSAGE"`
-			UserPhone string `json:"USER_PHONE"`
+			SessionID  string `json:"SESSION_ID"`
+			Message    string `json:"MESSAGE"`
+			UserPhone  string `json:"USER_PHONE"`
 			SessionJID string `json:"WA_SESSION_JID"`
-			ToJID     string `json:"WA_TO_JID"`
+			ToJID      string `json:"WA_TO_JID"`
 		} `json:"data"`
 	}
 	if err := c.BodyParser(&payload); err != nil {

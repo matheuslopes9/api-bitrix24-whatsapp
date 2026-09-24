@@ -37,7 +37,14 @@ func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
+	// Registra a intencao ANTES de criar a sessao: o cliente vai buscar o
+	// proprio QR em seguida, e nesse momento ainda nao existe vinculo em
+	// bitrix_accounts pra provar que o numero e' dele.
+	if dominio, err := h.tenantDoPedido(c); err == nil {
+		h.registrarPareamento(dominio, body.Phone)
+	}
 	if err := h.waManager.AddSession(c.Context(), body.Phone); err != nil {
+		h.esquecerPareamento(body.Phone)
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"status": "connecting", "phone": body.Phone})
@@ -46,7 +53,17 @@ func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 // GET /ui/sessions/:phone/qr
 func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 	phone := c.Params("phone")
-	sessions := h.waManager.ListSessions()
+	// QR e' segredo de pareamento: quem escaneia ASSUME a sessao. Entregar
+	// o de outro cliente seria dar a conta de WhatsApp dele.
+	if ok, err := h.podeOperarNumero(c, phone); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	} else if !ok {
+		return c.Status(403).JSON(fiber.Map{"error": "numero nao pertence a este portal"})
+	}
+	sessions, err := h.sessoesQRDoTenant(c)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
 	for _, jid := range sessions {
 		if strings.HasPrefix(jid, phone) {
 			return c.JSON(fiber.Map{"status": "connected", "jid": jid})
@@ -64,7 +81,13 @@ func (h *handlers) uiGetQR(c *fiber.Ctx) error {
 // Mantém retrocompatibilidade: campo "sessions" continua sendo []string com JIDs.
 // Adiciona "details" com objetos {jid, type, phone, label}.
 func (h *handlers) uiListSessions(c *fiber.Ctx) error {
-	qrJIDs := h.waManager.ListSessions()
+	// SO' os numeros deste portal. Antes listava os de todos os tenants do
+	// processo — foi assim que o crm.uctechnology.com.br apareceu exibindo,
+	// com botao de desconectar, o numero do teclife.
+	qrJIDs, err := h.sessoesQRDoTenant(c)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
 	type sessionDetail struct {
 		JID       string `json:"jid"`
 		SessionID string `json:"session_id"`
@@ -153,6 +176,15 @@ func (h *handlers) uiDisconnectSession(c *fiber.Ctx) error {
 	if jid == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "jid required"})
 	}
+	// Acao DESTRUTIVA em numero alheio: derrubava o atendimento do outro
+	// cliente e ainda apagava o vinculo dele com o Bitrix. O jid vinha da
+	// query, sem nenhuma checagem de dono.
+	if ok, err := h.podeOperarNumero(c, jid); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	} else if !ok {
+		return c.Status(403).JSON(fiber.Map{"error": "numero nao pertence a este portal"})
+	}
+	h.esquecerPareamento(jid)
 
 	// Remove o vínculo Bitrix antes de desconectar a sessão.
 	// Tolera erro: se não houver vínculo, segue.
@@ -196,7 +228,11 @@ func (h *handlers) uiRefreshSessionsStatus(c *fiber.Ctx) error {
 	out := []sessionHealth{}
 
 	// QR (whatsmeow): usa Ping para testar a conexão WebSocket.
-	for _, jid := range h.waManager.ListSessions() {
+	meus, err := h.sessoesQRDoTenant(c)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	for _, jid := range meus {
 		hp := sessionHealth{JID: jid, Type: "qr"}
 		// Extrai telefone do JID
 		ph := jid
@@ -661,6 +697,12 @@ window.onload = loadSessions;
 // localmente nao adiciona dependencia nenhuma.
 func (h *handlers) uiGetQRPng(c *fiber.Ctx) error {
 	phone := c.Params("phone")
+	// Mesma regra do uiGetQR: a imagem carrega o mesmo segredo.
+	if ok, err := h.podeOperarNumero(c, phone); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	} else if !ok {
+		return c.Status(403).JSON(fiber.Map{"error": "numero nao pertence a este portal"})
+	}
 	texto := h.waManager.GetQR(phone)
 	if texto == "" {
 		return c.Status(404).JSON(fiber.Map{"error": "sem QR disponivel para " + phone})

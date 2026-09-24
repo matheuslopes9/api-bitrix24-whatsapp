@@ -1059,8 +1059,20 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 		}
 	}
 
-	// Sessões WA disponíveis
-	sessions := h.waManager.ListSessions()
+	// Sessoes WA DESTE portal.
+	//
+	// Antes vinha waManager.ListSessions(), que devolve as sessoes de todos
+	// os tenants do processo — o seletor de numero da aba mostrava os numeros
+	// dos outros clientes, e enviar por um deles era um clique.
+	sessions := []string{}
+	if rows, serr := h.repo.ListActiveSessionsByDomain(c.Context(), normalizePortalDomain(domain)); serr == nil {
+		for _, s := range rows {
+			sessions = append(sessions, s.JID)
+		}
+	} else {
+		h.log.Warn("crm entity: falha ao listar sessoes do portal",
+			zap.String("domain", domain), zap.Error(serr))
+	}
 
 	return c.JSON(fiber.Map{
 		"name":     name,
@@ -1770,8 +1782,12 @@ func (h *handlers) bitrixCRMDebug(c *fiber.Ctx) error {
 func (h *handlers) bitrixCRMSessions(c *fiber.Ctx) error {
 	domain := strings.TrimSpace(c.Query("domain"))
 	if domain == "" {
-		sessions := h.waManager.ListSessions()
-		return c.JSON(fiber.Map{"sessions": sessions, "count": len(sessions)})
+		// Sem dominio NAO da' pra saber de quem sao as sessoes. O fallback
+		// antigo devolvia as de todos os tenants — vazamento entre clientes
+		// disfarcado de retrocompatibilidade.
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "domain e' obrigatorio para listar as sessoes do portal",
+		})
 	}
 
 	rows, err := h.repo.ListActiveSessionsByDomain(c.Context(), normalizePortalDomain(domain))
