@@ -9,7 +9,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"html"
 	"strings"
 	"time"
 
@@ -122,16 +121,18 @@ func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remeten
 			continue
 		}
 		horas := int(time.Since(p.ExpiresAt).Hours())
-		corpo := corpoAlerta(
-			"Token do Bitrix24 vencido",
-			p.Domain,
-			fmt.Sprintf("O token venceu em %s (ha %d hora(s)) e a renovacao nao esta passando.",
-				p.ExpiresAt.Format("02/01/2006 15:04"), horas),
-			"Enquanto nao renovar, NENHUMA mensagem do cliente chega no Contact Center — elas ficam presas na fila.",
-			[]string{
-				"Abrir Saude do cliente no painel e conferir o bloco Token",
-				"Se client_id/client_secret estiverem vazios, cadastrar em Credenciais do app",
-				"Depois de renovar, usar Reentregar mensagens para escoar a fila",
+		corpo := h.montarAlerta(
+			email.CatTokenVencido,
+			"Token do Bitrix24 vencido — "+p.Domain,
+			"<p>A renovação do token de <b>"+p.Domain+"</b> não está passando.</p>"+
+				"<p><b>Enquanto não renovar, nenhuma mensagem do cliente chega no Contact Center</b> — "+
+				"elas ficam presas na fila.</p>",
+			"Abra Saúde do cliente e confira o bloco Token. Se client_id/client_secret estiverem vazios, "+
+				"cadastre em Credenciais do app. Depois de renovar, use Reentregar mensagens para escoar a fila.",
+			[]email.LinhaContexto{
+				{Rotulo: "Cliente", Valor: p.Domain},
+				{Rotulo: "Venceu em", Valor: p.ExpiresAt.Format("02/01/2006 15:04")},
+				{Rotulo: "Tempo vencido", Valor: fmt.Sprintf("%d hora(s)", horas)},
 			})
 		if err := rem.Enviar(ctx, "[UC Talk] Token vencido — "+p.Domain, corpo); err != nil {
 			h.log.Error("alertas: falha ao enviar aviso de token",
@@ -176,14 +177,17 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 		if derr != nil || !ok {
 			continue
 		}
-		corpo := corpoAlerta(
-			"Numero de WhatsApp desconectado",
-			naoVazio(dominio, "cliente nao identificado"),
-			fmt.Sprintf("O numero %s consta como ativo no sistema, mas nao ha conexao viva com o WhatsApp.", numero),
-			"Enquanto estiver caido, o cliente nao recebe nem envia mensagem por este numero.",
-			[]string{
-				"Abrir Saude do cliente e conferir o bloco Sessoes WhatsApp",
-				"Se nao reconectar sozinho, parear de novo em Conectar WhatsApp",
+		cliente := naoVazio(dominio, "cliente não identificado")
+		corpo := h.montarAlerta(
+			email.CatSessaoCaiu,
+			"Número de WhatsApp desconectado — "+numero,
+			"<p>O número <b>"+numero+"</b> consta como ativo no sistema, mas não há conexão viva com o WhatsApp.</p>"+
+				"<p><b>Enquanto estiver caído, o cliente não recebe nem envia mensagem por este número.</b></p>",
+			"Abra Saúde do cliente e confira o bloco Sessões WhatsApp. "+
+				"Se não reconectar sozinho, pareie de novo em Conectar WhatsApp.",
+			[]email.LinhaContexto{
+				{Rotulo: "Cliente", Valor: cliente},
+				{Rotulo: "Número", Valor: numero},
 			})
 		if err := rem.Enviar(ctx, "[UC Talk] Numero desconectado — "+numero, corpo); err != nil {
 			h.log.Error("alertas: falha ao enviar aviso de sessao",
@@ -195,32 +199,19 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 	}
 }
 
-// corpoAlerta monta um e-mail que diz, nesta ordem: o que houve, quem foi
-// afetado, qual a consequencia e o que fazer. Alerta sem "o que fazer" vira
-// ruido — quem recebe as 3h da manha precisa do proximo passo escrito.
-func corpoAlerta(titulo, cliente, oQueHouve, consequencia string, passos []string) string {
-	var b strings.Builder
-	b.WriteString(`<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;color:#0f172a">`)
-	b.WriteString(`<div style="background:#0f172a;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">`)
-	b.WriteString(`<div style="font-size:12px;opacity:.7;letter-spacing:.5px">UC TALK &middot; ALERTA</div>`)
-	b.WriteString(`<div style="font-size:18px;font-weight:700;margin-top:2px">` + html.EscapeString(titulo) + `</div>`)
-	b.WriteString(`</div>`)
-	b.WriteString(`<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:20px">`)
-	b.WriteString(`<p style="margin:0 0 4px;font-size:13px;color:#64748b">Cliente</p>`)
-	b.WriteString(`<p style="margin:0 0 16px;font-size:15px;font-weight:600">` + html.EscapeString(cliente) + `</p>`)
-	b.WriteString(`<p style="margin:0 0 14px;font-size:14px;line-height:1.6">` + html.EscapeString(oQueHouve) + `</p>`)
-	b.WriteString(`<p style="margin:0 0 18px;padding:12px 14px;background:#fef2f2;border-left:3px solid #ef4444;font-size:14px;line-height:1.6;color:#991b1b">` + html.EscapeString(consequencia) + `</p>`)
-	if len(passos) > 0 {
-		b.WriteString(`<p style="margin:0 0 6px;font-size:13px;color:#64748b">O que fazer</p><ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.8">`)
-		for _, p := range passos {
-			b.WriteString(`<li>` + html.EscapeString(p) + `</li>`)
-		}
-		b.WriteString(`</ol>`)
-	}
-	b.WriteString(`<p style="margin:18px 0 0;font-size:12px;color:#94a3b8">Enviado automaticamente pelo UC Talk em ` +
-		time.Now().Format("02/01/2006 15:04") + `.</p>`)
-	b.WriteString(`</div></div>`)
-	return b.String()
+// montarAlerta usa o template da UC Technology (internal/email/template.go),
+// o mesmo que o backend de ferramentas ja' manda. Alerta do UC Talk chega com
+// a cara dos outros alertas da plataforma, e quem esta' de plantao reconhece
+// de relance em vez de ter que ler pra descobrir a origem.
+func (h *handlers) montarAlerta(categoria, titulo, corpoHTML, acao string, ctx []email.LinhaContexto) string {
+	return email.Renderizar(email.Alerta{
+		Categoria: categoria,
+		Titulo:    titulo,
+		CorpoHTML: corpoHTML,
+		Contexto:  ctx,
+		Acao:      acao,
+		BaseURL:   h.cfg.App.BaseURL(),
+	})
 }
 
 func naoVazio(v, alternativa string) string {

@@ -58,33 +58,47 @@ func (n notificadorLog) LicencaVencida(_ context.Context, lic *db.TenantLicense,
 // mesmo corpo dos alertas operacionais pra que todo e-mail do UC Talk tenha
 // a mesma cara — quem recebe reconhece de relance.
 type notificadorEmail struct {
-	rem *email.Remetente
-	log *zap.Logger
+	rem     *email.Remetente
+	log     *zap.Logger
+	baseURL string
 }
 
 func (n notificadorEmail) LicencaVencendo(ctx context.Context, lic *db.TenantLicense, dias int) error {
-	corpo := corpoAlerta(
-		"Licenca vencendo",
-		lic.Domain,
-		fmt.Sprintf("A licenca vence em %s — faltam %d dia(s).",
-			lic.ValidUntil.Format("02/01/2006"), dias),
-		"Vencer nao bloqueia o atendimento: o cliente continua sendo atendido normalmente. "+
-			"O aviso e para a cobranca nao passar batida.",
-		[]string{"Confirmar a renovacao com o cliente",
-			"Registrar o pagamento em Licencas assim que entrar"})
+	corpo := email.Renderizar(email.Alerta{
+		Categoria: email.CatLicenca,
+		Titulo:    "Licença vence em breve — " + lic.Domain,
+		CorpoHTML: fmt.Sprintf("<p>A licença de <b>%s</b> vence em <b>%d dia(s)</b> (%s).</p>"+
+			"<p>Vencer <b>não</b> bloqueia o atendimento — o cliente continua sendo atendido "+
+			"normalmente. O aviso é para a cobrança não passar batida.</p>",
+			lic.Domain, dias, lic.ValidUntil.Format("02/01/2006")),
+		Contexto: []email.LinhaContexto{
+			{Rotulo: "Cliente", Valor: lic.Domain},
+			{Rotulo: "Vencimento", Valor: lic.ValidUntil.Format("02/01/2006")},
+			{Rotulo: "Dias restantes", Valor: fmt.Sprintf("%d", dias)},
+		},
+		Acao:    "Confirme a renovação com o cliente e registre o pagamento em Licenças assim que entrar.",
+		BaseURL: n.baseURL,
+	})
 	return n.rem.Enviar(ctx, "[UC Talk] Licenca vencendo — "+lic.Domain, corpo)
 }
 
 func (n notificadorEmail) LicencaVencida(ctx context.Context, lic *db.TenantLicense, dias int) error {
-	corpo := corpoAlerta(
-		"Licenca vencida sem pagamento",
-		lic.Domain,
-		fmt.Sprintf("A licenca venceu em %s — ha %d dia(s) — e nenhum pagamento novo foi registrado.",
-			lic.ValidUntil.Format("02/01/2006"), dias),
-		"O atendimento do cliente NAO foi interrompido, por decisao de projeto. "+
-			"Ninguem fica sem atendimento por boleto atrasado.",
-		[]string{"Acionar o comercial para cobranca",
-			"Registrar o pagamento em Licencas quando entrar"})
+	corpo := email.Renderizar(email.Alerta{
+		Categoria: email.CatLicenca,
+		Titulo:    "Licença VENCIDA sem pagamento — " + lic.Domain,
+		CorpoHTML: fmt.Sprintf("<p>A licença de <b>%s</b> venceu em <b>%s</b> — há %d dia(s) — "+
+			"e nenhum pagamento novo foi registrado.</p>"+
+			"<p>O atendimento <b>não</b> foi interrompido, por decisão de projeto: "+
+			"ninguém fica sem atendimento por boleto atrasado.</p>",
+			lic.Domain, lic.ValidUntil.Format("02/01/2006"), dias),
+		Contexto: []email.LinhaContexto{
+			{Rotulo: "Cliente", Valor: lic.Domain},
+			{Rotulo: "Venceu em", Valor: lic.ValidUntil.Format("02/01/2006")},
+			{Rotulo: "Dias em atraso", Valor: fmt.Sprintf("%d", dias)},
+		},
+		Acao:    "Acione o comercial para cobrança e registre o pagamento em Licenças quando entrar.",
+		BaseURL: n.baseURL,
+	})
 	return n.rem.Enviar(ctx, "[UC Talk] Licenca VENCIDA — "+lic.Domain, corpo)
 }
 
@@ -105,7 +119,7 @@ func (h *handlers) IniciarAvisosDeLicenca(ctx context.Context) {
 			// aparece em "Logs ao vivo" — a informacao nao se perde.
 			return notificadorLog{log: h.log}
 		}
-		return notificadorEmail{rem: remetenteDaConfig(cfg), log: h.log}
+		return notificadorEmail{rem: remetenteDaConfig(cfg), log: h.log, baseURL: h.cfg.App.BaseURL()}
 	}
 	go func() {
 		// Espera o boot assentar (migrations, carga de sessoes) antes da

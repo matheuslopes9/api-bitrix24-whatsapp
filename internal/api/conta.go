@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/email"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -99,12 +100,16 @@ func (h *handlers) adminTestarEmail(c *fiber.Ctx) error {
 		})
 	}
 	rem := remetenteDaConfig(cfg)
-	corpo := corpoAlerta(
-		"Teste de alerta",
-		"nenhum cliente — isto e um teste",
-		"Se voce esta lendo este e-mail, o envio de alertas do UC Talk esta funcionando.",
-		"Nenhuma acao necessaria.",
-		[]string{"Nada a fazer. Disparado manualmente pelo painel por " + h.adminActor(c)})
+	corpo := h.montarAlerta(
+		email.CatTeste,
+		"Teste de alerta do UC Talk",
+		"<p>Se você está lendo este e-mail, o envio de alertas do UC Talk está funcionando.</p>"+
+			"<p>Nenhuma ação é necessária — este disparo foi manual, pelo painel.</p>",
+		"Nenhuma. Este é apenas um teste de envio.",
+		[]email.LinhaContexto{
+			{Rotulo: "Disparado por", Valor: h.adminActor(c)},
+			{Rotulo: "Origem", Valor: "Painel administrativo — Alertas"},
+		})
 	if err := rem.Enviar(c.Context(), "[UC Talk] Teste de alerta", corpo); err != nil {
 		h.log.Warn("teste de e-mail falhou", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
