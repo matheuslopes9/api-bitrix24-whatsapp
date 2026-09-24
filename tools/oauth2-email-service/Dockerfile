@@ -30,11 +30,17 @@ ENV PROXY_HOST=0.0.0.0 \
     HEALTH_PORT=80 \
     PYTHONUNBUFFERED=1
 
-# 2526 = SMTP, so' rede interna. 80 = saude HTTP, que e' o que a sonda do
-# orquestrador espera encontrar. Sem a segunda, a sonda bate no SMTP, nao
-# entende a resposta e manda SIGTERM — o container reinicia em loop com o
-# proxy funcionando perfeitamente.
-EXPOSE 2526 80
+# EXPOSE SO' A 80, de proposito.
+#
+# EXPOSE nao abre nem fecha porta — e' metadado. Mas o orquestrador usa esse
+# metadado pra decidir ONDE sondar. Com "EXPOSE 2526 80" ele pegou a primeira
+# e ficou batendo no SMTP: a sonda conecta, nao entende a resposta, e manda
+# SIGTERM ~3s depois. No log isso aparecia como o proxy subindo certo e
+# morrendo em loop.
+#
+# A 2526 continua acessivel pelos outros containers da rede interna sem estar
+# aqui — e' assim que o connector alcanca o proxy.
+EXPOSE 80
 
 # O .env NAO entra na imagem de proposito: ele carrega o client_secret do
 # Azure AD. As variaveis vem do ambiente do servico (EasyPanel), que e' onde
