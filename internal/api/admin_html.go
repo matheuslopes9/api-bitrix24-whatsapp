@@ -830,11 +830,19 @@ function carregarHealth(){
       c+=_l('App OAuth', t.client_id_do_token||t.client_id_em_uso
              ? '<span class="mono">'+_esc(t.client_id_do_token||t.client_id_em_uso)+'</span>'
              : '<span class="tok-expired">nao cadastrado</span>');
-      if(semCred){
-        c+=_alerta('sem client_id/client_secret cadastrados: o token NAO consegue renovar '+
+      // So' e' ALARME quando nao ha' credencial em lugar nenhum. Se o token
+      // esta' renovando pela env global, a conta sem credencial propria e'
+      // apenas um pendencia — vira problema quando entrar um segundo cliente,
+      // porque a env serve a um app so'.
+      if(semCred && !t.client_id_em_uso){
+        c+=_alerta('sem client_id/client_secret em lugar nenhum: o token NAO renova '+
                    '(o Bitrix responde wrong_client) e as mensagens param de chegar. '+
-                   'Use "Credenciais do app".');
+                   'Cadastre em "Credenciais do app".');
         est='ruim';
+      } else if(semCred){
+        c+='<div class="meta" style="margin-top:8px;color:#fbbf24">'+
+           'Renovando pela credencial global. Este cliente ainda nao tem a propria — '+
+           'cadastre em "Credenciais do app" antes de instalar outro portal.</div>';
       }
       if(t.problema_app){ c+=_alerta(t.problema_app); est='ruim'; }
       if(t.estado!=='ok'){ c+=_alerta(t.problema||'token com problema'); est='ruim'; }
@@ -1014,18 +1022,52 @@ function verComoCliente(){
 function abrirCredenciais(){
   var dom=document.getElementById('health-domain').value;
   if(!dom){ toast('Escolha um cliente primeiro',false); return; }
-  var cid=prompt('client_id do app OAuth do portal ' + dom + ' — em Bitrix > Aplicativos > o app > codigo do aplicativo');
-  if(!cid) return;
-  var sec=prompt('client_secret do MESMO app');
-  if(!sec) return;
+  _modal('<h3 style="margin:0 0 4px">Credenciais do app — '+_esc(dom)+'</h3>'+
+    '<div class="meta" style="margin-bottom:14px">'+
+      'O app OAuth e instalado por cliente, entao cada portal tem o seu. '+
+      'Sem estas credenciais o token nao renova e as mensagens param de chegar.'+
+    '</div>'+
+    '<label class="meta">client_id</label>'+
+    '<input class="dominput" id="cred-id" placeholder="app.0000000000000.00000000" autocomplete="off">'+
+    '<label class="meta" style="display:block;margin-top:12px">client_secret</label>'+
+    '<input class="dominput" id="cred-secret" type="password" placeholder="nao aparece no log nem na resposta" autocomplete="off">'+
+    '<div class="meta" style="margin-top:12px;line-height:1.5">'+
+      'Onde achar: no portal do cliente, em <strong>Aplicativos</strong> &rsaquo; o app UC Talk. '+
+      'Ao reinstalar o app estes valores MUDAM — atualize aqui antes de testar.'+
+    '</div>'+
+    '<div id="cred-msg" class="meta" style="margin-top:10px"></div>'+
+    '<div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">'+
+      '<button class="btn" onclick="fecharModalLic()">Cancelar</button>'+
+      '<button class="btn" id="cred-btn" onclick="salvarCredenciais()">Salvar credenciais</button>'+
+    '</div>');
+  setTimeout(function(){var e=document.getElementById('cred-id'); if(e) e.focus();},50);
+}
+
+function salvarCredenciais(){
+  var dom=document.getElementById('health-domain').value;
+  var cid=(document.getElementById('cred-id').value||'').trim();
+  var sec=(document.getElementById('cred-secret').value||'').trim();
+  var msg=document.getElementById('cred-msg');
+  if(!cid||!sec){ msg.style.color='#f87171'; msg.textContent='Preencha os dois campos.'; return; }
+  var btn=document.getElementById('cred-btn');
+  btn.disabled=true; btn.textContent='Salvando...';
+  msg.style.color=''; msg.textContent='';
   fetch('/admin/api/tenant/credenciais',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({domain:dom,client_id:cid.trim(),client_secret:sec.trim()})})
+    body:JSON.stringify({domain:dom,client_id:cid,client_secret:sec})})
   .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
   .then(function(res){
-    if(res.ok){ toast('Credenciais gravadas em '+res.j.conexoes+' conexao(oes)',true); setTimeout(carregarHealth,1200); }
-    else{ toast(res.j.error||'falhou',false); }
+    btn.disabled=false; btn.textContent='Salvar credenciais';
+    if(res.ok){
+      toast('Credenciais gravadas em '+res.j.conexoes+' conexao(oes)',true);
+      fecharModalLic(); setTimeout(carregarHealth,900);
+    }else{
+      msg.style.color='#f87171'; msg.textContent=res.j.error||'falhou';
+    }
   })
-  .catch(function(e){ toast('erro: '+e,false); });
+  .catch(function(e){
+    btn.disabled=false; btn.textContent='Salvar credenciais';
+    msg.style.color='#f87171'; msg.textContent='erro: '+e;
+  });
 }
 
 function reprocessarFila(){
