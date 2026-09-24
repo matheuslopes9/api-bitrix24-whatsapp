@@ -75,3 +75,48 @@ func TestPacienciaTotalCobreUmaJanelaLonga(t *testing.T) {
 		t.Fatalf("paciencia total de %v e' curta demais pra uma janela de rate limit", total)
 	}
 }
+
+// Numero que nao existe no WhatsApp nao melhora tentando de novo. Insistir
+// so' gasta cota de usync — que e' limitada, e cuja falta derruba os envios
+// que TEM chance de sair.
+func TestEhFalhaPermanente(t *testing.T) {
+	permanentes := []string{
+		// O erro exato do whatsmeow (send.go), visto em producao.
+		"no LID found for 5588981859136@s.whatsapp.net from server",
+		"numero 5581999887766 nao esta no WhatsApp (tentado: 5581999887766, 558199887766)",
+		"recipient is not on WhatsApp",
+	}
+	for _, m := range permanentes {
+		if !EhFalhaPermanente(errors.New(m)) {
+			t.Errorf("deveria ser permanente: %q", m)
+		}
+	}
+
+	temporarios := []string{
+		"info query returned status 429: rate-overlimit",
+		"context deadline exceeded",
+		"websocket disconnected",
+		"bitrix error: NO_AUTH_FOUND",
+		"",
+	}
+	for _, m := range temporarios {
+		if EhFalhaPermanente(errors.New(m)) {
+			t.Errorf("NAO deveria ser permanente: %q", m)
+		}
+	}
+	if EhFalhaPermanente(nil) {
+		t.Error("nil nao e' falha permanente")
+	}
+}
+
+// As duas classificacoes nao podem se sobrepor: 429 tem que continuar sendo
+// tratado como espera, nunca como desistencia.
+func TestLimiteDeTaxaNaoEhPermanente(t *testing.T) {
+	e := errors.New("failed to send usync query: info query returned status 429: rate-overlimit")
+	if !EhLimiteDeTaxa(e) {
+		t.Fatal("deveria ser limite de taxa")
+	}
+	if EhFalhaPermanente(e) {
+		t.Fatal("limite de taxa NAO e' permanente — desistir aqui joga fora mensagem que sairia")
+	}
+}

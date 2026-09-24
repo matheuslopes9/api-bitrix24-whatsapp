@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -188,6 +189,27 @@ func EhLimiteDeTaxa(err error) bool {
 		strings.Contains(t, "too many requests")
 }
 
+// EhFalhaPermanente reconhece o que NAO adianta tentar de novo.
+//
+// O caso real: numero que nao existe no WhatsApp. O whatsmeow devolve
+// "no LID found for X from server" — o servidor respondeu, e a resposta foi
+// que aquele numero nao tem conta. Tentar 6 vezes so' gasta cota de usync
+// (que e' limitada e cuja falta derruba os envios que TEM chance) e enche a
+// dead queue de coisa que nunca vai sair.
+//
+// Isso acontece bastante com a base do cliente: telefone do CRM guardado com
+// o 9o digito quando a conta so' existe sem ele, ou contato que simplesmente
+// nao usa WhatsApp.
+func EhFalhaPermanente(err error) bool {
+	if err == nil {
+		return false
+	}
+	t := strings.ToLower(err.Error())
+	return strings.Contains(t, "no lid found") ||
+		strings.Contains(t, "nao esta no whatsapp") ||
+		strings.Contains(t, "is not on whatsapp")
+}
+
 // limiteMaxHits e' quantas vezes se espera o limite passar antes de desistir.
 // Com o backoff abaixo isso da' mais de uma hora de paciencia — tempo de
 // sobra pra uma janela de rate limit passar.
@@ -207,6 +229,12 @@ func esperaPorLimite(hits int) time.Duration {
 func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob, motivo error) error {
 	if motivo != nil {
 		job.LastError = motivo.Error()
+	}
+	if EhFalhaPermanente(motivo) {
+		q.log.Warn("falha permanente — nao adianta tentar de novo",
+			zap.String("id", job.ID), zap.String("motivo", job.LastError))
+		job.RetryCount = q.cfg.MaxRetry + 1 // marca como esgotado, sem tentar
+		return q.push(ctx, keyDead, job)
 	}
 	if EhLimiteDeTaxa(motivo) {
 		job.LimiteHits++
@@ -236,6 +264,13 @@ func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob, motivo error)
 func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob, motivo error) error {
 	if motivo != nil {
 		job.LastError = motivo.Error()
+	}
+	if EhFalhaPermanente(motivo) {
+		q.log.Warn("falha permanente — nao adianta tentar de novo",
+			zap.String("id", job.ID), zap.String("para", job.ToJID),
+			zap.String("motivo", job.LastError))
+		job.RetryCount = q.cfg.MaxRetry + 1 // marca como esgotado, sem tentar
+		return q.push(ctx, keyDead, job)
 	}
 	if EhLimiteDeTaxa(motivo) {
 		job.LimiteHits++
@@ -289,6 +324,8 @@ type SondaDead struct {
 	ID         string
 	SessionJID string
 	Direcao    DirecaoDead
+	// UltimoErro permite decidir, antes de reenfileirar, se vale a pena.
+	UltimoErro string
 }
 
 // classificarDead descobre se um item bruto da dead queue e' de entrada ou
@@ -308,11 +345,12 @@ func classificarDead(raw []byte) (SondaDead, error) {
 		SessionJID string `json:"session_jid"`
 		FromJID    string `json:"from_jid"`
 		ToJID      string `json:"to_jid"`
+		LastError  string `json:"last_error"`
 	}
 	if err := json.Unmarshal(raw, &bruto); err != nil {
 		return SondaDead{}, err
 	}
-	s := SondaDead{ID: bruto.ID, SessionJID: bruto.SessionJID}
+	s := SondaDead{ID: bruto.ID, SessionJID: bruto.SessionJID, UltimoErro: bruto.LastError}
 	switch {
 	case strings.TrimSpace(bruto.ToJID) != "":
 		s.Direcao = DirecaoSaida
@@ -379,6 +417,14 @@ func (q *Queue) reprocessarDead(ctx context.Context, sessoesValidas map[string]b
 			descartados++
 			q.log.Info("dead queue: descartado (sessao nao existe mais)",
 				zap.String("id", sonda.ID), zap.String("session_jid", sonda.SessionJID))
+			continue
+		}
+
+		// Reprocesso AUTOMATICO nao insiste no que ja' se sabe que nao sai:
+		// numero que nao existe no WhatsApp vai continuar nao existindo.
+		// O manual ignora isso — ali tem gente decidindo.
+		if automatico && EhFalhaPermanente(errors.New(sonda.UltimoErro)) {
+			_ = q.rdb.RPush(ctx, keyDead, raw).Err()
 			continue
 		}
 
