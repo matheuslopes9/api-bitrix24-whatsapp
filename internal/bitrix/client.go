@@ -170,39 +170,57 @@ func dominioNu(d string) string {
 	return strings.TrimRight(d, "/")
 }
 
-// credenciaisDoEmissor devolve as credenciais do app que EMITIU o token.
+// credenciaisDoEmissor devolve as credenciais com que este token PODE ser
+// renovado.
 //
 // O PROBLEMA QUE ISSO RESOLVE: o mesmo portal pode ter token emitido por apps
 // diferentes — o app global (Partner, credenciais da config) e o app instalado
 // no portal do cliente (Local, credenciais em bitrix_accounts). O caminho de
 // entrada usa as credenciais da bitrix_account; quase todo o resto usa as da
-// config. Quando divergem, um token emitido pelo app A e' renovado com o
-// client_id/secret do app B e o Bitrix responde "wrong_client" — em loop, ate'
-// o token vencer e nenhuma mensagem mais chegar no Contact Center.
+// config. Quando divergem — ou quando a config esta' VAZIA, que foi o caso
+// observado — o Bitrix responde "wrong_client" em loop, o token vence e
+// nenhuma mensagem mais chega no Contact Center.
 //
-// bitrix_tokens.client_id existe justamente pra registrar quem emitiu. Aqui
-// ele deixa de ser so' um rotulo: e' o que decide com quais credenciais
-// renovar. Devolve false quando o segredo do emissor nao e' encontrado — ai'
-// e' melhor falhar dizendo o nome dos dois apps do que mandar uma requisicao
-// que ja' se sabe que vai ser recusada.
+// Ordem:
+//  1. credencial do caller ja' e' a do emissor -> usa;
+//  2. token sem emissor registrado (linha antiga) e caller tem credencial ->
+//     usa, e' o comportamento historico;
+//  3. procura nas bitrix_accounts do dominio a credencial COMPLETA do app
+//     emissor. Cobre tambem o caso de nao termos credencial nenhuma: ai'
+//     serve qualquer account do dominio que tenha client_id e secret.
+//
+// Devolve false quando nada serve — melhor falhar nomeando os apps do que
+// mandar uma requisicao que ja' se sabe que sera' recusada.
 func (c *Client) credenciaisDoEmissor(ctx context.Context, creds TenantCreds, t *db.BitrixToken) (TenantCreds, bool) {
-	if t.ClientID == "" || t.ClientID == creds.ClientID {
-		return creds, true
-	}
-	accts, err := c.repo.ListBitrixAccountsByDomain(ctx, dominioNu(creds.Domain))
-	if err == nil {
-		for _, a := range accts {
-			if a.ClientID == t.ClientID && a.ClientSecret != "" {
-				corrigida := creds
-				corrigida.ClientID = a.ClientID
-				corrigida.ClientSecret = a.ClientSecret
-				c.log.Info("refresh: usando as credenciais do app que emitiu o token",
-					zap.String("domain", dominioNu(creds.Domain)),
-					zap.String("client_id_do_token", t.ClientID),
-					zap.String("client_id_tentado", creds.ClientID))
-				return corrigida, true
-			}
+	if creds.ClientID != "" && creds.ClientSecret != "" {
+		if t.ClientID == "" || t.ClientID == creds.ClientID {
+			return creds, true
 		}
+	}
+
+	accts, err := c.repo.ListBitrixAccountsByDomain(ctx, dominioNu(creds.Domain))
+	if err != nil {
+		return creds, false
+	}
+	for _, a := range accts {
+		if a.ClientID == "" || a.ClientSecret == "" {
+			continue
+		}
+		// Token com emissor registrado: so' serve o app dele. Token sem
+		// emissor (ou sem credencial nossa): qualquer app do dominio serve,
+		// porque e' o app instalado naquele portal.
+		if t.ClientID != "" && a.ClientID != t.ClientID {
+			continue
+		}
+		corrigida := creds
+		corrigida.ClientID = a.ClientID
+		corrigida.ClientSecret = a.ClientSecret
+		c.log.Info("refresh: usando as credenciais do app instalado no portal",
+			zap.String("domain", dominioNu(creds.Domain)),
+			zap.String("client_id_do_token", t.ClientID),
+			zap.String("client_id_anterior", creds.ClientID),
+			zap.String("client_id_usado", a.ClientID))
+		return corrigida, true
 	}
 	return creds, false
 }
@@ -227,13 +245,14 @@ func (c *Client) refreshToken(ctx context.Context, creds TenantCreds, t *db.Bitr
 	// caller por acaso carregava — ver credenciaisDoEmissor.
 	creds, okEmissor := c.credenciaisDoEmissor(ctx, creds, t)
 	if !okEmissor {
-		c.log.Error("refresh impossivel: token emitido por outro app e o segredo dele nao esta' cadastrado",
+		c.log.Error("refresh impossivel: nao ha' client_id/client_secret utilizavel para este portal",
 			zap.String("domain", dominioNu(creds.Domain)),
 			zap.String("client_id_do_token", t.ClientID),
-			zap.String("client_id_disponivel", creds.ClientID))
-		return fmt.Errorf("token de %s foi emitido pelo app %q mas so' temos o segredo do app %q — "+
-			"reinstale o app no portal ou cadastre o client_secret correto",
-			dominioNu(creds.Domain), t.ClientID, creds.ClientID)
+			zap.String("client_id_da_config", creds.ClientID),
+			zap.String("o_que_fazer", "defina BITRIX_CLIENT_ID/BITRIX_CLIENT_SECRET ou reinstale o app no portal pra gravar as credenciais na bitrix_account"))
+		return fmt.Errorf("sem credencial utilizavel para renovar o token de %s "+
+			"(client_id do token=%q, da config=%q): defina BITRIX_CLIENT_ID/BITRIX_CLIENT_SECRET "+
+			"ou reinstale o app no portal", dominioNu(creds.Domain), t.ClientID, creds.ClientID)
 	}
 
 	key := normalizeDomain(creds.Domain) + "|" + creds.ClientID

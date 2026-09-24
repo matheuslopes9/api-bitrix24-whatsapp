@@ -137,6 +137,11 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 				"connector_id": a.ConnectorID,
 				"open_line_id": a.OpenLineID,
 				"status":       string(a.Status),
+				// client_id nao e' segredo e e' o que identifica o app que
+				// emitiu o token; tem_secret diz se da' pra renovar com ele
+				// sem expor o segredo em si.
+				"client_id":  a.ClientID,
+				"tem_secret": a.ClientSecret != "",
 			})
 		}
 		res["conectores"] = lista
