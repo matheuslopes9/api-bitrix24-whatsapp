@@ -2567,6 +2567,24 @@ func (r *Repository) ListAdminUsers(ctx context.Context) ([]*AdminUser, error) {
 	return out, rows.Err()
 }
 
+// SetAdminUserPassword troca a senha de um admin, pelo e-mail.
+//
+// Pelo E-MAIL e nao pelo id porque quem troca a propria senha se identifica
+// pelo cookie, que carrega o e-mail — pedir o id obrigaria a uma busca a mais
+// so' pra chegar no mesmo lugar.
+func (r *Repository) SetAdminUserPassword(ctx context.Context, email, hash string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE admin_users SET password_hash = $2 WHERE LOWER(email) = LOWER($1)`,
+		email, hash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("usuario %s nao encontrado", email)
+	}
+	return nil
+}
+
 func (r *Repository) SetAdminUserActive(ctx context.Context, id uuid.UUID, active bool) error {
 	_, err := r.pool.Exec(ctx, `UPDATE admin_users SET active=$2 WHERE id=$1`, id, active)
 	return err

@@ -760,6 +760,25 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			DROP TABLE IF EXISTS plan_definitions;
 			DROP TABLE IF EXISTS tenant_plans;
 		`},
+		{"049_alertas_operacionais", `
+			-- Registro de alerta JA' ENVIADO, pra nao repetir o mesmo aviso a
+			-- cada ciclo do job. Sem isso um token vencido geraria e-mail a
+			-- cada minuto e o time aprenderia a ignorar o alerta — que e' o
+			-- pior resultado possivel pra um sistema de aviso.
+			--
+			-- 'ref' guarda o que identifica a OCORRENCIA (o numero do
+			-- WhatsApp, o dominio do portal). Mudou a ocorrencia, avisa de
+			-- novo mesmo dentro da janela.
+			CREATE TABLE IF NOT EXISTS alertas_operacionais (
+				id       BIGSERIAL PRIMARY KEY,
+				tipo     TEXT NOT NULL,
+				ref      TEXT NOT NULL DEFAULT '',
+				dominio  TEXT NOT NULL DEFAULT '',
+				enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_alertas_tipo_ref
+				ON alertas_operacionais (tipo, ref, enviado_em DESC);
+		`},
 		{"048_permissoes_por_numero_base", `
 			-- As permissoes de envio guardavam o JID COMPLETO da sessao, com o
 			-- device suffix do whatsmeow (":1", ":5"). Esse suffix muda a cada

@@ -26,3 +26,9 @@ certs/
 # Playwright MCP (screenshots/snapshots de teste)
 .playwright-mcp/
 welcome.png
+
+# Serviço de e-mail (tools/oauth2-email-service): o CODIGO e versionado, as
+# CREDENCIAIS nao. O .env traz client_secret do Azure AD da UC Technology.
+tools/**/.env
+tools/**/venv/
+tools/**/__pycache__/

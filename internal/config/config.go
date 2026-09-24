@@ -15,6 +15,21 @@ type Config struct {
 	Bitrix   BitrixConfig
 	Queue    QueueConfig
 	Watchdog WatchdogConfig
+	Email    EmailConfig
+}
+
+// EmailConfig aponta pro proxy OAuth2 da empresa (tools/oauth2-email-service).
+// Nomes iguais aos do .env do proxy de proposito: quem opera o servico
+// reconhece as chaves sem precisar de tradutor.
+//
+// Nenhuma credencial da Microsoft entra aqui — quem fala OAuth2 e' o proxy.
+// Em container aponte SMTP_HOST pro servico dele, nao pra 127.0.0.1.
+type EmailConfig struct {
+	SMTPHost      string
+	SMTPPort      int
+	Sender        string   // EMAIL_SENDER  — o From:
+	ReplyTo       string   // EMAIL_REPLY_TO
+	Destinatarios []string // ALERT_RECIPIENTS, separados por virgula
 }
 
 type AppConfig struct {
@@ -117,6 +132,13 @@ func Load() (*Config, error) {
 			RedirectURI:  viper.GetString("BITRIX_REDIRECT_URI"),
 			OpenLineID:   getIntWithDefault("BITRIX_OPEN_LINE_ID", 1),
 		},
+		Email: EmailConfig{
+			SMTPHost:      getEnvWithDefault("SMTP_HOST", ""),
+			SMTPPort:      getIntWithDefault("SMTP_PORT", 2525),
+			Sender:        viper.GetString("EMAIL_SENDER"),
+			ReplyTo:       viper.GetString("EMAIL_REPLY_TO"),
+			Destinatarios: listaDeEmails(viper.GetString("ALERT_RECIPIENTS")),
+		},
 		Queue: QueueConfig{
 			Workers:          getIntWithDefault("QUEUE_WORKERS", 20),
 			MaxRetry:         getIntWithDefault("QUEUE_MAX_RETRY", 5),
@@ -197,4 +219,16 @@ func setDefaults(cfg *Config) {
 	if cfg.Postgres.MaxIdleConns == 0 {
 		cfg.Postgres.MaxIdleConns = 10
 	}
+}
+
+// listaDeEmails separa "a@x.com, b@y.com" numa lista limpa. Vazio devolve
+// nil, que e' o que faz Configurado() dizer "nao ha' para onde enviar".
+func listaDeEmails(bruto string) []string {
+	var out []string
+	for _, p := range strings.Split(bruto, ",") {
+		if e := strings.TrimSpace(p); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }

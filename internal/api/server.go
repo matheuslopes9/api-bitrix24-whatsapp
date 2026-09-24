@@ -46,6 +46,7 @@ func New(
 
 	// Aviso diario de vencimento de licenca pro financeiro.
 	h.IniciarAvisosDeLicenca(context.Background())
+	h.IniciarAlertas(context.Background())
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o
@@ -287,6 +288,10 @@ func New(
 	admin.Get("/api/system", h.adminSystem)          // monitoramento processo
 	admin.Get("/api/usage", h.adminUsage)            // consumo por tenant
 	admin.Get("/api/mensagens-recentes", h.adminMensagensRecentes)
+	// Conta do proprio admin: qualquer papel pode trocar a PROPRIA senha.
+	admin.Get("/api/me", h.adminEu)
+	admin.Post("/api/me/password", h.adminTrocarMinhaSenha)
+	admin.Post("/api/alertas/teste", h.adminTestarEmail)
 	admin.Get("/api/logs/stream", h.adminLogsStream) // SSE logs em tempo real
 	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
 	admin.Post("/api/blocked-ips/block", h.adminBlockIP)

@@ -7,9 +7,11 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/email"
 	"go.uber.org/zap"
 )
 
@@ -52,12 +54,61 @@ func (n notificadorLog) LicencaVencida(_ context.Context, lic *db.TenantLicense,
 	return nil
 }
 
+// notificadorEmail entrega o aviso na caixa do financeiro. Reaproveita o
+// mesmo corpo dos alertas operacionais pra que todo e-mail do UC Talk tenha
+// a mesma cara — quem recebe reconhece de relance.
+type notificadorEmail struct {
+	rem *email.Remetente
+	log *zap.Logger
+}
+
+func (n notificadorEmail) LicencaVencendo(ctx context.Context, lic *db.TenantLicense, dias int) error {
+	corpo := corpoAlerta(
+		"Licenca vencendo",
+		lic.Domain,
+		fmt.Sprintf("A licenca vence em %s — faltam %d dia(s).",
+			lic.ValidUntil.Format("02/01/2006"), dias),
+		"Vencer nao bloqueia o atendimento: o cliente continua sendo atendido normalmente. "+
+			"O aviso e para a cobranca nao passar batida.",
+		[]string{"Confirmar a renovacao com o cliente",
+			"Registrar o pagamento em Licencas assim que entrar"})
+	return n.rem.Enviar(ctx, "[UC Talk] Licenca vencendo — "+lic.Domain, corpo)
+}
+
+func (n notificadorEmail) LicencaVencida(ctx context.Context, lic *db.TenantLicense, dias int) error {
+	corpo := corpoAlerta(
+		"Licenca vencida sem pagamento",
+		lic.Domain,
+		fmt.Sprintf("A licenca venceu em %s — ha %d dia(s) — e nenhum pagamento novo foi registrado.",
+			lic.ValidUntil.Format("02/01/2006"), dias),
+		"O atendimento do cliente NAO foi interrompido, por decisao de projeto. "+
+			"Ninguem fica sem atendimento por boleto atrasado.",
+		[]string{"Acionar o comercial para cobranca",
+			"Registrar o pagamento em Licencas quando entrar"})
+	return n.rem.Enviar(ctx, "[UC Talk] Licenca VENCIDA — "+lic.Domain, corpo)
+}
+
 // IniciarAvisosDeLicenca roda a verificacao uma vez por dia.
 //
 // Usa notificadorLog enquanto o sistema de envio da empresa nao esta
 // plugado. Trocar a implementacao nao exige tocar nesta funcao.
 func (h *handlers) IniciarAvisosDeLicenca(ctx context.Context) {
-	n := notificadorLog{log: h.log}
+	// O e-mail e' o canal que o financeiro realmente le — ele nao tem login
+	// no painel, foi decisao de projeto. Sem envio configurado cai no log,
+	// que ao menos aparece na aba "Logs ao vivo".
+	var n LicenseNotifier = notificadorLog{log: h.log}
+	rem := email.Novo(email.Config{
+		Host:          h.cfg.Email.SMTPHost,
+		Port:          h.cfg.Email.SMTPPort,
+		From:          h.cfg.Email.Sender,
+		ReplyTo:       h.cfg.Email.ReplyTo,
+		Destinatarios: h.cfg.Email.Destinatarios,
+	})
+	if rem.Configurado() {
+		n = notificadorEmail{rem: rem, log: h.log}
+		h.log.Info("avisos de licenca serao enviados por e-mail",
+			zap.Strings("destinatarios", rem.Destinatarios()))
+	}
 	go func() {
 		// Espera o boot assentar (migrations, carga de sessoes) antes da
 		// primeira rodada.

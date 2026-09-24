@@ -233,6 +233,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
     <div class="sb-item" data-page="logs" onclick="irPara('logs')"><span class="ic">📜</span> Logs ao vivo</div>
     <div class="sb-group">Segurança</div>
+    <div class="sb-item" data-page="conta" onclick="irPara('conta')"><span class="ic">🙋</span> Minha conta</div>
     <div class="sb-item" data-page="users" onclick="irPara('users')"><span class="ic">👥</span> Usuários admin</div>
     <div class="sb-item" data-page="ips" onclick="irPara('ips')"><span class="ic">🚫</span> IPs bloqueados</div>
     <div class="sb-item" data-page="audit" onclick="irPara('audit')"><span class="ic">📋</span> Auditoria</div>
@@ -355,6 +356,33 @@ const adminHomeHTML = `<!doctype html>
         <button class="btn" onclick="document.getElementById('log-view').innerHTML=''">🗑 Limpar</button>
       </div>
       <pre id="log-view" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.76em;line-height:1.5;color:#a7f3d0;overflow:auto;height:60vh;white-space:pre-wrap"></pre>
+    </div>
+
+    <div class="page" id="page-conta">
+      <div class="tools">
+        <div class="toolcard">
+          <h3>🔑 Trocar minha senha</h3>
+          <p id="conta-quem" class="meta">Carregando…</p>
+          <div id="conta-form">
+            <label class="meta">Senha atual</label>
+            <input class="dominput" id="pw-atual" type="password" autocomplete="current-password">
+            <label class="meta" style="display:block;margin-top:10px">Senha nova (mínimo 8)</label>
+            <input class="dominput" id="pw-nova" type="password" autocomplete="new-password">
+            <label class="meta" style="display:block;margin-top:10px">Repita a senha nova</label>
+            <input class="dominput" id="pw-nova2" type="password" autocomplete="new-password">
+            <div id="pw-msg" class="meta" style="margin-top:10px"></div>
+            <button class="btn" id="pw-btn" style="margin-top:12px" onclick="trocarSenha()">Alterar senha</button>
+          </div>
+        </div>
+
+        <div class="toolcard">
+          <h3>📧 Alertas por e-mail</h3>
+          <p>O sistema avisa o time quando um token vence ou um número cai — sem isso, só se descobre quando o cliente reclama.</p>
+          <div id="conta-email" class="meta" style="margin-bottom:12px">Carregando…</div>
+          <button class="btn" onclick="testarEmail()">Enviar e-mail de teste</button>
+          <div id="email-msg" class="meta" style="margin-top:10px"></div>
+        </div>
+      </div>
     </div>
 
     <!-- USERS -->
@@ -502,6 +530,7 @@ var PAGES={
   licencas:{title:'Licenças',sub:'Benefícios contratados, vigência e pagamentos'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
+  conta:{title:'Minha conta',sub:'Sua senha e os alertas do time'},
   users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
   audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
@@ -520,6 +549,7 @@ function irPara(p){
   if(p==='licencas')carregarLicencas();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
+  if(p==='conta')carregarConta();
   if(p==='users')carregarUsers();
   if(p==='ips')carregarIPs();
   if(p==='audit')carregarAudit();
@@ -690,6 +720,62 @@ window.addEventListener('resize',fechaMenus);
 window.addEventListener('scroll',fechaMenus,true);
 
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
+function carregarConta(){
+  fetch('/admin/api/me').then(function(r){return r.json();}).then(function(d){
+    var q=document.getElementById('conta-quem');
+    q.innerHTML='Logado como <strong>'+_esc(d.email||'')+'</strong>'+(d.role?' &middot; '+_esc(d.role):'');
+    if(!d.pode_trocar_senha){
+      document.getElementById('conta-form').innerHTML=
+        '<div class="meta">'+_esc(d.motivo||'este login nao permite troca de senha por aqui')+'</div>';
+    }
+  }).catch(function(){});
+  // Nao ha endpoint proprio de status: o teste de envio ja diz se esta de pe.
+  var ce=document.getElementById('conta-email');
+  if(ce) ce.innerHTML='Use o botão abaixo para confirmar que o envio está de pé. '+
+    'Se o e-mail não chegar, falta configurar SMTP_HOST, EMAIL_SENDER e ALERT_RECIPIENTS.';
+}
+
+function trocarSenha(){
+  var a=document.getElementById('pw-atual').value;
+  var n1=document.getElementById('pw-nova').value;
+  var n2=document.getElementById('pw-nova2').value;
+  var m=document.getElementById('pw-msg');
+  m.style.color='';
+  if(!a||!n1){m.style.color='#f87171';m.textContent='Preencha a senha atual e a nova.';return;}
+  if(n1!==n2){m.style.color='#f87171';m.textContent='As duas senhas novas não conferem.';return;}
+  if(n1.length<8){m.style.color='#f87171';m.textContent='A senha nova precisa de pelo menos 8 caracteres.';return;}
+  var b=document.getElementById('pw-btn'); b.disabled=true; b.textContent='Alterando...';
+  fetch('/admin/api/me/password',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({senha_atual:a,senha_nova:n1})})
+  .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+  .then(function(res){
+    b.disabled=false; b.textContent='Alterar senha';
+    if(res.ok){
+      m.style.color='#34d399'; m.textContent='Senha alterada.';
+      document.getElementById('pw-atual').value='';
+      document.getElementById('pw-nova').value='';
+      document.getElementById('pw-nova2').value='';
+      toast('senha alterada',true);
+    }else{ m.style.color='#f87171'; m.textContent=res.j.error||'falhou'; }
+  })
+  .catch(function(e){b.disabled=false;b.textContent='Alterar senha';m.style.color='#f87171';m.textContent='erro: '+e;});
+}
+
+function testarEmail(){
+  var m=document.getElementById('email-msg');
+  m.style.color=''; m.textContent='Enviando...';
+  fetch('/admin/api/alertas/teste',{method:'POST'})
+  .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+  .then(function(res){
+    if(res.ok){
+      m.style.color='#34d399';
+      m.textContent='Enviado para: '+(res.j.enviado_para||[]).join(', ');
+      toast('e-mail de teste enviado',true);
+    }else{ m.style.color='#f87171'; m.textContent=res.j.error||'falhou'; }
+  })
+  .catch(function(e){m.style.color='#f87171';m.textContent='erro: '+e;});
+}
+
 function preencherSeletorFerramentas(){
   var sel=document.getElementById('tool-domain');
   if(!sel) return;
