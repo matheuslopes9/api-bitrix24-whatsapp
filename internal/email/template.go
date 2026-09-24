@@ -29,8 +29,14 @@ import (
 //     botao forem bloqueados, ainda da' pra copiar o endereco.
 
 const (
-	logoURL = "https://ferramentas.uctechnology.com.br/api/img/logo.png"
-	siteURL = "https://ferramentas.uctechnology.com.br"
+	// A logo e' servida pelo PROPRIO app (/assets/logo-email.png), nao por
+	// ferramentas.uctechnology.com.br como faz o template original.
+	//
+	// Alerta chega justamente quando algo esta' quebrado; a hora de descobrir
+	// que a imagem depende de outro servico no ar nao pode ser essa. E em
+	// homolog o e-mail nao puxa imagem de producao.
+	caminhoLogo = "/assets/logo-email.png"
+	siteURL     = "https://ferramentas.uctechnology.com.br"
 )
 
 // Categorias de alerta do UC Talk.
@@ -87,7 +93,9 @@ type Alerta struct {
 // Renderizar monta o HTML final.
 func Renderizar(a Alerta) string {
 	p := perfilDe(a.Categoria)
-	destino := strings.TrimRight(a.BaseURL, "/") + p.rota
+	base := strings.TrimRight(a.BaseURL, "/")
+	destino := base + p.rota
+	logoURL := base + caminhoLogo
 	agora := time.Now().Format("02/01/2006 15:04:05")
 	ano := time.Now().Format("2006")
 

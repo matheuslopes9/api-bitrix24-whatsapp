@@ -32,3 +32,9 @@ welcome.png
 tools/**/.env
 tools/**/venv/
 tools/**/__pycache__/
+
+# E-mails de exemplo colocados em tools/ para referencia: sao mensagens reais,
+# com nome de cliente e dado de infraestrutura. Servem pra consultar, nao pra
+# versionar.
+tools/*.msg
+tools/*.eml

@@ -60,6 +60,9 @@ func New(
 	// ─── Assets estáticos ────────────────────────────────────────────────
 	app.Get("/assets/chart.js", h.serveChartJS)
 	app.Get("/assets/logo.png", h.serveLogo)
+	// Publica de proposito: quem busca e' o cliente de e-mail de quem recebeu
+	// o alerta, sem cookie nenhum.
+	app.Get("/assets/logo-email.png", h.serveLogoEmail)
 	app.Get("/favicon.ico", h.serveFavicon)
 	app.Get("/favicon.png", h.serveFavicon)
 

@@ -123,7 +123,7 @@ func TestValorDoContextoEhEscapado(t *testing.T) {
 func TestIdentidadeDaEmpresa(t *testing.T) {
 	h := Renderizar(alertaDeTeste())
 	for _, esperado := range []string{
-		logoURL,
+		"https://uctalk-homolog.uctechnology.com.br" + caminhoLogo,
 		"UC Technology &mdash; Central de Monitoramento e Ferramentas",
 		"Este é um e-mail automático",
 	} {
