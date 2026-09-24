@@ -104,6 +104,16 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		// e o painel dizia ok enquanto nenhuma mensagem chegava no Contact
 		// Center. Estado tem que refletir se da' pra usar, nao se esta'
 		// preenchido.
+		// Qual app emitiu o token vs qual app estamos usando pra renovar.
+		// Divergencia aqui e' a causa do "wrong_client": o Bitrix recusa
+		// renovar um token com o client_id/secret de outro app. client_id nao
+		// e' segredo — o segredo e' o client_secret, que nao aparece aqui.
+		tok["client_id_do_token"] = t.ClientID
+		tok["client_id_em_uso"] = creds.ClientID
+		if t.ClientID != "" && creds.ClientID != "" && t.ClientID != creds.ClientID {
+			tok["problema_app"] = "o token foi emitido por um app e a renovacao usa outro — " +
+				"e' isso que faz o Bitrix responder wrong_client"
+		}
 		if vencido {
 			tok["estado"] = "vencido"
 			tok["problema"] = "token vencido em " + t.ExpiresAt.Format("02/01 15:04") +

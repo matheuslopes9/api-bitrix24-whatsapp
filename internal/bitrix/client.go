@@ -162,6 +162,51 @@ func (c *Client) lookupToken(ctx context.Context, creds TenantCreds) *db.BitrixT
 	return nil
 }
 
+// dominioNu tira esquema e barra final: "https://x.bitrix24.com.br/" -> "x.bitrix24.com.br".
+func dominioNu(d string) string {
+	d = strings.TrimSpace(d)
+	d = strings.TrimPrefix(d, "https://")
+	d = strings.TrimPrefix(d, "http://")
+	return strings.TrimRight(d, "/")
+}
+
+// credenciaisDoEmissor devolve as credenciais do app que EMITIU o token.
+//
+// O PROBLEMA QUE ISSO RESOLVE: o mesmo portal pode ter token emitido por apps
+// diferentes — o app global (Partner, credenciais da config) e o app instalado
+// no portal do cliente (Local, credenciais em bitrix_accounts). O caminho de
+// entrada usa as credenciais da bitrix_account; quase todo o resto usa as da
+// config. Quando divergem, um token emitido pelo app A e' renovado com o
+// client_id/secret do app B e o Bitrix responde "wrong_client" — em loop, ate'
+// o token vencer e nenhuma mensagem mais chegar no Contact Center.
+//
+// bitrix_tokens.client_id existe justamente pra registrar quem emitiu. Aqui
+// ele deixa de ser so' um rotulo: e' o que decide com quais credenciais
+// renovar. Devolve false quando o segredo do emissor nao e' encontrado — ai'
+// e' melhor falhar dizendo o nome dos dois apps do que mandar uma requisicao
+// que ja' se sabe que vai ser recusada.
+func (c *Client) credenciaisDoEmissor(ctx context.Context, creds TenantCreds, t *db.BitrixToken) (TenantCreds, bool) {
+	if t.ClientID == "" || t.ClientID == creds.ClientID {
+		return creds, true
+	}
+	accts, err := c.repo.ListBitrixAccountsByDomain(ctx, dominioNu(creds.Domain))
+	if err == nil {
+		for _, a := range accts {
+			if a.ClientID == t.ClientID && a.ClientSecret != "" {
+				corrigida := creds
+				corrigida.ClientID = a.ClientID
+				corrigida.ClientSecret = a.ClientSecret
+				c.log.Info("refresh: usando as credenciais do app que emitiu o token",
+					zap.String("domain", dominioNu(creds.Domain)),
+					zap.String("client_id_do_token", t.ClientID),
+					zap.String("client_id_tentado", creds.ClientID))
+				return corrigida, true
+			}
+		}
+	}
+	return creds, false
+}
+
 // refreshToken renova o access token usando o refresh token.
 // O endpoint OAuth2 do Bitrix24 é sempre oauth.bitrix.info, nunca o domínio da conta.
 func (c *Client) refreshToken(ctx context.Context, creds TenantCreds, t *db.BitrixToken) error {
@@ -178,6 +223,19 @@ func (c *Client) refreshToken(ctx context.Context, creds TenantCreds, t *db.Bitr
 	// outras N-1 usam um refresh_token que acabou de ser invalidado — todas
 	// falham, e antes do fix acima ainda gravavam vazio por cima. O log de
 	// producao mostrou 10+ refreshes simultaneos do mesmo tenant.
+	// Renova com as credenciais de QUEM EMITIU o token, nao com as que o
+	// caller por acaso carregava — ver credenciaisDoEmissor.
+	creds, okEmissor := c.credenciaisDoEmissor(ctx, creds, t)
+	if !okEmissor {
+		c.log.Error("refresh impossivel: token emitido por outro app e o segredo dele nao esta' cadastrado",
+			zap.String("domain", dominioNu(creds.Domain)),
+			zap.String("client_id_do_token", t.ClientID),
+			zap.String("client_id_disponivel", creds.ClientID))
+		return fmt.Errorf("token de %s foi emitido pelo app %q mas so' temos o segredo do app %q — "+
+			"reinstale o app no portal ou cadastre o client_secret correto",
+			dominioNu(creds.Domain), t.ClientID, creds.ClientID)
+	}
+
 	key := normalizeDomain(creds.Domain) + "|" + creds.ClientID
 	unlock := c.lockRefresh(key)
 	defer unlock()
