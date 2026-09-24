@@ -309,6 +309,29 @@ func (r *Repository) MarkNotificationSent(ctx context.Context, domain, kind stri
 // ListBitrixAccountsByDomain devolve os vinculos sessao<->Linha Aberta do
 // dominio. Usado pela tela de saude: sem vinculo, mensagem recebida nao
 // chega no Contact Center, e era preciso ir no banco pra descobrir isso.
+// SetBitrixAccountCredentials grava o client_id/client_secret do app Bitrix
+// em TODAS as contas do dominio.
+//
+// POR QUE ISSO EXISTE: o app e' instalado por cliente, cada portal com seu
+// proprio app OAuth. Sem um lugar pra cadastrar essas credenciais, elas so'
+// podiam vir das envs globais — que servem pra UM app, nao para N clientes.
+// Ficando vazias, o refresh do token POSTa client_id="" e o Bitrix responde
+// wrong_client: o token vence e nenhuma mensagem chega no Contact Center.
+//
+// Grava em todas as contas do dominio porque o app e' do PORTAL, nao da
+// sessao: duas sessoes WhatsApp no mesmo portal usam o mesmo OAuth.
+func (r *Repository) SetBitrixAccountCredentials(ctx context.Context, domain, clientID, clientSecret string) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bitrix_accounts
+		   SET client_id = $2, client_secret = $3, updated_at = NOW()
+		 WHERE LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) = LOWER($1)`,
+		domain, clientID, clientSecret)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *Repository) ListBitrixAccountsByDomain(ctx context.Context, domain string) ([]*BitrixAccount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,

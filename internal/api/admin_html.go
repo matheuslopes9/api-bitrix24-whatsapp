@@ -804,6 +804,7 @@ function carregarHealth(){
       '<button class="btn" onclick="testarConexao()">Testar conexao</button>'+
       '<button class="btn" onclick="abrirPareamento()">Conectar WhatsApp</button>'+
       '<button class="btn" onclick="verComoCliente()">Ver como o cliente ve</button>'+
+      '<button class="btn" onclick="abrirCredenciais()">Credenciais do app</button>'+
       '<span class="meta" style="margin-left:auto;align-self:center">'+_esc(dom)+'</span>'+
     '</div>';
     html+='<div id="health-teste"></div>';
@@ -821,9 +822,21 @@ function carregarHealth(){
         _l('Token', t.estado==='ok'
              ? '<span class="tok-valid">valido</span> ate '+fmtDate(t.expira_em)
              : '<span class="tok-expired">'+_esc(t.estado||'?')+'</span>');
+      var semCred=false;
       (b.conectores||[]).forEach(function(x){
         c+=_l('Vinculo','<span class="mono">'+_esc(x.session_jid)+'</span> -> linha '+x.open_line_id);
+        if(!x.tem_secret) semCred=true;
       });
+      c+=_l('App OAuth', t.client_id_do_token||t.client_id_em_uso
+             ? '<span class="mono">'+_esc(t.client_id_do_token||t.client_id_em_uso)+'</span>'
+             : '<span class="tok-expired">nao cadastrado</span>');
+      if(semCred){
+        c+=_alerta('sem client_id/client_secret cadastrados: o token NAO consegue renovar '+
+                   '(o Bitrix responde wrong_client) e as mensagens param de chegar. '+
+                   'Use "Credenciais do app".');
+        est='ruim';
+      }
+      if(t.problema_app){ c+=_alerta(t.problema_app); est='ruim'; }
       if(t.estado!=='ok'){ c+=_alerta(t.problema||'token com problema'); est='ruim'; }
       if(b.problema){ c+=_alerta(b.problema); est='ruim'; }
       if(b.problema_conector){ c+=_alerta(b.problema_conector); est='ruim'; }
@@ -996,6 +1009,23 @@ function verComoCliente(){
     '<div style="background:#0b1220;border:1px solid var(--border);border-radius:14px;overflow:hidden;height:70vh;margin-bottom:18px">'+
       '<iframe id="health-frame" src="'+u+'" style="width:100%;height:100%;border:0;background:#0f172a" title="Visao do cliente"></iframe>'+
     '</div>';
+}
+
+function abrirCredenciais(){
+  var dom=document.getElementById('health-domain').value;
+  if(!dom){ toast('Escolha um cliente primeiro',false); return; }
+  var cid=prompt('client_id do app OAuth do portal ' + dom + ' — em Bitrix > Aplicativos > o app > codigo do aplicativo');
+  if(!cid) return;
+  var sec=prompt('client_secret do MESMO app');
+  if(!sec) return;
+  fetch('/admin/api/tenant/credenciais',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({domain:dom,client_id:cid.trim(),client_secret:sec.trim()})})
+  .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+  .then(function(res){
+    if(res.ok){ toast('Credenciais gravadas em '+res.j.conexoes+' conexao(oes)',true); setTimeout(carregarHealth,1200); }
+    else{ toast(res.j.error||'falhou',false); }
+  })
+  .catch(function(e){ toast('erro: '+e,false); });
 }
 
 function reprocessarFila(){

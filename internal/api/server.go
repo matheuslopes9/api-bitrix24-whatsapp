@@ -327,6 +327,7 @@ func New(
 	admin.Post("/api/tenant/reprocessar-fila", soAdmin, h.adminReprocessarFila)
 	// Testa a integracao DE VERDADE (chamadas reais ao Bitrix), em vez de
 	// so' ler o estado guardado no banco.
+	admin.Post("/api/tenant/credenciais", soAdmin, h.adminSalvarCredenciais)
 	admin.Post("/api/tenant/testar-conexao", h.adminTestarConexao)
 	admin.Get("/api/tenant/testar-conexao", h.adminTestarConexao)
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────

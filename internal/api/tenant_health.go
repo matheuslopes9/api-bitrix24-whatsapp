@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/logbuffer"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
+	"go.uber.org/zap"
 )
 
 // GET /admin/api/metrics — KPIs globais do painel.
@@ -345,6 +346,55 @@ func (h *handlers) adminReprocessarFila(c *fiber.Ctx) error {
 // chamada real. E' a diferenca entre "o banco diz que o token e' valido" e
 // "o token funciona": foi exatamente esse buraco que deixou o teclife com
 // token vazio sem ninguem perceber, porque o expires_at continuava no futuro.
+// POST /admin/api/tenant/credenciais — cadastra o app OAuth do portal.
+//
+// Body: {domain, client_id, client_secret}
+//
+// O app e' instalado por cliente, cada portal com seu proprio app OAuth. Sem
+// este cadastro as credenciais so' podiam vir das envs globais, que servem
+// pra um app so'. Vazias, o refresh POSTa client_id="" e o Bitrix responde
+// wrong_client — foi o que derrubou a Open Line por 16 horas.
+func (h *handlers) adminSalvarCredenciais(c *fiber.Ctx) error {
+	var body struct {
+		Domain       string `json:"domain"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "body invalido"})
+	}
+	domain := normalizePortalDomain(strings.TrimSpace(body.Domain))
+	clientID := strings.TrimSpace(body.ClientID)
+	clientSecret := strings.TrimSpace(body.ClientSecret)
+	if domain == "" || clientID == "" || clientSecret == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain, client_id e client_secret sao obrigatorios"})
+	}
+
+	linhas, err := h.repo.SetBitrixAccountCredentials(c.Context(), domain, clientID, clientSecret)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if linhas == 0 {
+		return c.Status(404).JSON(fiber.Map{
+			"error": "nenhuma conexao encontrada para " + domain + " — pareie um numero antes de cadastrar as credenciais",
+		})
+	}
+	// client_secret NUNCA vai pro log. client_id nao e' segredo e ajuda a
+	// conferir depois qual app ficou gravado.
+	h.log.Info("credenciais OAuth do portal atualizadas",
+		zap.String("domain", domain),
+		zap.String("client_id", clientID),
+		zap.Int64("conexoes", linhas),
+		zap.String("por", h.adminActor(c)))
+
+	return c.JSON(fiber.Map{
+		"ok":        true,
+		"conexoes":  linhas,
+		"mensagem":  "credenciais gravadas — a renovacao do token passa a usar este app",
+		"client_id": clientID,
+	})
+}
+
 func (h *handlers) adminTestarConexao(c *fiber.Ctx) error {
 	ctx := c.Context()
 	domain := normalizePortalDomain(strings.TrimSpace(c.Query("domain")))
