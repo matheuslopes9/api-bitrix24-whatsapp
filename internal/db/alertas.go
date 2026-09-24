@@ -50,20 +50,26 @@ type PortalComTokenVencido struct {
 	ExpiresAt time.Time
 }
 
-// ListarTokensVencidos devolve os portais cujo token ja' passou da validade.
+// ListarTokensVencidos devolve os portais que NAO TEM NENHUM token valido.
 //
-// Enquanto o token nao renova, NENHUMA mensagem do cliente chega no Contact
-// Center — e o sintoma que o cliente relata ("parou de chegar") nao aponta
-// pra causa. Este e' o alerta que teria economizado as 16 horas de queda.
+// A versao anterior listava qualquer LINHA vencida, e um dominio pode ter
+// varias: uma por app que ja' autorizou. Sobrava linha orfa de instalacao
+// antiga, e ela sozinha disparava alerta de "token vencido" num cliente que
+// estava atendendo normalmente — 117 mensagens de entrada no dia. Alerta
+// falso e' pior que nenhum: ensina o time a ignorar.
+//
+// O que importa e' se sobrou ALGUM token utilizavel. Por isso HAVING sobre o
+// MAX: so' e' problema quando ate' o mais novo ja' venceu.
 func (r *Repository) ListarTokensVencidos(ctx context.Context) ([]PortalComTokenVencido, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT DISTINCT ON (d) d, expires_at FROM (
+		SELECT d, MAX(expires_at) AS mais_novo FROM (
 			SELECT LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) AS d,
 			       expires_at
 			  FROM bitrix_tokens
-			 WHERE expires_at < NOW()
 		) t
-		ORDER BY d, expires_at DESC`)
+		GROUP BY d
+		HAVING MAX(expires_at) < NOW()
+		ORDER BY d`)
 	if err != nil {
 		return nil, err
 	}
@@ -77,4 +83,28 @@ func (r *Repository) ListarTokensVencidos(ctx context.Context) ([]PortalComToken
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// GetBitrixTokenUtilizavel devolve o token que de fato vale pro dominio: o de
+// validade mais longa.
+//
+// GetBitrixToken ordena por updated_at, que nao e' a mesma coisa — linha
+// antiga tocada por um UPDATE qualquer vence linha nova e boa. Foi o que fez
+// a tela de saude dizer "token vencido" num cliente que estava atendendo:
+// ela lia a linha orfa de 23/09 enquanto o token bom, emitido pelo app
+// cadastrado, estava logo ao lado.
+func (r *Repository) GetBitrixTokenUtilizavel(ctx context.Context, domain string) (*BitrixToken, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, domain, client_id, access_token, refresh_token, expires_at, scope, created_at, updated_at
+		  FROM bitrix_tokens
+		 WHERE LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) = LOWER($1)
+		   AND access_token <> ''
+		 ORDER BY expires_at DESC
+		 LIMIT 1`, domain)
+	var t BitrixToken
+	if err := row.Scan(&t.ID, &t.Domain, &t.ClientID, &t.AccessToken, &t.RefreshToken,
+		&t.ExpiresAt, &t.Scope, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &t, nil
 }

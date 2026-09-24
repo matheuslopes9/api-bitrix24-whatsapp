@@ -2439,8 +2439,17 @@ func (r *Repository) GetAdminMetrics(ctx context.Context) (*AdminMetrics, error)
 		 WHERE created_at > NOW() - INTERVAL '24 hours'`).
 		Scan(&m.Msgs24h, &m.MsgsEntrada24h, &m.MsgsSaida24h, &m.Falhas24h)
 
-	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM bitrix_tokens WHERE expires_at < NOW()`).Scan(&m.TokensVencidos)
+	// Portais sem NENHUM token valido. Contar linha vencida solta daria
+	// numero errado: um dominio tem uma linha por app que ja' autorizou, e
+	// linha orfa de instalacao antiga fica vencida pra sempre — apareceria
+	// como cliente quebrado mesmo com o atendimento rodando.
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) AS d
+			  FROM bitrix_tokens
+			 GROUP BY 1
+			HAVING MAX(expires_at) < NOW()
+		) x`).Scan(&m.TokensVencidos)
 
 	_ = r.pool.QueryRow(ctx, `
 		SELECT COUNT(*)

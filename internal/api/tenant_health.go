@@ -131,10 +131,11 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 	// sintoma so' aparecia como NO_AUTH_FOUND no log.
 	tok := fiber.Map{}
 	creds := h.portalToCreds(portal)
-	t, terr := h.repo.GetBitrixTokenByClientID(ctx, "https://"+domain, creds.ClientID)
-	if terr != nil || t == nil {
-		t, terr = h.repo.GetBitrixToken(ctx, "https://"+domain)
-	}
+	// O token que VALE, nao o ultimo tocado. Um dominio pode ter varias linhas
+	// de token — uma por app que ja' autorizou — e a busca por updated_at
+	// fazia linha orfa antiga vencer linha nova e boa: a tela dizia "vencido"
+	// num cliente com 117 mensagens de entrada no dia.
+	t, terr := h.repo.GetBitrixTokenUtilizavel(ctx, domain)
 	switch {
 	case terr != nil || t == nil:
 		tok["estado"] = "ausente"
@@ -158,9 +159,23 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		// Divergencia aqui e' a causa do "wrong_client": o Bitrix recusa
 		// renovar um token com o client_id/secret de outro app. client_id nao
 		// e' segredo — o segredo e' o client_secret, que nao aparece aqui.
+		// Qual app renova este token. Quando a env global esta' vazia, quem
+		// renova e' a credencial cadastrada na conta do cliente — mostrar o
+		// campo vazio daria a entender que nao ha credencial nenhuma.
+		emUso := creds.ClientID
+		if emUso == "" {
+			if accts, aerr := h.repo.ListBitrixAccountsByDomain(ctx, domain); aerr == nil {
+				for _, a := range accts {
+					if a.ClientID != "" && a.ClientSecret != "" {
+						emUso = a.ClientID
+						break
+					}
+				}
+			}
+		}
 		tok["client_id_do_token"] = t.ClientID
-		tok["client_id_em_uso"] = creds.ClientID
-		if t.ClientID != "" && creds.ClientID != "" && t.ClientID != creds.ClientID {
+		tok["client_id_em_uso"] = emUso
+		if t.ClientID != "" && emUso != "" && t.ClientID != emUso {
 			tok["problema_app"] = "o token foi emitido por um app e a renovacao usa outro — " +
 				"e' isso que faz o Bitrix responder wrong_client"
 		}
