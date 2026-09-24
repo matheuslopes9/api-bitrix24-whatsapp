@@ -770,18 +770,17 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 		}
 	}
 
-	// Aquece o mapeamento PN->LID + prekeys do destinatario. Numeros BR
-	// antigos sem o 9 costumam falhar com erro 400 no envio quando o
-	// whatsmeow nao tem os devices/LID resolvidos ainda. GetUserDevices
-	// forca essa resolucao e popula o store. Best-effort: erro aqui nao
-	// bloqueia (o envio ainda tenta com o JID que temos).
-	if devices, devErr := sess.Client.GetUserDevices(ctx, []types.JID{target}); devErr != nil {
-		m.log.Warn("resolveRecipient: GetUserDevices falhou (segue mesmo assim)",
-			zap.String("jid", target.String()), zap.Error(devErr))
-	} else {
-		m.log.Info("resolveRecipient: devices resolvidos",
-			zap.String("jid", target.String()), zap.Int("device_count", len(devices)))
-	}
+	// NAO chamar GetUserDevices aqui.
+	//
+	// Ele era um "aquecimento" do mapeamento PN->LID, mas e' consulta usync
+	// igual a do IsOnWhatsApp — e o IsOnWhatsApp JA' grava esse mapeamento no
+	// store (PutManyLIDMappings, em user.go). Ou seja: a chamada dobrava o
+	// trafego usync sem acrescentar nada.
+	//
+	// E usync tem limite. Com o dobro de consultas o WhatsApp passou a
+	// responder 429 rate-overlimit, e ai' o proprio SendMessage falha ao
+	// buscar o LID — o envio morria na fila com
+	// "failed to get user info ... to fill LID cache".
 
 	m.jidCache.Store(chave, jidResolvido{jid: target, em: time.Now()})
 	return target, nil

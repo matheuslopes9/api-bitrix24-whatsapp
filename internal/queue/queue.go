@@ -49,6 +49,19 @@ type InboundJob struct {
 	// diagnostico virava adivinhacao.
 	LastError string `json:"last_error,omitempty"`
 
+	// LimiteHits conta quantas vezes este job esbarrou em limite de taxa do
+	// WhatsApp. Separado de RetryCount de proposito: 429 e' condicao
+	// TEMPORARIA, nao defeito da mensagem. Contar junto fazia a mensagem
+	// morrer por um problema que ia passar sozinho.
+	LimiteHits int `json:"limite_hits,omitempty"`
+
+	// AutoReprocessos conta quantas vezes o job voltou pra fila pelo
+	// reprocessamento AUTOMATICO. Existe pra job que falha sempre nao ficar
+	// eternamente indo e voltando entre a fila e a dead queue, queimando
+	// recurso e escondendo os que ainda tem chance. O reprocesso manual
+	// ignora esse limite: ali tem gente decidindo.
+	AutoReprocessos int `json:"auto_reprocessos,omitempty"`
+
 	// CRMPhone e' o telefone NA FORMA QUE O CRM GUARDA, quando ela difere do
 	// numero real do WhatsApp (tipicamente o 9o digito).
 	//
@@ -91,6 +104,12 @@ type OutboundJob struct {
 
 	// LastError: ver InboundJob.LastError.
 	LastError string `json:"last_error,omitempty"`
+
+	// LimiteHits: ver InboundJob.LimiteHits.
+	LimiteHits int `json:"limite_hits,omitempty"`
+
+	// AutoReprocessos: ver InboundJob.AutoReprocessos.
+	AutoReprocessos int `json:"auto_reprocessos,omitempty"`
 }
 
 // Queue gerencia as filas via Redis.
@@ -154,10 +173,51 @@ func (q *Queue) PopOutbound(ctx context.Context) (*OutboundJob, error) {
 	return &job, nil
 }
 
+// EhLimiteDeTaxa reconhece o 429 do WhatsApp.
+//
+// Vem como "rate-overlimit" na resposta da consulta usync, que o whatsmeow
+// dispara inclusive DENTRO do SendMessage pra descobrir o LID do destino.
+// Nao e' erro da mensagem: e' o servidor pedindo pra esperar.
+func EhLimiteDeTaxa(err error) bool {
+	if err == nil {
+		return false
+	}
+	t := strings.ToLower(err.Error())
+	return strings.Contains(t, "rate-overlimit") ||
+		strings.Contains(t, "status 429") ||
+		strings.Contains(t, "too many requests")
+}
+
+// limiteMaxHits e' quantas vezes se espera o limite passar antes de desistir.
+// Com o backoff abaixo isso da' mais de uma hora de paciencia — tempo de
+// sobra pra uma janela de rate limit passar.
+const limiteMaxHits = 12
+
+// esperaPorLimite cresce devagar e para em 10 minutos. Backoff curto sob 429
+// so' piora: cada tentativa consome mais cota e estica a punicao.
+func esperaPorLimite(hits int) time.Duration {
+	d := time.Duration(hits) * 30 * time.Second
+	if d > 10*time.Minute {
+		return 10 * time.Minute
+	}
+	return d
+}
+
 // RetryInbound recoloca um job na fila com backoff exponencial.
 func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob, motivo error) error {
 	if motivo != nil {
 		job.LastError = motivo.Error()
+	}
+	if EhLimiteDeTaxa(motivo) {
+		job.LimiteHits++
+		if job.LimiteHits <= limiteMaxHits {
+			espera := esperaPorLimite(job.LimiteHits)
+			q.log.Warn("limite de taxa do WhatsApp — aguardando sem gastar tentativa",
+				zap.String("id", job.ID), zap.Int("hits", job.LimiteHits),
+				zap.Duration("espera", espera))
+			time.Sleep(espera)
+			return q.push(ctx, keyInbound, job)
+		}
 	}
 	job.RetryCount++
 	if job.RetryCount > q.cfg.MaxRetry {
@@ -176,6 +236,17 @@ func (q *Queue) RetryInbound(ctx context.Context, job *InboundJob, motivo error)
 func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob, motivo error) error {
 	if motivo != nil {
 		job.LastError = motivo.Error()
+	}
+	if EhLimiteDeTaxa(motivo) {
+		job.LimiteHits++
+		if job.LimiteHits <= limiteMaxHits {
+			espera := esperaPorLimite(job.LimiteHits)
+			q.log.Warn("limite de taxa do WhatsApp — aguardando sem gastar tentativa",
+				zap.String("id", job.ID), zap.Int("hits", job.LimiteHits),
+				zap.Duration("espera", espera))
+			time.Sleep(espera)
+			return q.push(ctx, keyOutbound, job)
+		}
 	}
 	job.RetryCount++
 	if job.RetryCount > q.cfg.MaxRetry {
@@ -269,7 +340,23 @@ func classificarDead(raw []byte) (SondaDead, error) {
 // e' estrutural e vale tambem pros itens antigos ja' gravados: to_jid so'
 // existe na saida, from_jid so' na entrada. Quem nao tem nenhum dos dois nao
 // da' pra processar e e' descartado em vez de virar um chat fantasma.
+// maxAutoReprocessos e' quantas voltas automaticas um job pode levar antes de
+// ficar parado esperando decisao humana.
+const maxAutoReprocessos = 3
+
+// ReprocessarDead mantem a assinatura antiga pro caminho MANUAL, onde tem
+// gente decidindo e nao ha limite de voltas.
 func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]bool) (int, int, error) {
+	return q.reprocessarDead(ctx, sessoesValidas, false)
+}
+
+// ReprocessarDeadAuto e' a versao periodica: respeita maxAutoReprocessos pra
+// job cronicamente quebrado nao circular pra sempre.
+func (q *Queue) ReprocessarDeadAuto(ctx context.Context, sessoesValidas map[string]bool) (int, int, error) {
+	return q.reprocessarDead(ctx, sessoesValidas, true)
+}
+
+func (q *Queue) reprocessarDead(ctx context.Context, sessoesValidas map[string]bool, automatico bool) (int, int, error) {
 	itens, err := q.rdb.LRange(ctx, keyDead, 0, -1).Result()
 	if err != nil {
 		return 0, 0, err
@@ -302,7 +389,15 @@ func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]b
 				descartados++
 				continue
 			}
+			if automatico && job.AutoReprocessos >= maxAutoReprocessos {
+				_ = q.push(ctx, keyDead, &job) // devolve, sem contar como descarte
+				continue
+			}
 			job.RetryCount = 0
+			job.LimiteHits = 0
+			if automatico {
+				job.AutoReprocessos++
+			}
 			if err := q.PushOutbound(ctx, &job); err != nil {
 				q.log.Warn("dead queue: falha ao reenfileirar saida",
 					zap.String("id", job.ID), zap.Error(err))
@@ -316,7 +411,15 @@ func (q *Queue) ReprocessarDead(ctx context.Context, sessoesValidas map[string]b
 				descartados++
 				continue
 			}
+			if automatico && job.AutoReprocessos >= maxAutoReprocessos {
+				_ = q.push(ctx, keyDead, &job) // devolve, sem contar como descarte
+				continue
+			}
 			job.RetryCount = 0
+			job.LimiteHits = 0
+			if automatico {
+				job.AutoReprocessos++
+			}
 			if err := q.PushInbound(ctx, &job); err != nil {
 				q.log.Warn("dead queue: falha ao reenfileirar entrada",
 					zap.String("id", job.ID), zap.Error(err))

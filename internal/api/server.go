@@ -47,6 +47,7 @@ func New(
 	// Aviso diario de vencimento de licenca pro financeiro.
 	h.IniciarAvisosDeLicenca(context.Background())
 	h.IniciarAlertas(context.Background())
+	h.IniciarReprocessoAutomatico(context.Background())
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o
