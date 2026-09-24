@@ -122,6 +122,13 @@ const adminHomeHTML = `<!doctype html>
   .kpi.amber .value{color:var(--amber)} .kpi.red .value{color:var(--red)} .kpi.purple .value{color:var(--purple)}
 
   .section-title{font-size:1.05em;font-weight:800;margin:8px 0 14px;display:flex;align-items:center;gap:9px}
+  /* Alerta operacional: o que exige alguem agir agora. */
+  .alerta{background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35);color:#fca5a5;
+          border-radius:11px;padding:11px 14px;margin-bottom:9px;font-size:.85em;font-weight:600}
+  .dir-in{color:#34d399;font-weight:700}
+  .dir-out{color:#60a5fa;font-weight:700}
+  .st-ok{color:var(--muted)}
+  .st-fail{color:#f87171;font-weight:700}
 
   /* toolbar */
   .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
@@ -254,6 +261,16 @@ const adminHomeHTML = `<!doctype html>
     <!-- OVERVIEW -->
     <div class="page active" id="page-overview">
       <div class="kpis" id="kpis"><div class="loading">Carregando métricas…</div></div>
+      <div id="alertas-op"></div>
+      <div class="section-title">💬 Últimas mensagens
+        <span class="meta" style="font-weight:400;text-transform:none;margin-left:8px">o que está passando agora, em todos os clientes</span>
+      </div>
+      <div class="tablewrap"><div class="tablescroll" style="max-height:360px">
+        <table>
+          <thead><tr><th>Quando</th><th>Cliente</th><th></th><th>Número</th><th>Mensagem</th><th>Situação</th></tr></thead>
+          <tbody id="msgs-recentes"><tr><td colspan="6" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
       <div class="section-title">⏰ Renovações a vencer</div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
@@ -315,7 +332,7 @@ const adminHomeHTML = `<!doctype html>
       <div class="section-title">📈 Consumo por tenant</div>
       <div class="tablewrap"><div class="tablescroll">
         <table>
-          <thead><tr><th>Tenant</th><th>Msgs 24h</th><th>Msgs 7d</th><th>Msgs 30d</th><th>Sessões</th><th>Contrato</th><th>Vigência</th></tr></thead>
+          <thead><tr><th>Cliente</th><th>24h</th><th>7 dias</th><th>30 dias</th><th style="width:130px">Volume 30d</th><th>Números</th><th>Vigência</th></tr></thead>
           <tbody id="usage-body"><tr><td colspan="7" class="loading">Carregando consumo…</td></tr></tbody>
         </table>
       </div></div>
@@ -396,20 +413,20 @@ const adminHomeHTML = `<!doctype html>
     <div class="page" id="page-preview">
       <div class="toolcard" style="margin-bottom:14px">
         <h3>👁️ Preview do app (como o cliente vê no Bitrix24)</h3>
-        <p>Esta é a interface que o cliente enxerga dentro do Bitrix24. Você acessa via cookie de admin — no cliente real, ela abre no iframe do Marketplace. Escolha a tela e (opcional) o domínio de um tenant pra testar qualquer alteração de forma isolada.</p>
+        <p>A interface que o cliente enxerga dentro do Bitrix24. Escolha um cliente para ver os dados reais dele, ou deixe em <strong>Demonstração</strong> para conferir o programa sem expor dado de ninguém — útil para mostrar o produto e para testar mudança de layout.</p>
         <div class="preview-controls">
           <div class="preview-field" style="flex:0 0 220px">
             <label for="preview-screen">Tela</label>
             <select class="dominput" id="preview-screen" onchange="recarregarPreview()">
-              <option value="/dashboard">Dashboard (painel)</option>
-              <option value="/welcome">Welcome (onboarding)</option>
-              <option value="/planos">Planos (vitrine)</option>
-              <option value="/bitrix/crm/tab">CRM Tab (aba no negócio)</option>
+              <option value="/dashboard">Painel do cliente</option>
+              <option value="/bitrix/crm/tab">Aba no CRM (contato/negócio)</option>
             </select>
           </div>
           <div class="preview-field" style="flex:1 1 280px">
-            <label for="preview-domain">Domínio do tenant <span style="text-transform:none;opacity:.7">(opcional)</span></label>
-            <input class="dominput" id="preview-domain" placeholder="ex: crm.cliente.bitrix24.com">
+            <label for="preview-domain">Cliente</label>
+            <select class="dominput" id="preview-domain" onchange="recarregarPreview()">
+              <option value="">— Demonstração (sem dados de cliente) —</option>
+            </select>
           </div>
           <div class="preview-actions">
             <button class="btn btn-primary" onclick="recarregarPreview()">Carregar</button>
@@ -427,25 +444,43 @@ const adminHomeHTML = `<!doctype html>
     <div class="page" id="page-tools">
       <div class="tools">
         <div class="toolcard">
-          <h3>🔧 Ações por tenant</h3>
-          <p>Informe o domínio e escolha a ação. Útil pra reparar placement, re-registrar robôs ou popular templates de teste.</p>
-          <input class="dominput" id="tool-domain" placeholder="crm.cliente.bitrix24.com">
-          <div class="row">
-            <button class="btn" onclick="toolAction('bp-reregister','GET')">Re-registrar robôs</button>
-            <button class="btn" onclick="toolAction('placements/force-unbind','GET')">Limpar placements</button>
-            <button class="btn" onclick="toolAction('seed-templates','GET')">Semear templates</button>
-            <button class="btn" onclick="toolAction('bp-debug-sessions','GET')">Debug sessões</button>
-            <button class="btn" onclick="toolAction('portal-debug','GET')">Debug portal</button>
+          <h3>🔧 Reparo de um cliente</h3>
+          <p>Escolha o cliente e a ação. Cada uma resolve um sintoma específico — se o sintoma não for esse, não use.</p>
+          <select class="dominput" id="tool-domain">
+            <option value="">— escolha um cliente —</option>
+          </select>
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:10px;margin-top:4px">
+            <div>
+              <button class="btn" onclick="toolAction('bp-reregister','GET')">Re-registrar automações</button>
+              <div class="meta" style="margin-top:4px">Quando: os robôs do BizProc sumiram dos fluxos do cliente, ou pararam de disparar.</div>
+            </div>
+            <div>
+              <button class="btn" onclick="confirmarFerramenta('placements/force-unbind','Reinstalar as abas do UC Talk')">Reinstalar abas do app</button>
+              <div class="meta" style="margin-top:4px">Quando: a aba UC Talk não aparece no contato/negócio do cliente. Desfaz e refaz o registro das abas.</div>
+            </div>
           </div>
         </div>
+
         <div class="toolcard">
-          <h3>🩺 Manutenção global</h3>
-          <p>Ações que afetam todos os tenants. Use com cuidado.</p>
-          <div class="row">
-            <button class="btn" onclick="globalAction('queue/flush','POST')">Esvaziar filas</button>
-            <button class="btn" onclick="globalAction('cleanup/banned-sessions','POST')">Limpar sessões banidas</button>
-            <button class="btn" onclick="globalAction('cleanup/placeholder-portals','POST')">Limpar placeholders</button>
+          <h3>🧹 Faxina global</h3>
+          <p>Afeta todos os clientes, mas só remove lixo — nada de atendimento é perdido.</p>
+          <div class="row" style="flex-direction:column;align-items:stretch;gap:10px">
+            <div>
+              <button class="btn" onclick="globalAction('cleanup/banned-sessions','POST')">Limpar sessões banidas</button>
+              <div class="meta" style="margin-top:4px">Remove números que o WhatsApp baniu e que ficam tentando reconectar à toa.</div>
+            </div>
+            <div>
+              <button class="btn" onclick="globalAction('cleanup/placeholder-portals','POST')">Limpar portais fantasma</button>
+              <div class="meta" style="margin-top:4px">Remove registros de instalação que nunca se completaram.</div>
+            </div>
           </div>
+        </div>
+
+        <div class="toolcard" style="border-color:rgba(239,68,68,.4)">
+          <h3 style="color:#f87171">⚠️ Destrutivo</h3>
+          <p>Esvaziar as filas <strong>descarta mensagens de clientes que ainda não foram entregues</strong> — inclusive as que estão esperando para ser reprocessadas. Elas não voltam.</p>
+          <p class="meta">Antes disso: em <strong>Saúde do cliente</strong> existe <em>Reentregar mensagens</em>, que devolve a fila presa ao fluxo em vez de jogar fora. É quase sempre o que você quer.</p>
+          <button class="btn" onclick="confirmarEsvaziarFilas()" style="border-color:rgba(239,68,68,.5);color:#fca5a5">Esvaziar filas</button>
         </div>
       </div>
       <pre id="tool-output" style="margin-top:16px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:16px;font-size:.78em;color:var(--muted);overflow:auto;max-height:420px;white-space:pre-wrap;display:none"></pre>
@@ -471,7 +506,7 @@ var PAGES={
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
   audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
   preview:{title:'Preview do app',sub:'Como o cliente vê o UC Talk no Bitrix24'},
-  tools:{title:'Ferramentas',sub:'Ações de manutenção e reparo'}
+  tools:{title:'Ferramentas',sub:'Reparo pontual — cada ação resolve um sintoma'}
 };
 
 function toast(msg,ok){var t=document.getElementById('toast');t.textContent=msg;t.className=ok?'ok':'err';t.style.display='block';clearTimeout(window._tt);window._tt=setTimeout(function(){t.style.display='none';},3800);}
@@ -504,10 +539,8 @@ function previewURL(){
 }
 // Dicas por tela: algumas só fazem sentido com domínio de tenant.
 var PREVIEW_HINTS={
-  '/dashboard':'Painel do cliente. Sem domínio mostra o estado vazio; informe um tenant pra ver os dados dele.',
-  '/welcome':'Tela de boas-vindas exibida no 1º acesso (trial de 7 dias).',
-  '/planos':'Vitrine pública de planos (PIX + Boleto). O checkout real só libera dentro do Bitrix24.',
-  '/bitrix/crm/tab':'Aba que aparece no Contato/Lead/Negócio. Informe o domínio do tenant pra carregar de verdade.'
+  '/dashboard':'Painel que o cliente abre dentro do Bitrix24. Em Demonstração aparece vazio, sem dado de cliente nenhum.',
+  '/bitrix/crm/tab':'Aba que aparece no Contato, Lead e Negócio. Escolha um cliente para carregar conversas de verdade.'
 };
 function atualizarPreviewHint(){
   var scrEl=document.getElementById('preview-screen');var h=document.getElementById('preview-hint');
@@ -568,12 +601,25 @@ function fmtDia(s){if(!s)return '—';try{return new Date(s+'T12:00:00').toLocal
 function renderKpis(m){
   var box=document.getElementById('kpis');
   function k(cls,label,val,foot){return '<div class="kpi '+cls+'"><div class="label">'+label+'</div><div class="value">'+val+'</div><div class="foot">'+(foot||'')+'</div></div>';}
+  var viv=(m.sessoes_conectadas===undefined?null:m.sessoes_conectadas);
+  var sess=(viv===null? (m.sessions_active||0) : viv+' / '+(m.sessions_active||0));
+  var sessFoot=(viv===null?'números pareados':'conectadas agora / ativas no banco');
+  var filaE=m.fila_entrada||0, filaS=m.fila_saida||0, mortas=m.fila_mortas||0;
   box.innerHTML=
     k('blue','Clientes',m.tenants_total||0,'portais com o app instalado')+
-    k('green','Licenças em vigor',m.licencas_em_vigor||0,'sem prazo ou dentro dele')+
-    k('amber','Vencendo',m.licencas_vencendo||0,'nos próximos 7 dias')+
-    k('red','Vencidas',m.licencas_vencidas||0,'renovação em atraso')+
-    k('purple','Sessões ativas',m.sessions_active||0,(m.msgs_24h||0)+' msgs 24h');
+    k(viv!==null&&viv<(m.sessions_active||0)?'amber':'purple','Números conectados',sess,sessFoot)+
+    k('green','Mensagens 24h',(m.msgs_24h||0),'↓ '+(m.msgs_entrada_24h||0)+' entrada  ·  ↑ '+(m.msgs_saida_24h||0)+' saída')+
+    k(mortas>0?'red':'green','Fila',filaE+filaS,filaE+' entrada · '+filaS+' saída · '+mortas+' presas')+
+    k((m.falhas_24h||0)>0?'red':'green','Falhas 24h',m.falhas_24h||0,'mensagens que não entregaram')+
+    k('amber','Licenças',(m.licencas_vencendo||0)+(m.licencas_vencidas||0),(m.licencas_em_vigor||0)+' em vigor · '+(m.licencas_vencendo||0)+' vencendo · '+(m.licencas_vencidas||0)+' vencidas');
+
+  // Alertas operacionais: o que exige alguem agir AGORA. Ficavam invisiveis
+  // ate' alguem abrir a saude de cada cliente, um por um.
+  var al='';
+  if(m.tokens_vencidos>0) al+='<div class="alerta">🔑 '+m.tokens_vencidos+' portal(is) com token VENCIDO — enquanto não renovar, nenhuma mensagem do cliente chega no Contact Center.</div>';
+  if(m.tenants_sem_sessao>0) al+='<div class="alerta">📵 '+m.tenants_sem_sessao+' cliente(s) sem nenhum número conectado.</div>';
+  if(mortas>0) al+='<div class="alerta">📥 '+mortas+' mensagem(ns) presa(s) na fila — reprocesse em Saúde do cliente.</div>';
+  var ea=document.getElementById('alertas-op'); if(ea) ea.innerHTML=al;
   document.getElementById('cnt-tenants').textContent=m.tenants_total||0;
   var cv=document.getElementById('cnt-vencendo');
   if(cv) cv.textContent=(m.licencas_vencendo||0)+(m.licencas_vencidas||0);
@@ -644,6 +690,28 @@ window.addEventListener('resize',fechaMenus);
 window.addEventListener('scroll',fechaMenus,true);
 
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
+function preencherSeletorFerramentas(){
+  var sel=document.getElementById('tool-domain');
+  if(!sel) return;
+  var atual=sel.value;
+  sel.innerHTML='<option value="">— escolha um cliente —</option>'+
+    TENANTS.map(function(t){return '<option value="'+_esc(t.domain)+'">'+_esc(t.domain)+'</option>';}).join('');
+  if(atual) sel.value=atual;
+}
+// Acao que mexe no portal do cliente pede confirmacao nomeando o cliente:
+// executar no tenant errado e' o engano facil de cometer numa lista.
+function confirmarFerramenta(path,rotulo){
+  var dom=document.getElementById('tool-domain').value.trim();
+  if(!dom){toast('Escolha um cliente primeiro',false);return;}
+  if(!confirm(rotulo+' em '+dom+'?')) return;
+  toolAction(path,'GET');
+}
+function confirmarEsvaziarFilas(){
+  if(!confirm('Isto DESCARTA mensagens de clientes que ainda nao foram entregues. Elas nao voltam. Tem certeza?')) return;
+  var t=prompt('Para confirmar, digite: ESVAZIAR');
+  if(t!=='ESVAZIAR'){toast('cancelado',false);return;}
+  globalAction('queue/flush','POST');
+}
 function toolAction(path,method){var dom=document.getElementById('tool-domain').value.trim();if(!dom){toast('Informe o domínio primeiro',false);return;}runTool('/admin/api/tenant/'+path+'?domain='+encodeURIComponent(dom),method,'tool-output');}
 function globalAction(path,method){runTool('/admin/api/'+path,method,'tool-output');}
 function runTool(url,method,targetId){var out=document.getElementById(targetId);out.style.display='block';out.textContent='Executando '+method+' '+url+' …';fetch(url,{method:method}).then(function(r){return r.text();}).then(function(t){try{out.textContent=JSON.stringify(JSON.parse(t),null,2);}catch(e){out.textContent=t;}toast('✓ executado',true);}).catch(function(e){out.textContent='Erro: '+e;toast('✗ falha',false);});}
@@ -1080,6 +1148,16 @@ function reprocessarFila(){
       else toast(res.j.error||'falha',false);
     }).catch(function(){toast('erro de conexao',false);});
 }
+function preencherSeletorPreview(){
+  var sel=document.getElementById('preview-domain');
+  if(!sel) return;
+  var atual=sel.value;
+  sel.innerHTML='<option value="">— Demonstração (sem dados de cliente) —</option>'+
+    TENANTS.map(function(t){
+      return '<option value="'+_esc(t.domain)+'">'+_esc(t.domain)+'</option>';
+    }).join('');
+  if(atual) sel.value=atual;
+}
 function preencherSeletorSaude(){
   var sel=document.getElementById('health-domain');
   if(!sel||!TENANTS) return;
@@ -1094,9 +1172,38 @@ function carregarUsage(){
   fetch('/admin/api/usage').then(function(r){return r.json();}).then(function(d){
     var b=document.getElementById('usage-body'); var list=d.usage||[];
     if(!list.length){b.innerHTML='<tr><td colspan="7" class="empty">Sem dados de consumo ainda.</td></tr>';return;}
+    // Barra relativa ao cliente que mais usa: numero solto nao diz se 4 mil
+    // mensagens e muito ou pouco pra este parque.
+    var teto=1; list.forEach(function(u){ if((u.msgs_30d||0)>teto) teto=u.msgs_30d; });
     b.innerHTML=list.map(function(u){
-      var sess=(u.sessions_qr||0)+' QR'+(u.sessions_cloud?' · '+u.sessions_cloud+' Cloud':'');
-      return '<tr><td class="domain">'+u.domain+'</td><td>'+(u.msgs_24h||0)+'</td><td>'+(u.msgs_7d||0)+'</td><td><b>'+(u.msgs_30d||0)+'</b></td><td>'+sess+'</td><td>'+(u.charges_paid||0)+'</td><td>'+fmtBRL(u.revenue_cents)+'</td></tr>';
+      var usados=(u.sessions_qr||0)+(u.sessions_cloud||0);
+      var teto_n=u.max_sessions||0;
+      // Estourar o contratado e o que o suporte precisa ver de relance.
+      var cor=(teto_n&&usados>teto_n)?'var(--red)':(teto_n&&usados===teto_n?'#fbbf24':'var(--muted)');
+      var nums='<span style="color:'+cor+';font-weight:700">'+usados+'</span>'+
+               (teto_n?'<span class="meta"> / '+teto_n+' contratado(s)</span>':'<span class="meta"> / sem limite</span>')+
+               (u.sessions_cloud?'<div class="meta">'+(u.sessions_qr||0)+' QR · '+u.sessions_cloud+' Cloud</div>':'');
+      var pct=Math.round(((u.msgs_30d||0)/teto)*100);
+      var barra='<div style="background:var(--panel2);border-radius:999px;height:7px;overflow:hidden">'+
+                '<div style="width:'+Math.max(pct,2)+'%;height:100%;background:linear-gradient(90deg,#25D366,#60a5fa)"></div></div>';
+      var vig;
+      if(!u.valid_until){ vig='<span class="meta">sem prazo</span>'; }
+      else{
+        var dt=new Date(u.valid_until), hoje=new Date();
+        var dias=Math.ceil((dt-hoje)/86400000);
+        var c=dias<0?'var(--red)':(dias<=7?'#fbbf24':'var(--muted)');
+        var txt=dias<0?('vencida há '+Math.abs(dias)+'d'):(dias<=7?('vence em '+dias+'d'):dt.toLocaleDateString('pt-BR'));
+        vig='<span style="color:'+c+';font-weight:600">'+txt+'</span>';
+      }
+      return '<tr>'+
+        '<td class="domain">'+_esc(u.domain)+'</td>'+
+        '<td>'+(u.msgs_24h||0)+'</td>'+
+        '<td>'+(u.msgs_7d||0)+'</td>'+
+        '<td><b>'+(u.msgs_30d||0)+'</b></td>'+
+        '<td>'+barra+'</td>'+
+        '<td>'+nums+'</td>'+
+        '<td>'+vig+'</td>'+
+      '</tr>';
     }).join('');
   }).catch(function(){document.getElementById('usage-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar.</td></tr>';});
 }
@@ -1212,14 +1319,48 @@ function renderRenovacoes(list){
   }).join('');
 }
 
+function _quando(iso){
+  if(!iso) return '-';
+  var d=new Date(iso), ag=new Date(), dif=Math.floor((ag-d)/1000);
+  if(dif<60) return 'agora';
+  if(dif<3600) return Math.floor(dif/60)+' min';
+  if(d.toDateString()===ag.toDateString()) return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+function carregarMensagensRecentes(){
+  var tb=document.getElementById('msgs-recentes');
+  if(!tb) return;
+  fetch('/admin/api/mensagens-recentes?limite=40').then(function(r){return r.json();}).then(function(d){
+    var ms=d.mensagens||[];
+    if(!ms.length){tb.innerHTML='<tr><td colspan="6" class="empty">Nenhuma mensagem ainda.</td></tr>';return;}
+    tb.innerHTML=ms.map(function(m){
+      var ent=(m.direction==='inbound');
+      var falhou=(m.status==='failed');
+      var sit=falhou
+        ? '<span class="st-fail" title="'+_esc(m.error_msg||'')+'">falhou</span>'
+        : '<span class="st-ok">'+_esc(m.status||'')+'</span>';
+      var quem=_esc(m.author||'')||'<span class="meta">—</span>';
+      return '<tr>'+
+        '<td class="meta" style="white-space:nowrap">'+_quando(m.created_at)+'</td>'+
+        '<td>'+(_esc(m.domain)||'<span class="meta">sem vínculo</span>')+'</td>'+
+        '<td class="'+(ent?'dir-in':'dir-out')+'" title="'+(ent?'do cliente':'do operador')+'">'+(ent?'↓':'↑')+'</td>'+
+        '<td class="mono">'+_esc(m.peer||'')+'</td>'+
+        '<td><div style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+quem+(m.author?': ':'')+_esc(m.preview||'')+'</div></td>'+
+        '<td>'+sit+'</td>'+
+      '</tr>';
+    }).join('');
+  }).catch(function(){tb.innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar mensagens.</td></tr>';});
+}
+
 function carregarTudo(){
+  carregarMensagensRecentes();
   fetch('/admin/api/licenses').then(function(r){return r.json();}).then(function(d){
     LICENCAS=d.licenses||[];
     renderRenovacoes(LICENCAS);
     if(document.getElementById('page-licencas').classList.contains('active'))renderLicencas();
   }).catch(function(){});
   fetch('/admin/api/metrics').then(function(r){return r.json();}).then(renderKpis).catch(function(){document.getElementById('kpis').innerHTML='<div class="empty">Falha ao carregar métricas.</div>';});
-  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();preencherSeletorSaude();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar clientes.</td></tr>';});
+  fetch('/admin/api/tenants').then(function(r){return r.json();}).then(function(d){TENANTS=d.tenants||[];renderTenants();preencherSeletorSaude();preencherSeletorPreview();preencherSeletorFerramentas();}).catch(function(){document.getElementById('tenants-body').innerHTML='<tr><td colspan="7" class="empty">Falha ao carregar clientes.</td></tr>';});
 }
 carregarTudo();
 setInterval(carregarTudo,60000);

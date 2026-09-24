@@ -711,7 +711,7 @@ function salvarERedirecionarAdmin(auth, isInstall) {
       // travado em "Finalizando instalacao..." e user fechava antes do Bitrix
       // completar o install, deixando o app em limbo (APPLICATION_NOT_FOUND).
       // FIX: apos installFinish, aguarda 1.2s pro Bitrix processar e ai
-      // redireciona pro /welcome (fluxo onboarding completo).
+      // redireciona direto pro painel.
       if (isInstall && typeof BX24 !== 'undefined' && BX24.installFinish) {
         document.getElementById('msg').textContent = 'Finalizando instalação...';
         try { BX24.installFinish(); } catch(e) {}

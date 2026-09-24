@@ -2396,6 +2396,20 @@ type AdminMetrics struct {
 	LicencasVencendo int   `json:"licencas_vencendo"` // vencem em ate 7 dias
 	SessionsActive   int   `json:"sessions_active"`
 	Msgs24h          int64 `json:"msgs_24h"`
+
+	// Separar entrada de saida importa pra saber QUE LADO parou. Integracao
+	// quebrada costuma zerar so' um dos dois — o total sozinho esconde isso.
+	MsgsEntrada24h int64 `json:"msgs_entrada_24h"`
+	MsgsSaida24h   int64 `json:"msgs_saida_24h"`
+	// Falhas com motivo gravado. Subida repentina e' o primeiro sinal de
+	// token vencido ou conector desalinhado.
+	Falhas24h int64 `json:"falhas_24h"`
+	// Portais cujo token ja' venceu: enquanto nao renovar, nenhuma mensagem
+	// do cliente chega no Contact Center.
+	TokensVencidos int `json:"tokens_vencidos"`
+	// Portais sem NENHUMA sessao WhatsApp ativa — cliente instalado que nao
+	// esta' atendendo.
+	TenantsSemSessao int `json:"tenants_sem_sessao"`
 }
 
 // GetAdminMetrics computa os agregados em poucas queries.
@@ -2416,10 +2430,87 @@ func (r *Repository) GetAdminMetrics(ctx context.Context) (*AdminMetrics, error)
 	_ = r.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM whatsapp_sessions WHERE status = 'active'`).Scan(&m.SessionsActive)
 
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE direction = 'inbound'),
+		       COUNT(*) FILTER (WHERE direction = 'outbound'),
+		       COUNT(*) FILTER (WHERE status = 'failed')
+		  FROM messages
+		 WHERE created_at > NOW() - INTERVAL '24 hours'`).
+		Scan(&m.Msgs24h, &m.MsgsEntrada24h, &m.MsgsSaida24h, &m.Falhas24h)
+
 	_ = r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM messages WHERE created_at > NOW() - INTERVAL '24 hours'`).Scan(&m.Msgs24h)
+		`SELECT COUNT(*) FROM bitrix_tokens WHERE expires_at < NOW()`).Scan(&m.TokensVencidos)
+
+	_ = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		  FROM bitrix_portals p
+		 WHERE NOT EXISTS (
+		       SELECT 1
+		         FROM bitrix_accounts ba
+		         JOIN whatsapp_sessions ws ON ws.jid = ba.session_jid
+		        WHERE LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', ''))
+		            = LOWER(REGEXP_REPLACE(p.domain,  '^https?://(www\.)?', ''))
+		          AND ws.status = 'active')`).Scan(&m.TenantsSemSessao)
 
 	return m, nil
+}
+
+// RecentMessageView e' uma linha do painel de ultimas mensagens: o minimo
+// pra saber o que esta' acontecendo agora sem abrir o log do container.
+type RecentMessageView struct {
+	Domain    string    `json:"domain"`
+	Direction string    `json:"direction"`
+	Status    string    `json:"status"`
+	Peer      string    `json:"peer"`   // numero do cliente
+	Author    string    `json:"author"` // quem escreveu (operador ou contato)
+	Preview   string    `json:"preview"`
+	ErrorMsg  string    `json:"error_msg,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListRecentMessagesComDominio devolve as ultimas mensagens JA' com o dominio
+// do cliente resolvido.
+//
+// GetRecentMessages devolve a linha crua, sem dizer de QUEM e' — inutil num
+// painel multi-cliente, onde a primeira pergunta e' "de qual cliente?".
+func (r *Repository) ListRecentMessagesComDominio(ctx context.Context, limite int) ([]RecentMessageView, error) {
+	if limite <= 0 || limite > 200 {
+		limite = 40
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT COALESCE(ba.domain, ''),
+		       m.direction, m.status,
+		       CASE WHEN m.direction = 'outbound' THEN COALESCE(m.to_jid,'')
+		            ELSE COALESCE(m.from_jid,'') END,
+		       COALESCE(m.author_name,''),
+		       LEFT(COALESCE(m.content,''), 90),
+		       COALESCE(m.error_msg,''),
+		       m.created_at
+		  FROM messages m
+		  LEFT JOIN whatsapp_sessions s ON s.id = m.session_id
+		  LEFT JOIN bitrix_accounts ba  ON ba.session_jid = s.jid
+		 ORDER BY m.created_at DESC
+		 LIMIT $1`, limite)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]RecentMessageView, 0, limite)
+	for rows.Next() {
+		var v RecentMessageView
+		if err := rows.Scan(&v.Domain, &v.Direction, &v.Status, &v.Peer,
+			&v.Author, &v.Preview, &v.ErrorMsg, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		v.Domain = strings.TrimPrefix(strings.TrimPrefix(v.Domain, "https://"), "http://")
+		if i := strings.IndexByte(v.Peer, '@'); i > 0 {
+			v.Peer = v.Peer[:i]
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // ─── Admin users (multi-admin com papeis) ──────────────────────────────────

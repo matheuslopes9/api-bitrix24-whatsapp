@@ -78,8 +78,6 @@ func New(
 	app.Get("/connect", h.connectPage)
 	app.Get("/dashboard", h.dashboardPage)
 	// Welcome screen (acesso via iframe Bitrix).
-	app.Get("/welcome", h.welcomePage)
-	app.Post("/welcome", h.welcomePage)
 	// Grupo /ui/*: protegido por cookie tenant (setado em /bitrix/auth apos
 	// o iframe Bitrix validar com BX24.js) OU cookie admin (super-admin).
 	// SEM o middleware, qualquer um na internet podia ler/escrever dados
@@ -97,7 +95,6 @@ func New(
 	ui.Get("/overview", h.uiOverview)
 	// O cliente ve (somente leitura) o que o contrato dele libera.
 	ui.Get("/license", h.uiTenantLicense)
-	ui.Post("/welcome/dismiss", h.uiWelcomeDismiss)
 	// ─── Sessões Cloud API (Meta Oficial) — feature contratada ───────────
 	ui.Post("/sessions/cloud", h.requireCloudAPI, h.uiCreateCloudSession)
 	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)
@@ -289,6 +286,7 @@ func New(
 	admin.Get("/api/audit", h.adminAuditLog)
 	admin.Get("/api/system", h.adminSystem)          // monitoramento processo
 	admin.Get("/api/usage", h.adminUsage)            // consumo por tenant
+	admin.Get("/api/mensagens-recentes", h.adminMensagensRecentes)
 	admin.Get("/api/logs/stream", h.adminLogsStream) // SSE logs em tempo real
 	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
 	admin.Post("/api/blocked-ips/block", h.adminBlockIP)

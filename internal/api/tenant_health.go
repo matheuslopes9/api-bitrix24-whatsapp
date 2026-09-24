@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,12 +24,60 @@ import (
 )
 
 // GET /admin/api/metrics — KPIs globais do painel.
+//
+// Junta o que esta' no BANCO com o que esta' VIVO no processo. As duas coisas
+// divergem com frequencia (o status da sessao no banco atrasa apos deploy) e
+// a divergencia costuma ser o proprio problema — por isso as duas aparecem.
 func (h *handlers) adminMetrics(c *fiber.Ctx) error {
 	m, err := h.repo.GetAdminMetrics(c.Context())
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(m)
+	out := fiber.Map{
+		"tenants_total":      m.TenantsTotal,
+		"licencas_em_vigor":  m.LicencasVigor,
+		"licencas_vencidas":  m.LicencasVencidas,
+		"licencas_vencendo":  m.LicencasVencendo,
+		"sessions_active":    m.SessionsActive,
+		"msgs_24h":           m.Msgs24h,
+		"msgs_entrada_24h":   m.MsgsEntrada24h,
+		"msgs_saida_24h":     m.MsgsSaida24h,
+		"falhas_24h":         m.Falhas24h,
+		"tokens_vencidos":    m.TokensVencidos,
+		"tenants_sem_sessao": m.TenantsSemSessao,
+	}
+	// Sessoes realmente conectadas AGORA, lidas do manager.
+	if h.waManager != nil {
+		out["sessoes_conectadas"] = len(h.waManager.ConnectedSessions())
+	}
+	// Profundidade das filas: entrada empilhando e' mensagem de cliente
+	// esperando, e nao aparecia em lugar nenhum do painel.
+	if h.q != nil {
+		entrada, saida, mortas := h.q.Lengths(c.Context())
+		out["fila_entrada"] = entrada
+		out["fila_saida"] = saida
+		out["fila_mortas"] = mortas
+	}
+	return c.JSON(out)
+}
+
+// GET /admin/api/mensagens-recentes?limite=40 — o que esta' passando agora.
+//
+// Ate' aqui, saber se as mensagens estavam fluindo exigia abrir o log do
+// container. Esta lista responde de relance: qual cliente, que direcao, se
+// entregou, e o motivo quando falhou.
+func (h *handlers) adminMensagensRecentes(c *fiber.Ctx) error {
+	limite := 40
+	if v := strings.TrimSpace(c.Query("limite")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limite = n
+		}
+	}
+	msgs, err := h.repo.ListRecentMessagesComDominio(c.Context(), limite)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"total": len(msgs), "mensagens": msgs})
 }
 
 // GET /admin/api/tenant/health?domain=... — diagnostico completo do cliente.

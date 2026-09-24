@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 )
 
 // GET /dashboard
@@ -21,46 +20,15 @@ func (h *handlers) dashboardPage(c *fiber.Ctx) error {
 	if !dashboardCallerAllowed(c, h.cfg.App.Secret) {
 		return c.Status(fiber.StatusNotFound).SendString("404 not found")
 	}
-	// Welcome gate: se o tenant tem cookie valido mas nunca viu o welcome,
-	// redireciona pra /welcome em vez de servir o dashboard. Idempotente:
-	// apos o user clicar "Continuar pro App" no /welcome, welcome_shown=TRUE
-	// e dashboard serve normal.
+	// O WELCOME FOI REMOVIDO. Ele era onboarding de marketplace: o cliente
+	// instalava sozinho e precisava ser apresentado ao produto e ao trial.
+	// Hoje quem instala e' a UC Technology, junto do cliente — a tela virava
+	// um clique a mais entre o operador e o atendimento, sem dizer nada que
+	// ele nao tenha ouvido na implantacao.
 	//
-	// SAFETY: se a licenca e' nil (race: /bitrix/auth falhou em chamar
-	// EnsureLicense), cria agora e ainda assim redireciona pro welcome. Sem
-	// isso, a race silencia o welcome e o usuario pula direto pro dashboard
-	// sem nunca ver a tela de boas-vindas.
-	cookieRaw := c.Cookies(tenantCookieName)
-	if cookieRaw != "" {
-		domain, ok := verifyTenantCookie(h.cfg.App.Secret, cookieRaw)
-		if ok && domain != "" {
-			lic, err := h.repo.GetLicense(c.Context(), domain)
-			if err == nil && lic == nil {
-				// Row faltando — cria a licenca minima retroativamente.
-				if e := h.repo.EnsureLicense(c.Context(), domain); e == nil {
-					lic, _ = h.repo.GetLicense(c.Context(), domain)
-				}
-			}
-			welcomeShown := false
-			if lic != nil {
-				welcomeShown = lic.WelcomeShown
-			}
-			h.log.Info("dashboard: welcome gate check",
-				zap.String("domain", domain),
-				zap.Bool("licenca_encontrada", lic != nil),
-				zap.Bool("welcome_shown", welcomeShown))
-			if lic != nil && !lic.WelcomeShown {
-				return c.Redirect("/welcome", fiber.StatusFound)
-			}
-		} else {
-			h.log.Warn("dashboard: tenant cookie present but invalid",
-				zap.String("cookie_prefix", safePrefix(cookieRaw, 16)))
-		}
-	} else {
-		// Sem cookie tenant — usuario veio sem ter passado pelo /bitrix/auth.
-		// Pode ser super-admin via /admin/login, ou acesso direto sem auth.
-		h.log.Info("dashboard: no tenant cookie — skipping welcome gate")
-	}
+	// A coluna welcome_shown continua no banco: e' inofensiva e derrubar
+	// coluna exige migration destrutiva sem ganho nenhum.
+
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	c.Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	c.Set("Pragma", "no-cache")
