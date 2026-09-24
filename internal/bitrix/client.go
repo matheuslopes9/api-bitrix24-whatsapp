@@ -1530,6 +1530,70 @@ func (c *Client) listarViaUserGet(ctx context.Context, creds TenantCreds) ([]Bit
 	return todos, nil
 }
 
+// IDsDoQuadro devolve os IDs de todo mundo que esta' na ESTRUTURA DA EMPRESA
+// do portal — a mesma lista que o Bitrix mostra em /company/.
+//
+// POR QUE ISTO EXISTE: enumerar usuarios exigia o scope `user`, que este app
+// nao tem. Sem ele sobrava sondar IDs de 1 em diante, que e' lento, incompleto
+// e depende de sorte com a numeracao. Medido no portal do cliente: a sondagem
+// devolvia 15 de 21 funcionarios em 24 segundos, perdendo justamente quem tem
+// ID alto.
+//
+// Estes dois metodos vivem em scopes que o app JA' tem (mobile e im) e
+// respondem a pergunta certa — "quem trabalha aqui?" — em vez de varrer o
+// espaco de IDs. Mesmo portal: 21 de 21 em 0,9 segundo.
+//
+//	mobile.intranet.departments.get  -> os departamentos
+//	im.department.employees.get      -> os IDs em cada departamento
+func (c *Client) IDsDoQuadro(ctx context.Context, creds TenantCreds) ([]string, error) {
+	raw, err := c.call(ctx, creds, "mobile.intranet.departments.get", map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	var deps []struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &deps); err != nil {
+		return nil, err
+	}
+	if len(deps) == 0 {
+		return nil, fmt.Errorf("portal sem departamentos na estrutura")
+	}
+	depIDs := make([]int, 0, len(deps))
+	for _, d := range deps {
+		if d.ID > 0 {
+			depIDs = append(depIDs, d.ID)
+		}
+	}
+
+	raw2, err := c.call(ctx, creds, "im.department.employees.get",
+		map[string]interface{}{"ID": depIDs})
+	if err != nil {
+		return nil, err
+	}
+	// Resposta: {"<id do departamento>": [<id de usuario>, ...], ...}
+	var porDep map[string][]json.Number
+	if err := json.Unmarshal(raw2, &porDep); err != nil {
+		return nil, err
+	}
+	vistos := map[string]bool{}
+	ids := make([]string, 0, 64)
+	for _, lista := range porDep {
+		for _, n := range lista {
+			id := n.String()
+			if id == "" || id == "0" || vistos[id] {
+				continue
+			}
+			vistos[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("estrutura da empresa nao devolveu nenhum usuario")
+	}
+	return ids, nil
+}
+
 // ListAllUsers devolve os colaboradores internos ativos do portal.
 //
 // BUG QUE ISTO CORRIGE: a versao antiga NAO listava usuarios — ela SONDAVA
@@ -1593,6 +1657,24 @@ func (c *Client) ListAllUsersComOrigem(ctx context.Context, creds TenantCreds, m
 	// tempo de carregar e o log avisa que truncou.
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
+
+	// FONTE PRINCIPAL: a estrutura da empresa (/company/). Responde "quem
+	// trabalha aqui?" direto, em vez de varrer o espaco de IDs. Quando
+	// funciona a lista e' COMPLETA e as outras fontes nem sao consultadas.
+	if ids, err := c.IDsDoQuadro(ctx, creds); err == nil && len(ids) > 0 {
+		if users, uerr := c.GetUserByIDs(ctx, creds, ids); uerr == nil && len(users) > 0 {
+			internos := filtrarInternosAtivos(users)
+			c.log.Info("usuarios pela estrutura da empresa",
+				zap.Int("no_quadro", len(ids)), zap.Int("internos_ativos", len(internos)))
+			return internos, true, nil
+		} else if uerr != nil {
+			c.log.Warn("estrutura da empresa: detalhes falharam, caindo pras outras fontes",
+				zap.Error(uerr))
+		}
+	} else if err != nil {
+		c.log.Warn("estrutura da empresa indisponivel, caindo pras outras fontes",
+			zap.Error(err))
+	}
 
 	var coletados []BitrixUser
 
