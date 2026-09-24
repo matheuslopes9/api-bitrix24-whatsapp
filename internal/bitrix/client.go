@@ -224,6 +224,30 @@ type tokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope"`
 	Domain       string `json:"domain"`
+
+	// O Bitrix responde HTTP 200 com corpo de erro. Estes dois campos sao o
+	// unico lugar que diz O QUE fazer, e sao seguros de logar (nao contem
+	// token). Sem eles o log so' dizia "sem access_token/refresh_token", que
+	// nao distingue "reautorize o app" de "client_secret errado".
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+}
+
+// acaoParaErroOAuth traduz o codigo do Bitrix na providencia concreta. E' a
+// diferenca entre "espera passar" e "alguem precisa reinstalar o app agora".
+func acaoParaErroOAuth(code string) string {
+	switch code {
+	case "invalid_grant", "expired_token":
+		return "o refresh_token nao vale mais — reautorize o app no portal Bitrix (Aplicativos > UC Talk > reinstalar)"
+	case "invalid_client", "wrong_client":
+		return "client_id/client_secret nao batem com o app instalado no portal"
+	case "NO_AUTH_FOUND":
+		return "o portal nao reconhece esta autorizacao — o app foi removido ou reinstalado por fora"
+	case "":
+		return "o Bitrix respondeu sem access_token e sem codigo de erro"
+	default:
+		return "erro OAuth nao mapeado — ver codigo acima"
+	}
 }
 
 func (c *Client) saveTokenResponse(ctx context.Context, creds TenantCreds, r io.Reader) error {
@@ -251,11 +275,15 @@ func (c *Client) saveTokenResponse(ctx context.Context, creds TenantCreds, r io.
 	// Agora a resposta so' e' aceita se tiver os dois tokens. Caso
 	// contrario devolve erro e o token ANTERIOR fica intacto no banco.
 	if tr.AccessToken == "" || tr.RefreshToken == "" {
+		acao := acaoParaErroOAuth(tr.Error)
 		c.log.Error("resposta de token sem access_token/refresh_token — MANTENDO o token anterior",
 			zap.String("domain", domain),
 			zap.Bool("tem_access", tr.AccessToken != ""),
-			zap.Bool("tem_refresh", tr.RefreshToken != ""))
-		return fmt.Errorf("resposta de token invalida para %s: access_token/refresh_token ausentes (o Bitrix responde 200 com corpo de erro nesse caso)", domain)
+			zap.Bool("tem_refresh", tr.RefreshToken != ""),
+			zap.String("erro_oauth", tr.Error),
+			zap.String("descricao", tr.ErrorDescription),
+			zap.String("o_que_fazer", acao))
+		return fmt.Errorf("resposta de token invalida para %s: erro OAuth %q — %s", domain, tr.Error, acao)
 	}
 	return c.repo.UpsertBitrixToken(ctx, &db.BitrixToken{
 		ID:           uuid.New(),

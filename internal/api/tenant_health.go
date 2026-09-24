@@ -95,10 +95,23 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		tok["tem_refresh"] = t.RefreshToken != ""
 		tok["problema"] = "token vazio no banco — reautorize o app no portal Bitrix"
 	default:
-		tok["estado"] = "ok"
+		vencido := time.Now().After(t.ExpiresAt)
 		tok["expira_em"] = t.ExpiresAt.Format(time.RFC3339)
-		tok["expirado"] = time.Now().After(t.ExpiresAt)
+		tok["expirado"] = vencido
 		tok["atualizado_em"] = t.UpdatedAt.Format(time.RFC3339)
+		// "ok" so' porque os dois campos estao preenchidos era enganoso: o
+		// token pode estar VENCIDO ha' horas, com o refresh falhando em loop,
+		// e o painel dizia ok enquanto nenhuma mensagem chegava no Contact
+		// Center. Estado tem que refletir se da' pra usar, nao se esta'
+		// preenchido.
+		if vencido {
+			tok["estado"] = "vencido"
+			tok["problema"] = "token vencido em " + t.ExpiresAt.Format("02/01 15:04") +
+				" e a renovacao nao esta' passando — o app precisa ser reautorizado no portal Bitrix. " +
+				"Enquanto isso nenhuma mensagem do cliente chega no Contact Center."
+		} else {
+			tok["estado"] = "ok"
+		}
 	}
 	res["token"] = tok
 
