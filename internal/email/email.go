@@ -15,8 +15,11 @@ package email
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"html"
 	"mime"
 	"net"
 	"net/smtp"
@@ -108,7 +111,11 @@ func (r *Remetente) Enviar(ctx context.Context, assunto, corpoHTML string) error
 
 func (r *Remetente) montar(assunto, corpoHTML string) string {
 	var b strings.Builder
-	b.WriteString("From: UC Talk <" + r.cfg.From + ">\r\n")
+
+	// "UC Technology" e nao "UC Talk": e' o remetente que o servico de e-mail
+	// da empresa ja' usa (send_email.py). Quem recebe reconhece a origem, e
+	// filtro/regra de caixa que ja' exista continua valendo.
+	b.WriteString("From: UC Technology <" + r.cfg.From + ">\r\n")
 	b.WriteString("To: " + strings.Join(r.cfg.Destinatarios, ", ") + "\r\n")
 	if r.cfg.ReplyTo != "" {
 		b.WriteString("Reply-To: " + r.cfg.ReplyTo + "\r\n")
@@ -117,12 +124,87 @@ func (r *Remetente) montar(assunto, corpoHTML string) string {
 	// chega com caractere trocado em alguns leitores.
 	b.WriteString("Subject: " + mime.QEncoding.Encode("UTF-8", assunto) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-	b.WriteString("Content-Transfer-Encoding: base64\r\n")
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
+
+	// multipart/alternative com texto puro ANTES do HTML, mesma estrutura do
+	// send_email.py. Duas razoes praticas:
+	//
+	//   - leitor que bloqueia HTML (ou notificacao de celular, ou relogio)
+	//     mostra o texto em vez de nada. Alerta que chega ilegivel as 3h da
+	//     manha e' alerta perdido;
+	//   - mensagem so'-HTML pontua pior em filtro de spam, e alerta na caixa
+	//     de lixo e' o mesmo que alerta nao enviado.
+	//
+	// A ordem importa: pelo RFC 2046 o leitor escolhe a ULTIMA parte que sabe
+	// exibir, entao o HTML vem por ultimo pra ser o preferido.
+	fronteira := fronteiraMIME()
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + fronteira + "\"\r\n")
 	b.WriteString("\r\n")
+
+	b.WriteString("--" + fronteira + "\r\n")
+	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
+	b.WriteString(base64Quebrado(textoDoHTML(corpoHTML)))
+
+	b.WriteString("--" + fronteira + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
 	b.WriteString(base64Quebrado(corpoHTML))
+
+	b.WriteString("--" + fronteira + "--\r\n")
 	return b.String()
+}
+
+// fronteiraMIME devolve um separador que nao pode aparecer no conteudo.
+// Usa tempo + aleatorio: fronteira repetida entre duas mensagens nao quebra
+// nada, mas fronteira que COLIDE com o corpo corta o e-mail ao meio.
+func fronteiraMIME() string {
+	var n [12]byte
+	if _, err := rand.Read(n[:]); err != nil {
+		// Sem aleatoriedade ainda da' pra gerar algo unico o bastante: o
+		// conteudo e' HTML de alerta, nao texto arbitrario do usuario.
+		return fmt.Sprintf("uctalk-%d", time.Now().UnixNano())
+	}
+	return "uctalk-" + hex.EncodeToString(n[:])
+}
+
+// textoDoHTML monta a versao em texto puro a partir do HTML.
+//
+// Nao e' um conversor de HTML de uso geral — e' suficiente para os alertas,
+// que sao gerados por corpoAlerta e tem estrutura conhecida: blocos, titulos
+// e uma lista de passos. Fecha bloco vira quebra de linha, item de lista
+// ganha marcador, e o resto e' texto.
+func textoDoHTML(h string) string {
+	// Quebra onde o HTML quebra visualmente, antes de tirar as tags.
+	subs := strings.NewReplacer(
+		"</div>", "\n", "</p>", "\n", "</h1>", "\n", "</h2>", "\n",
+		"</h3>", "\n", "</ol>", "\n", "</ul>", "\n", "<br>", "\n",
+		"<br/>", "\n", "<br />", "\n", "<li>", "  - ",
+	)
+	t := subs.Replace(h)
+
+	var b strings.Builder
+	dentroDeTag := false
+	for _, r := range t {
+		switch {
+		case r == '<':
+			dentroDeTag = true
+		case r == '>':
+			dentroDeTag = false
+		case !dentroDeTag:
+			b.WriteRune(r)
+		}
+	}
+	t = html.UnescapeString(b.String())
+
+	// Colapsa as linhas vazias que sobram das tags aninhadas.
+	var linhas []string
+	for _, l := range strings.Split(t, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			linhas = append(linhas, l)
+		}
+	}
+	return strings.Join(linhas, "\n") + "\n"
 }
 
 // base64Quebrado codifica o corpo e quebra em linhas de 76 caracteres.
