@@ -91,7 +91,13 @@ func (c *Client) lockRefresh(key string) func() {
 func NewClient(repo *db.Repository, log *zap.Logger) *Client {
 	return &Client{
 		repo:        repo,
-		http:        &http.Client{Timeout: 15 * time.Second},
+		// 45s e nao 15s. MEDIDO: a listagem de usuarios manda lotes que voltam
+		// com ~800KB; o Bitrix responde em ~3s quando chamado direto, mas pelo
+		// app o mesmo lote estourava o limite de 15s ("Client.Timeout exceeded
+		// while awaiting headers") e sumia com todo funcionario de ID alto.
+		// O limite existe pra nao pendurar worker em chamada morta — 45s ainda
+		// cumpre isso, com folga pra resposta grande.
+		http:        &http.Client{Timeout: 45 * time.Second},
 		log:         log,
 		rl:          newRateLimiter(),
 		refreshLock: map[string]*sync.Mutex{},
@@ -1624,12 +1630,20 @@ func (c *Client) ListAllUsersComOrigem(ctx context.Context, creds TenantCreds, m
 	// Para por EVIDENCIA: segue enquanto achar gente, desiste depois de
 	// lotes seguidos vazios. Portal com numeracao esparsa (muita exclusao)
 	// tem buracos longos, entao um lote vazio sozinho nao basta.
-	const tamanhoLote = 5000
+	// 2000 e nao 5000. MEDIDO no portal do cliente: um lote de 5000 IDs na
+	// faixa alta leva MAIS de 15s e estoura o timeout do http.Client —
+	// "context deadline exceeded". Com 2000 o lote volta com folga.
+	const tamanhoLote = 2000
 	const lotesVaziosParaDesistir = 3
+	// Um lote que falha nao pode encerrar a varredura: quem tem ID acima da
+	// falha sumia da lista inteira. Segue pro proximo intervalo e so' desiste
+	// depois de varias falhas seguidas, que aí indicam problema real.
+	const falhasSeguidasParaDesistir = 3
 	const idMaximoAbsoluto = 200000 // guarda contra loop, nao limite de portal
 
 	brutos := coletados
 	lotesVazios := 0
+	falhasSeguidas := 0
 	inicio := 1
 	for inicio <= idMaximoAbsoluto {
 		if ctx.Err() != nil {
@@ -1644,11 +1658,30 @@ func (c *Client) ListAllUsersComOrigem(ctx context.Context, creds TenantCreds, m
 		}
 
 		users, err := c.GetUserByIDs(ctx, creds, ids)
-		if err != nil {
-			c.log.Warn("ListAllUsers: lote falhou",
-				zap.Int("de", inicio), zap.Int("ate", fim), zap.Error(err))
-			break
+		if err != nil && ctx.Err() == nil {
+			// Uma tentativa a mais antes de dar o lote por perdido: a falha
+			// observada era timeout, e timeout costuma nao se repetir.
+			users, err = c.GetUserByIDs(ctx, creds, ids)
 		}
+		if err != nil {
+			// BUG QUE ISSO CORRIGE: aqui era "break". Bastava UM lote falhar
+			// pra varredura inteira parar, e todo funcionario com ID acima
+			// daquele ponto desaparecia do painel de permissoes — sem erro
+			// visivel, a lista so' vinha curta. No portal do cliente o lote
+			// de 20000+ estourava o timeout e sumiam 6 funcionarios.
+			falhasSeguidas++
+			c.log.Warn("ListAllUsers: lote falhou, seguindo para o proximo intervalo",
+				zap.Int("de", inicio), zap.Int("ate", fim),
+				zap.Int("falhas_seguidas", falhasSeguidas), zap.Error(err))
+			if falhasSeguidas >= falhasSeguidasParaDesistir {
+				c.log.Error("ListAllUsers: falhas seguidas demais, lista pode estar incompleta",
+					zap.Int("ate_id", inicio-1))
+				break
+			}
+			inicio = fim + 1
+			continue
+		}
+		falhasSeguidas = 0
 		if len(users) == 0 {
 			lotesVazios++
 			if lotesVazios >= lotesVaziosParaDesistir {

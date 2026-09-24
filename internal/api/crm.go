@@ -989,6 +989,29 @@ func (h *handlers) bitrixCRMEntity(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "parse error"})
 	}
 
+	// REGISTRO VAZIO != REGISTRO SEM TELEFONE.
+	//
+	// O token do app age como o usuario que INSTALOU o app, com as permissoes
+	// dele — nao como administrador. Registro fora do alcance desse usuario
+	// volta VAZIO do Bitrix, sem erro. Medido no portal do cliente: o app
+	// responde como Walison Teles (ID 21555, ADMIN=false), e crm.deal.get do
+	// negocio 12313 volta vazio enquanto outros negocios funcionam.
+	//
+	// Antes isso seguia adiante e a aba dizia "Nenhum telefone cadastrado
+	// neste contato" — culpando o cadastro, que estava certo, e escondendo a
+	// causa real. Quem le a mensagem vai procurar no lugar errado.
+	if len(obj) == 0 {
+		h.log.Warn("CRM: registro veio vazio — provavel falta de permissao do usuario do app",
+			zap.String("entity_type", entityType), zap.String("entity_id", entityID),
+			zap.String("domain", domain))
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "nao foi possivel ler este " + entityType + " (ID " + entityID + "). " +
+				"O app acessa o CRM com as permissoes do usuario que o instalou — " +
+				"provavelmente ele nao tem acesso a este registro ou a este funil.",
+			"motivo": "sem_permissao_ou_inexistente",
+		})
+	}
+
 	name := jsonStr(obj, "NAME") + " " + jsonStr(obj, "LAST_NAME")
 	name = strings.TrimSpace(name)
 	if name == "" {
