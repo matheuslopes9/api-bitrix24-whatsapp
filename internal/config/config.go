@@ -133,11 +133,18 @@ func Load() (*Config, error) {
 			OpenLineID:   getIntWithDefault("BITRIX_OPEN_LINE_ID", 1),
 		},
 		Email: EmailConfig{
-			SMTPHost:      getEnvWithDefault("SMTP_HOST", ""),
-			SMTPPort:      getIntWithDefault("SMTP_PORT", 2525),
-			Sender:        viper.GetString("EMAIL_SENDER"),
-			ReplyTo:       viper.GetString("EMAIL_REPLY_TO"),
-			Destinatarios: listaDeEmails(viper.GetString("ALERT_RECIPIENTS")),
+			SMTPHost: getEnvWithDefault("SMTP_HOST", ""),
+			SMTPPort: getIntWithDefault("SMTP_PORT", 2525),
+			Sender:   viper.GetString("EMAIL_SENDER"),
+			ReplyTo:  viper.GetString("EMAIL_REPLY_TO"),
+			// Aceita os DOIS nomes. ALERT_RECIPIENTS e' o nome daqui;
+			// EMAIL_RECIPIENT e' o que o .env do proxy de e-mail da empresa
+			// ja' usa, e quem copia aquele arquivo naturalmente traz esse.
+			// Divergir de nome faria os alertas ficarem MUDOS sem erro
+			// nenhum — o pior jeito de falhar.
+			Destinatarios: primeiraListaNaoVazia(
+				viper.GetString("ALERT_RECIPIENTS"),
+				viper.GetString("EMAIL_RECIPIENT")),
 		},
 		Queue: QueueConfig{
 			Workers:          getIntWithDefault("QUEUE_WORKERS", 20),
@@ -231,4 +238,16 @@ func listaDeEmails(bruto string) []string {
 		}
 	}
 	return out
+}
+
+// primeiraListaNaoVazia devolve a primeira variavel que trouxe algum
+// endereco. Existe pra tolerar os dois nomes de destinatario sem espalhar
+// essa escolha pelo resto do codigo.
+func primeiraListaNaoVazia(valores ...string) []string {
+	for _, v := range valores {
+		if l := listaDeEmails(v); len(l) > 0 {
+			return l
+		}
+	}
+	return nil
 }
