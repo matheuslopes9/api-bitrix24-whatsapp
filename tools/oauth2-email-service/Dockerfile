@@ -21,17 +21,22 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY oauth2_smtp_proxy.py ./
+COPY oauth2_smtp_proxy.py entrypoint.py ./
 
 # Escuta em todas as interfaces. Sem isto o servico sobe "saudavel" e mesmo
 # assim e' inalcancavel — falha silenciosa que custa caro pra diagnosticar.
 ENV PROXY_HOST=0.0.0.0 \
     PROXY_PORT=2526 \
+    HEALTH_PORT=80 \
     PYTHONUNBUFFERED=1
 
-EXPOSE 2526
+# 2526 = SMTP, so' rede interna. 80 = saude HTTP, que e' o que a sonda do
+# orquestrador espera encontrar. Sem a segunda, a sonda bate no SMTP, nao
+# entende a resposta e manda SIGTERM — o container reinicia em loop com o
+# proxy funcionando perfeitamente.
+EXPOSE 2526 80
 
 # O .env NAO entra na imagem de proposito: ele carrega o client_secret do
 # Azure AD. As variaveis vem do ambiente do servico (EasyPanel), que e' onde
 # segredo deve morar.
-CMD ["python", "oauth2_smtp_proxy.py"]
+CMD ["python", "-u", "entrypoint.py"]
