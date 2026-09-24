@@ -760,6 +760,36 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			DROP TABLE IF EXISTS plan_definitions;
 			DROP TABLE IF EXISTS tenant_plans;
 		`},
+		{"050_config_alertas", `
+			-- Configuracao dos alertas no BANCO, nao no ambiente.
+			--
+			-- POR QUE SAIU DO ENV: mudar destinatario ou desligar um alerta
+			-- exigia editar variavel e REINICIAR o app — ou seja, derrubar o
+			-- atendimento de todos os clientes pra trocar um e-mail. Alem
+			-- disso ninguem conseguia ver, de dentro do painel, se o alerta
+			-- estava ligado e pra quem ia.
+			--
+			-- Linha unica (id = TRUE). As envs continuam valendo como valor
+			-- inicial, pra instalacao nova ja' nascer funcionando.
+			CREATE TABLE IF NOT EXISTS config_alertas (
+				id              BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+				smtp_host       TEXT NOT NULL DEFAULT '',
+				smtp_port       INT  NOT NULL DEFAULT 2526,
+				email_sender    TEXT NOT NULL DEFAULT '',
+				email_reply_to  TEXT NOT NULL DEFAULT '',
+				destinatarios   TEXT NOT NULL DEFAULT '',
+
+				token_ativo       BOOLEAN NOT NULL DEFAULT TRUE,
+				token_janela_h    INT     NOT NULL DEFAULT 6,
+				sessao_ativo      BOOLEAN NOT NULL DEFAULT TRUE,
+				sessao_janela_min INT     NOT NULL DEFAULT 30,
+				licenca_ativo     BOOLEAN NOT NULL DEFAULT TRUE,
+
+				atualizado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				atualizado_por  TEXT NOT NULL DEFAULT ''
+			);
+			INSERT INTO config_alertas (id) VALUES (TRUE) ON CONFLICT DO NOTHING;
+		`},
 		{"049_alertas_operacionais", `
 			-- Registro de alerta JA' ENVIADO, pra nao repetir o mesmo aviso a
 			-- cada ciclo do job. Sem isso um token vencido geraria e-mail a

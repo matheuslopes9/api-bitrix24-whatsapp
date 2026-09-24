@@ -410,6 +410,29 @@ func (h *handlers) adminReprocessarFila(c *fiber.Ctx) error {
 // chamada real. E' a diferenca entre "o banco diz que o token e' valido" e
 // "o token funciona": foi exatamente esse buraco que deixou o teclife com
 // token vazio sem ninguem perceber, porque o expires_at continuava no futuro.
+// GET /admin/api/tenant/credenciais?domain= — o que esta gravado hoje.
+//
+// Devolve o client_secret porque o suporte precisa CONFERIR, nao adivinhar.
+// Regravar no escuro a cada duvida e' pior: credencial errada derruba a
+// renovacao do token e para o atendimento do cliente.
+func (h *handlers) adminGetCredenciais(c *fiber.Ctx) error {
+	domain := normalizePortalDomain(strings.TrimSpace(c.Query("domain")))
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+	id, secret, err := h.repo.GetBitrixAccountCredentials(c.Context(), domain)
+	if err != nil {
+		// Sem linha nao e' erro: e' portal que ainda nao teve credencial
+		// cadastrada. A tela abre em branco e o suporte preenche.
+		return c.JSON(fiber.Map{"client_id": "", "client_secret": "", "cadastrado": false})
+	}
+	return c.JSON(fiber.Map{
+		"client_id":     id,
+		"client_secret": secret,
+		"cadastrado":    id != "" && secret != "",
+	})
+}
+
 // POST /admin/api/tenant/credenciais — cadastra o app OAuth do portal.
 //
 // Body: {domain, client_id, client_secret}

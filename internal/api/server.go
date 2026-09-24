@@ -292,6 +292,9 @@ func New(
 	admin.Get("/api/me", h.adminEu)
 	admin.Post("/api/me/password", h.adminTrocarMinhaSenha)
 	admin.Post("/api/alertas/teste", h.adminTestarEmail)
+	admin.Get("/api/alertas/config", h.adminGetConfigAlertas)
+	admin.Post("/api/alertas/config", soAdmin, h.adminSalvarConfigAlertas)
+	admin.Get("/api/alertas/historico", h.adminHistoricoAlertas)
 	admin.Get("/api/logs/stream", h.adminLogsStream) // SSE logs em tempo real
 	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
 	admin.Post("/api/blocked-ips/block", h.adminBlockIP)
@@ -330,7 +333,11 @@ func New(
 	admin.Post("/api/tenant/reprocessar-fila", soAdmin, h.adminReprocessarFila)
 	// Testa a integracao DE VERDADE (chamadas reais ao Bitrix), em vez de
 	// so' ler o estado guardado no banco.
-	admin.Post("/api/tenant/credenciais", soAdmin, h.adminSalvarCredenciais)
+	// Credenciais do app: SEM soAdmin de proposito. Quem repara o cliente e'
+	// o suporte, e travar isso em administrador so' criaria fila de espera no
+	// meio de um incidente.
+	admin.Get("/api/tenant/credenciais", h.adminGetCredenciais)
+	admin.Post("/api/tenant/credenciais", h.adminSalvarCredenciais)
 	admin.Post("/api/tenant/testar-conexao", h.adminTestarConexao)
 	admin.Get("/api/tenant/testar-conexao", h.adminTestarConexao)
 	// ─── Placements (cleanup orfaos apos reinstall) ─────────────────────

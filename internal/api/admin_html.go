@@ -232,6 +232,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-group">Monitoramento</div>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
     <div class="sb-item" data-page="logs" onclick="irPara('logs')"><span class="ic">📜</span> Logs ao vivo</div>
+    <div class="sb-item" data-page="alertas" onclick="irPara('alertas')"><span class="ic">🔔</span> Alertas</div>
     <div class="sb-group">Segurança</div>
     <div class="sb-item" data-page="conta" onclick="irPara('conta')"><span class="ic">🙋</span> Minha conta</div>
     <div class="sb-item" data-page="users" onclick="irPara('users')"><span class="ic">👥</span> Usuários admin</div>
@@ -358,6 +359,69 @@ const adminHomeHTML = `<!doctype html>
       <pre id="log-view" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.76em;line-height:1.5;color:#a7f3d0;overflow:auto;height:60vh;white-space:pre-wrap"></pre>
     </div>
 
+    <div class="page" id="page-alertas">
+      <div id="al-estado"></div>
+      <div class="tools">
+        <div class="toolcard">
+          <h3>📮 Para onde enviar</h3>
+          <p>O app manda SMTP simples para o proxy OAuth2 da empresa, e o proxy resolve a autenticação com a Microsoft. Nenhuma credencial do Azure fica aqui.</p>
+          <label class="meta">Servidor (nome do serviço do proxy)</label>
+          <input class="dominput" id="al-host" placeholder="uctalk-email">
+          <div class="row" style="gap:10px">
+            <div style="flex:0 0 120px">
+              <label class="meta">Porta</label>
+              <input class="dominput" id="al-porta" type="number" placeholder="2526">
+            </div>
+            <div style="flex:1;min-width:180px">
+              <label class="meta">Remetente (From)</label>
+              <input class="dominput" id="al-sender" placeholder="noreply@empresa.com.br">
+            </div>
+          </div>
+          <label class="meta" style="display:block;margin-top:10px">Reply-To (opcional)</label>
+          <input class="dominput" id="al-replyto" placeholder="suporte@empresa.com.br">
+          <label class="meta" style="display:block;margin-top:10px">Destinatários (separe por vírgula)</label>
+          <input class="dominput" id="al-dest" placeholder="suporte@empresa.com.br, plantao@empresa.com.br">
+        </div>
+
+        <div class="toolcard">
+          <h3>🔔 O que avisar</h3>
+          <p>A janela é o tempo mínimo entre dois avisos do mesmo problema. Serve para o alerta não virar ruído — alerta repetido a cada 5 minutos ensina o time a ignorar.</p>
+
+          <label style="display:block;margin:10px 0 4px"><input type="checkbox" id="al-token"> <strong>Token do Bitrix vencido</strong></label>
+          <div class="meta" style="margin-bottom:6px">Enquanto não renovar, nenhuma mensagem do cliente chega no Contact Center.</div>
+          <div class="row" style="align-items:center;gap:8px">
+            <input class="dominput" id="al-token-h" type="number" min="1" style="width:90px;margin:0">
+            <span class="meta">horas entre avisos</span>
+          </div>
+
+          <label style="display:block;margin:16px 0 4px"><input type="checkbox" id="al-sessao"> <strong>Número de WhatsApp caiu</strong></label>
+          <div class="meta" style="margin-bottom:6px">Compara o que o banco diz que deveria atender com o que está conectado de verdade.</div>
+          <div class="row" style="align-items:center;gap:8px">
+            <input class="dominput" id="al-sessao-min" type="number" min="5" style="width:90px;margin:0">
+            <span class="meta">minutos entre avisos</span>
+          </div>
+
+          <label style="display:block;margin:16px 0 4px"><input type="checkbox" id="al-licenca"> <strong>Licença vencendo ou vencida</strong></label>
+          <div class="meta">Vai para o financeiro, que não tem login no painel. Vencer não bloqueia o atendimento.</div>
+
+          <div id="al-msg" class="meta" style="margin-top:14px"></div>
+          <div class="row" style="margin-top:12px;gap:8px">
+            <button class="btn btn-primary" id="al-btn" onclick="salvarAlertas()">Salvar</button>
+            <button class="btn" onclick="testarEmail()">Enviar teste</button>
+          </div>
+          <div id="email-msg" class="meta" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="section-title" style="margin-top:18px">📨 Alertas enviados</div>
+      <div class="tablewrap"><div class="tablescroll" style="max-height:320px">
+        <table>
+          <thead><tr><th>Quando</th><th>Tipo</th><th>Cliente</th><th>Referência</th></tr></thead>
+          <tbody id="al-historico"><tr><td colspan="4" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
+    </div>
+
     <div class="page" id="page-conta">
       <div class="tools">
         <div class="toolcard">
@@ -375,13 +439,6 @@ const adminHomeHTML = `<!doctype html>
           </div>
         </div>
 
-        <div class="toolcard">
-          <h3>📧 Alertas por e-mail</h3>
-          <p>O sistema avisa o time quando um token vence ou um número cai — sem isso, só se descobre quando o cliente reclama.</p>
-          <div id="conta-email" class="meta" style="margin-bottom:12px">Carregando…</div>
-          <button class="btn" onclick="testarEmail()">Enviar e-mail de teste</button>
-          <div id="email-msg" class="meta" style="margin-top:10px"></div>
-        </div>
       </div>
     </div>
 
@@ -530,7 +587,8 @@ var PAGES={
   licencas:{title:'Licenças',sub:'Benefícios contratados, vigência e pagamentos'},
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
-  conta:{title:'Minha conta',sub:'Sua senha e os alertas do time'},
+  alertas:{title:'Alertas',sub:'Quem é avisado, de quê, e a cada quanto tempo'},
+  conta:{title:'Minha conta',sub:'Sua senha'},
   users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
   audit:{title:'Auditoria',sub:'Histórico de ações no painel'},
@@ -549,6 +607,7 @@ function irPara(p){
   if(p==='licencas')carregarLicencas();
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
+  if(p==='alertas')carregarAlertas();
   if(p==='conta')carregarConta();
   if(p==='users')carregarUsers();
   if(p==='ips')carregarIPs();
@@ -720,6 +779,68 @@ window.addEventListener('resize',fechaMenus);
 window.addEventListener('scroll',fechaMenus,true);
 
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
+function carregarAlertas(){
+  fetch('/admin/api/alertas/config').then(function(r){return r.json();}).then(function(d){
+    var c=d.config||{};
+    document.getElementById('al-host').value=c.smtp_host||'';
+    document.getElementById('al-porta').value=c.smtp_port||2526;
+    document.getElementById('al-sender').value=c.email_sender||'';
+    document.getElementById('al-replyto').value=c.email_reply_to||'';
+    document.getElementById('al-dest').value=c.destinatarios||'';
+    document.getElementById('al-token').checked=!!c.token_ativo;
+    document.getElementById('al-token-h').value=c.token_janela_h||6;
+    document.getElementById('al-sessao').checked=!!c.sessao_ativo;
+    document.getElementById('al-sessao-min').value=c.sessao_janela_min||30;
+    document.getElementById('al-licenca').checked=!!c.licenca_ativo;
+
+    var e=document.getElementById('al-estado');
+    if(d.configurado){
+      e.innerHTML='<div class="meta" style="margin-bottom:12px;color:#34d399">'+
+        '✓ Envio configurado'+(c.atualizado_por?' · última alteração por '+_esc(c.atualizado_por):'')+'</div>';
+    }else{
+      e.innerHTML='<div class="alerta">Nenhum alerta sai enquanto servidor, remetente e destinatários não estiverem preenchidos.</div>';
+    }
+  }).catch(function(){toast('falha ao carregar configuração',false);});
+
+  fetch('/admin/api/alertas/historico').then(function(r){return r.json();}).then(function(d){
+    var tb=document.getElementById('al-historico'); var as=d.alertas||[];
+    if(!as.length){tb.innerHTML='<tr><td colspan="4" class="empty">Nenhum alerta enviado ainda.</td></tr>';return;}
+    var nomes={token_vencido:'Token vencido',sessao_desconectada:'Número caiu'};
+    tb.innerHTML=as.map(function(a){
+      return '<tr><td class="meta" style="white-space:nowrap">'+_quando(a.enviado_em)+'</td>'+
+        '<td>'+_esc(nomes[a.tipo]||a.tipo)+'</td>'+
+        '<td>'+(_esc(a.dominio)||'<span class="meta">—</span>')+'</td>'+
+        '<td class="mono">'+_esc(a.ref||'')+'</td></tr>';
+    }).join('');
+  }).catch(function(){});
+}
+
+function salvarAlertas(){
+  var m=document.getElementById('al-msg'); m.style.color='';
+  var b=document.getElementById('al-btn'); b.disabled=true; b.textContent='Salvando...';
+  var corpo={
+    smtp_host:document.getElementById('al-host').value.trim(),
+    smtp_port:parseInt(document.getElementById('al-porta').value,10)||0,
+    email_sender:document.getElementById('al-sender').value.trim(),
+    email_reply_to:document.getElementById('al-replyto').value.trim(),
+    destinatarios:document.getElementById('al-dest').value.trim(),
+    token_ativo:document.getElementById('al-token').checked,
+    token_janela_h:parseInt(document.getElementById('al-token-h').value,10)||6,
+    sessao_ativo:document.getElementById('al-sessao').checked,
+    sessao_janela_min:parseInt(document.getElementById('al-sessao-min').value,10)||30,
+    licenca_ativo:document.getElementById('al-licenca').checked
+  };
+  fetch('/admin/api/alertas/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(corpo)})
+  .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+  .then(function(res){
+    b.disabled=false; b.textContent='Salvar';
+    if(res.ok){ m.style.color='#34d399'; m.textContent='Configuração salva.'; toast('alertas salvos',true); carregarAlertas(); }
+    else{ m.style.color='#f87171'; m.textContent=res.j.error||'falhou'; }
+  })
+  .catch(function(e){b.disabled=false;b.textContent='Salvar';m.style.color='#f87171';m.textContent='erro: '+e;});
+}
+
 function carregarConta(){
   fetch('/admin/api/me').then(function(r){return r.json();}).then(function(d){
     var q=document.getElementById('conta-quem');
@@ -729,10 +850,6 @@ function carregarConta(){
         '<div class="meta">'+_esc(d.motivo||'este login nao permite troca de senha por aqui')+'</div>';
     }
   }).catch(function(){});
-  // Nao ha endpoint proprio de status: o teste de envio ja diz se esta de pe.
-  var ce=document.getElementById('conta-email');
-  if(ce) ce.innerHTML='Use o botão abaixo para confirmar que o envio está de pé. '+
-    'Se o e-mail não chegar, falta configurar SMTP_HOST, EMAIL_SENDER e ALERT_RECIPIENTS.';
 }
 
 function trocarSenha(){
@@ -1176,15 +1293,34 @@ function verComoCliente(){
 function abrirCredenciais(){
   var dom=document.getElementById('health-domain').value;
   if(!dom){ toast('Escolha um cliente primeiro',false); return; }
+  // Busca ANTES de abrir: o suporte precisa ver o que ja' esta gravado pra
+  // conferir, nao regravar no escuro. Credencial errada derruba a renovacao
+  // do token e para o atendimento — o engano caro e' justamente esse.
+  fetch('/admin/api/tenant/credenciais?domain='+encodeURIComponent(dom))
+  .then(function(r){return r.json();})
+  .then(function(d){ montarModalCredenciais(dom, d||{}); })
+  .catch(function(){ montarModalCredenciais(dom, {}); });
+}
+
+function montarModalCredenciais(dom, d){
+  var cid=_esc(d.client_id||''), sec=_esc(d.client_secret||'');
+  var status = d.cadastrado
+    ? '<div class="meta" style="color:#34d399;margin-bottom:12px">✓ Já cadastrado — confira os valores abaixo</div>'
+    : '<div class="meta" style="color:#fbbf24;margin-bottom:12px">Ainda não cadastrado para este cliente</div>';
   _modal('<h3 style="margin:0 0 4px">Credenciais do app — '+_esc(dom)+'</h3>'+
-    '<div class="meta" style="margin-bottom:14px">'+
-      'O app OAuth e instalado por cliente, entao cada portal tem o seu. '+
-      'Sem estas credenciais o token nao renova e as mensagens param de chegar.'+
+    '<div class="meta" style="margin-bottom:12px">'+
+      'O app OAuth é instalado por cliente, então cada portal tem o seu. '+
+      'Sem estas credenciais o token não renova e as mensagens param de chegar.'+
     '</div>'+
+    status+
     '<label class="meta">client_id</label>'+
-    '<input class="dominput" id="cred-id" placeholder="app.0000000000000.00000000" autocomplete="off">'+
+    '<input class="dominput" id="cred-id" value="'+cid+'" placeholder="app.0000000000000.00000000" autocomplete="off">'+
     '<label class="meta" style="display:block;margin-top:12px">client_secret</label>'+
-    '<input class="dominput" id="cred-secret" type="password" placeholder="nao aparece no log nem na resposta" autocomplete="off">'+
+    '<div style="position:relative">'+
+      '<input class="dominput" id="cred-secret" type="password" value="'+sec+'" autocomplete="off" style="padding-right:80px">'+
+      '<button class="btn" id="cred-olho" onclick="alternarSecret()" '+
+        'style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:3px 10px;font-size:.75em">mostrar</button>'+
+    '</div>'+
     '<div class="meta" style="margin-top:12px;line-height:1.5">'+
       'Onde achar: no portal do cliente, em <strong>Aplicativos</strong> &rsaquo; o app UC Talk. '+
       'Ao reinstalar o app estes valores MUDAM — atualize aqui antes de testar.'+
@@ -1192,9 +1328,18 @@ function abrirCredenciais(){
     '<div id="cred-msg" class="meta" style="margin-top:10px"></div>'+
     '<div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">'+
       '<button class="btn" onclick="fecharModalLic()">Cancelar</button>'+
-      '<button class="btn" id="cred-btn" onclick="salvarCredenciais()">Salvar credenciais</button>'+
+      '<button class="btn btn-primary" id="cred-btn" onclick="salvarCredenciais()">Salvar credenciais</button>'+
     '</div>');
-  setTimeout(function(){var e=document.getElementById('cred-id'); if(e) e.focus();},50);
+  setTimeout(function(){var e=document.getElementById('cred-id'); if(e&&!cid) e.focus();},50);
+}
+
+function alternarSecret(){
+  var i=document.getElementById('cred-secret');
+  var b=document.getElementById('cred-olho');
+  if(!i||!b) return;
+  var escondido=(i.type==='password');
+  i.type = escondido ? 'text' : 'password';
+  b.textContent = escondido ? 'ocultar' : 'mostrar';
 }
 
 function salvarCredenciais(){
@@ -1213,10 +1358,8 @@ function salvarCredenciais(){
     btn.disabled=false; btn.textContent='Salvar credenciais';
     if(res.ok){
       toast('Credenciais gravadas em '+res.j.conexoes+' conexao(oes)',true);
-      fecharModalLic(); setTimeout(carregarHealth,900);
-    }else{
-      msg.style.color='#f87171'; msg.textContent=res.j.error||'falhou';
-    }
+      fecharModalLic(); setTimeout(carregarHealth,1200);
+    }else{ msg.style.color='#f87171'; msg.textContent=res.j.error||'falhou'; }
   })
   .catch(function(e){
     btn.disabled=false; btn.textContent='Salvar credenciais';

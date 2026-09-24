@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/uctechnology/api-bitrix24-whatsapp/internal/email"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -90,18 +89,16 @@ func (h *handlers) adminTrocarMinhaSenha(c *fiber.Ctx) error {
 // Sem isto, so' se descobre que o envio esta quebrado na hora do incidente —
 // que e' exatamente quando nao da tempo de descobrir.
 func (h *handlers) adminTestarEmail(c *fiber.Ctx) error {
-	rem := email.Novo(email.Config{
-		Host:          h.cfg.Email.SMTPHost,
-		Port:          h.cfg.Email.SMTPPort,
-		From:          h.cfg.Email.Sender,
-		ReplyTo:       h.cfg.Email.ReplyTo,
-		Destinatarios: h.cfg.Email.Destinatarios,
-	})
-	if !rem.Configurado() {
+	cfg, err := h.repo.GetConfigAlertas(c.Context())
+	if err != nil || cfg == nil {
+		return c.Status(500).JSON(fiber.Map{"error": "falha ao ler a configuracao de alertas"})
+	}
+	if !cfg.Configurado() {
 		return c.Status(400).JSON(fiber.Map{
-			"error": "envio nao configurado — defina SMTP_HOST, EMAIL_SENDER e ALERT_RECIPIENTS",
+			"error": "envio nao configurado — preencha servidor, remetente e destinatarios em Alertas",
 		})
 	}
+	rem := remetenteDaConfig(cfg)
 	corpo := corpoAlerta(
 		"Teste de alerta",
 		"nenhum cliente — isto e um teste",

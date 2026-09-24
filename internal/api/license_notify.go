@@ -96,18 +96,16 @@ func (h *handlers) IniciarAvisosDeLicenca(ctx context.Context) {
 	// O e-mail e' o canal que o financeiro realmente le — ele nao tem login
 	// no painel, foi decisao de projeto. Sem envio configurado cai no log,
 	// que ao menos aparece na aba "Logs ao vivo".
-	var n LicenseNotifier = notificadorLog{log: h.log}
-	rem := email.Novo(email.Config{
-		Host:          h.cfg.Email.SMTPHost,
-		Port:          h.cfg.Email.SMTPPort,
-		From:          h.cfg.Email.Sender,
-		ReplyTo:       h.cfg.Email.ReplyTo,
-		Destinatarios: h.cfg.Email.Destinatarios,
-	})
-	if rem.Configurado() {
-		n = notificadorEmail{rem: rem, log: h.log}
-		h.log.Info("avisos de licenca serao enviados por e-mail",
-			zap.Strings("destinatarios", rem.Destinatarios()))
+	// A escolha do canal e' feita A CADA RODADA, nao no boot: a configuracao
+	// vive no banco e pode mudar pela tela de Alertas sem reiniciar o app.
+	escolherCanal := func(ctx context.Context) LicenseNotifier {
+		cfg, err := h.repo.GetConfigAlertas(ctx)
+		if err != nil || cfg == nil || !cfg.LicencaAtivo || !cfg.Configurado() {
+			// Sem envio (ou aviso desligado na tela): cai no log, que ao menos
+			// aparece em "Logs ao vivo" — a informacao nao se perde.
+			return notificadorLog{log: h.log}
+		}
+		return notificadorEmail{rem: remetenteDaConfig(cfg), log: h.log}
 	}
 	go func() {
 		// Espera o boot assentar (migrations, carga de sessoes) antes da
@@ -117,7 +115,7 @@ func (h *handlers) IniciarAvisosDeLicenca(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			h.verificarVencimentos(ctx, n)
+			h.verificarVencimentos(ctx, escolherCanal(ctx))
 			time.Sleep(24 * time.Hour)
 		}
 	}()

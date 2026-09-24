@@ -309,6 +309,27 @@ func (r *Repository) MarkNotificationSent(ctx context.Context, domain, kind stri
 // ListBitrixAccountsByDomain devolve os vinculos sessao<->Linha Aberta do
 // dominio. Usado pela tela de saude: sem vinculo, mensagem recebida nao
 // chega no Contact Center, e era preciso ir no banco pra descobrir isso.
+// GetBitrixAccountCredentials devolve as credenciais gravadas do portal.
+//
+// DEVOLVE O SECRET DE PROPOSITO: quem opera o suporte precisa CONFERIR se o
+// que esta' gravado bate com o app instalado no portal do cliente. Sem poder
+// ver, a unica saida seria regravar no escuro a cada duvida — e regravar
+// errado derruba a renovacao do token, que e' justamente o incidente que se
+// quer evitar.
+//
+// Esta e' a UNICA funcao que expoe o secret. A tela de saude mostra so'
+// tem_secret, e nada disso entra em log.
+func (r *Repository) GetBitrixAccountCredentials(ctx context.Context, domain string) (clientID, clientSecret string, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT client_id, client_secret
+		  FROM bitrix_accounts
+		 WHERE LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) = LOWER($1)
+		   AND client_id <> ''
+		 ORDER BY updated_at DESC
+		 LIMIT 1`, domain).Scan(&clientID, &clientSecret)
+	return
+}
+
 // SetBitrixAccountCredentials grava o client_id/client_secret do app Bitrix
 // em TODAS as contas do dominio.
 //

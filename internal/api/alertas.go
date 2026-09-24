@@ -4,9 +4,6 @@
 // ninguem soube ate' o dia seguinte. Nesse intervalo 43 mensagens de clientes
 // reais morreram na fila, e a tela de suporte dizia "ok". O problema nao foi
 // falta de dado — foi que o dado so' aparecia pra quem fosse olhar.
-//
-// Os alertas cobrem o que derruba o atendimento sem avisar: token que nao
-// renova e numero que caiu.
 package api
 
 import (
@@ -16,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/email"
 	"go.uber.org/zap"
 )
@@ -24,35 +22,58 @@ const (
 	alertaTokenVencido = "token_vencido"
 	alertaSessaoCaiu   = "sessao_desconectada"
 
-	// Janelas de repeticao. Token vencido persiste por horas e avisar a cada
-	// minuto so' ensinaria o time a ignorar e-mail do UC Talk. Queda de numero
-	// e' mais volatil e merece janela curta.
-	janelaToken  = 6 * time.Hour
-	janelaSessao = 30 * time.Minute
-
 	intervaloVerificacao = 5 * time.Minute
 )
 
-// IniciarAlertas roda a verificacao periodicamente ate' o contexto encerrar.
-func (h *handlers) IniciarAlertas(ctx context.Context) {
-	rem := email.Novo(email.Config{
-		Host:          h.cfg.Email.SMTPHost,
-		Port:          h.cfg.Email.SMTPPort,
-		From:          h.cfg.Email.Sender,
-		ReplyTo:       h.cfg.Email.ReplyTo,
-		Destinatarios: h.cfg.Email.Destinatarios,
+// remetenteDaConfig monta o enviador a partir da configuracao do BANCO.
+//
+// A config e' lida a cada ciclo, de proposito: trocar destinatario ou
+// desligar um alerta nao pode exigir reiniciar o app — reiniciar derruba o
+// atendimento de todos os clientes por causa de uma mudanca de e-mail.
+func remetenteDaConfig(c *db.ConfigAlertas) *email.Remetente {
+	return email.Novo(email.Config{
+		Host:          c.SMTPHost,
+		Port:          c.SMTPPort,
+		From:          c.EmailSender,
+		ReplyTo:       c.EmailReplyTo,
+		Destinatarios: c.ListaDestinatarios(),
 	})
-	if !rem.Configurado() {
-		// Nao e' erro: instalacao sem e-mail configurado continua funcionando.
-		// Mas tem que ficar DITO, senao alguem conta com um alerta que nunca
-		// vai chegar.
-		h.log.Warn("alertas por e-mail DESLIGADOS — defina SMTP_HOST, EMAIL_SENDER e ALERT_RECIPIENTS")
+}
+
+// semearConfigDoAmbiente copia as envs pra dentro do banco na PRIMEIRA vez.
+//
+// Instalacao nova nasce funcionando com o que ja' esta' no ambiente, e dali
+// em diante a fonte da verdade e' a tela. Nunca sobrescreve o que foi salvo
+// pelo painel: se o campo ja' tem valor, o ambiente nao manda mais.
+func (h *handlers) semearConfigDoAmbiente(ctx context.Context) {
+	c, err := h.repo.GetConfigAlertas(ctx)
+	if err != nil || c == nil {
 		return
 	}
-	h.log.Info("alertas por e-mail ligados",
-		zap.Strings("destinatarios", rem.Destinatarios()),
-		zap.Duration("intervalo", intervaloVerificacao))
+	if c.SMTPHost != "" || c.EmailSender != "" || c.Destinatarios != "" {
+		return // ja' configurado pelo painel
+	}
+	if h.cfg.Email.SMTPHost == "" && h.cfg.Email.Sender == "" && len(h.cfg.Email.Destinatarios) == 0 {
+		return // nao ha nada no ambiente pra semear
+	}
+	c.SMTPHost = h.cfg.Email.SMTPHost
+	if h.cfg.Email.SMTPPort > 0 {
+		c.SMTPPort = h.cfg.Email.SMTPPort
+	}
+	c.EmailSender = h.cfg.Email.Sender
+	c.EmailReplyTo = h.cfg.Email.ReplyTo
+	c.Destinatarios = strings.Join(h.cfg.Email.Destinatarios, ", ")
+	if err := h.repo.SalvarConfigAlertas(ctx, c, "ambiente (primeira carga)"); err != nil {
+		h.log.Warn("alertas: falha ao semear config do ambiente", zap.Error(err))
+		return
+	}
+	h.log.Info("alertas: config inicial copiada do ambiente para o banco",
+		zap.String("smtp_host", c.SMTPHost), zap.String("destinatarios", c.Destinatarios))
+}
 
+// IniciarAlertas roda a verificacao periodicamente ate' o contexto encerrar.
+func (h *handlers) IniciarAlertas(ctx context.Context) {
+	h.semearConfigDoAmbiente(ctx)
 	go func() {
 		t := time.NewTicker(intervaloVerificacao)
 		defer t.Stop()
@@ -61,29 +82,42 @@ func (h *handlers) IniciarAlertas(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				h.verificarAlertas(ctx, rem)
+				h.verificarAlertas(ctx)
 			}
 		}
 	}()
 }
 
-func (h *handlers) verificarAlertas(ctx context.Context, rem *email.Remetente) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+func (h *handlers) verificarAlertas(pai context.Context) {
+	ctx, cancel := context.WithTimeout(pai, 60*time.Second)
 	defer cancel()
 
-	h.alertarTokensVencidos(ctx, rem)
-	h.alertarSessoesCaidas(ctx, rem)
+	cfg, err := h.repo.GetConfigAlertas(ctx)
+	if err != nil || cfg == nil {
+		return
+	}
+	if !cfg.Configurado() {
+		return // nada configurado: silencio proposital, nao erro
+	}
+	rem := remetenteDaConfig(cfg)
+
+	if cfg.TokenAtivo {
+		h.alertarTokensVencidos(ctx, rem, time.Duration(cfg.TokenJanelaH)*time.Hour)
+	}
+	if cfg.SessaoAtivo {
+		h.alertarSessoesCaidas(ctx, rem, time.Duration(cfg.SessaoJanelaMin)*time.Minute)
+	}
 	_ = h.repo.LimparAlertasAntigos(ctx)
 }
 
-func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remetente) {
+func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remetente, janela time.Duration) {
 	portais, err := h.repo.ListarTokensVencidos(ctx)
 	if err != nil {
 		h.log.Warn("alertas: falha ao listar tokens vencidos", zap.Error(err))
 		return
 	}
 	for _, p := range portais {
-		ok, err := h.repo.DeveAvisar(ctx, alertaTokenVencido, p.Domain, p.Domain, janelaToken)
+		ok, err := h.repo.DeveAvisar(ctx, alertaTokenVencido, p.Domain, p.Domain, janela)
 		if err != nil || !ok {
 			continue
 		}
@@ -108,7 +142,7 @@ func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remeten
 	}
 }
 
-func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetente) {
+func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetente, janela time.Duration) {
 	if h.waManager == nil {
 		return
 	}
@@ -138,7 +172,7 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 		if acct, aerr := h.repo.GetBitrixAccountByJID(ctx, s.JID); aerr == nil && acct != nil {
 			dominio = acct.Domain
 		}
-		ok, derr := h.repo.DeveAvisar(ctx, alertaSessaoCaiu, numero, dominio, janelaSessao)
+		ok, derr := h.repo.DeveAvisar(ctx, alertaSessaoCaiu, numero, dominio, janela)
 		if derr != nil || !ok {
 			continue
 		}
