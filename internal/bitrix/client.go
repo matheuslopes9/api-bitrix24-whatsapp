@@ -1945,48 +1945,15 @@ func stringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-// ─── Message Service (Bitrix Marketing > Campanhas SMS) ───────────────────
-// Permite registrar nosso app como "provedor SMS" do Bitrix. O cliente vai
-// em Marketing > Campanhas SMS, escolhe "UC Talk" como provedor, dispara —
-// Bitrix faz POST no nosso webhook por destinatario. Nos entregamos via
-// WhatsApp e reportamos status com message.status.update.
+// ─── Campanhas SMS (removidas) ──────────────────────────────────────────────
 //
-// Requer scope `messageservice` no manifest do app no Marketplace.
+// So' sobrou a remocao: o provedor "UC Talk WhatsApp" continua cadastrado
+// nos portais que o usaram, e api/sms_legado.go o descadastra.
 
-// RegisterSMSSender cadastra o app como provedor SMS no portal.
-// Idempotente: chamar de novo so' atualiza o registro existente (Bitrix
-// trata como upsert pelo CODE).
-//
-//	code: identificador unico do sender (ex: "uctalk_whatsapp")
-//	name: nome exibido no menu (pode ser localizado via map em vez de string)
-//	handlerURL: URL HTTPS publica do nosso endpoint que recebe os envios
-func (c *Client) RegisterSMSSender(ctx context.Context, creds TenantCreds, code, name, handlerURL string) error {
-	_, err := c.call(ctx, creds, "messageservice.sender.add", map[string]interface{}{
-		"CODE":    code,
-		"TYPE":    "SMS",
-		"HANDLER": handlerURL,
-		"NAME":    name,
-	})
-	return err
-}
-
-// DeleteSMSSender remove o sender. Chamado no fluxo de uninstall do app
-// pra nao deixar entrada orfa no portal do cliente.
+// DeleteSMSSender remove o provedor SMS do app no portal.
 func (c *Client) DeleteSMSSender(ctx context.Context, creds TenantCreds, code string) error {
 	_, err := c.call(ctx, creds, "messageservice.sender.delete", map[string]interface{}{
 		"CODE": code,
-	})
-	return err
-}
-
-// UpdateSMSMessageStatus reporta ao Bitrix o status final de uma mensagem
-// que ele nos pediu pra enviar. Status validos: queued|sent|delivered|
-// undelivered|failed. Bitrix mostra na UI da campanha.
-func (c *Client) UpdateSMSMessageStatus(ctx context.Context, creds TenantCreds, code, bitrixMessageID, status string) error {
-	_, err := c.call(ctx, creds, "messageservice.message.status.update", map[string]interface{}{
-		"CODE":       code,
-		"MESSAGE_ID": bitrixMessageID,
-		"STATUS":     status,
 	})
 	return err
 }
@@ -2039,18 +2006,6 @@ func (c *Client) DeleteBPRobot(ctx context.Context, creds TenantCreds, code stri
 // realmente persistiu, e com qual payload.
 func (c *Client) ListBPRobots(ctx context.Context, creds TenantCreds) (string, error) {
 	raw, err := c.call(ctx, creds, "bizproc.robot.list", map[string]interface{}{})
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
-// ListSMSSenders retorna os senders registrados pelo app neste portal.
-// Util pra debug: confirma se o messageservice.sender.add do install
-// realmente persistiu. Tambem revela se o app esta sem scope `messageservice`
-// (nesse caso retorna ACCESS_DENIED).
-func (c *Client) ListSMSSenders(ctx context.Context, creds TenantCreds) (string, error) {
-	raw, err := c.call(ctx, creds, "messageservice.sender.list", map[string]interface{}{})
 	if err != nil {
 		return "", err
 	}

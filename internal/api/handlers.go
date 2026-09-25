@@ -233,7 +233,7 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		// Persiste application_token se veio (chega em auth[application_token]
 		// no ONAPPINSTALL real do server-to-server, NAO no JS BX24.getAuth).
 		// Sem isso, validateBitrixAppToken nunca confirma e endpoints
-		// publicos /bitrix/bp/send e /bitrix/sms/send rejeitam.
+		// publico /bitrix/bp/send rejeita.
 		if appTokenCallback != "" && portal.Domain != "" {
 			if err := h.repo.SetPortalApplicationToken(c.Context(), portal.Domain, appTokenCallback); err != nil {
 				h.log.Warn("partner install: app_token save failed",

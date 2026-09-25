@@ -17,7 +17,6 @@ Duas tabelas sustentam isso:
    ├─ feat_cloud_api       Cloud API (Meta) + Templates
    ├─ feat_automations     robôs BizProc
    ├─ feat_reports         Relatórios
-   ├─ feat_sms             existe no código, oculto na UI
    └─ valid_until          NULL = sem prazo
 
  license_payments          lançado à mão pelo suporte

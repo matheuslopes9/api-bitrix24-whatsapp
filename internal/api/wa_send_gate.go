@@ -2,8 +2,8 @@
 // digitacao em envios em massa via WhatsApp (caminho nao oficial).
 //
 // Usado por:
-//  - sms_provider.go (Bitrix Marketing > Campanhas SMS)
 //  - bp_robot.go     (Bitrix CRM > Automacoes — robot UC Talk)
+// (As Campanhas SMS tambem usavam; foram removidas em 25/09/2026.)
 //
 // Politica anti-banimento (Multi-Device whatsmeow):
 //  - Gate por sessao serializa envios. N goroutines paralelas pegando o

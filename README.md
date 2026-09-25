@@ -356,7 +356,7 @@ apagada por engano junto de um bloco substituído.
   (`uctalk_user`) só nascem daí.
 - `/bitrix/crm/*` exige os dois cookies e ignora `domain`/`user_id` enviados
   pela tela (`crm_identidade.go`). As rotas `/ui/bitrix/*`, histórico,
-  permissões e SMS são presas ao portal do cookie (`escoparAoTenant`), e
+  e permissões são presas ao portal do cookie (`escoparAoTenant`), e
   envio só sai por número do próprio portal.
 - Arquivos das conversas (`/ui/media/:id`) só saem para o portal dono do
   número, e só abrem no navegador tipos seguros (imagem, áudio, vídeo, PDF).

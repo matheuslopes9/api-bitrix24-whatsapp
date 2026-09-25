@@ -32,7 +32,6 @@ type TenantFeatures struct {
 	CloudAPI    bool // Cloud API (Meta) + Templates
 	Automations bool // robos BizProc
 	Reports     bool
-	SMS         bool // oculto na UI por enquanto
 
 	// Expired diz que a vigencia passou. E' so' pra AVISAR na interface:
 	// nenhum caminho de codigo bloqueia por causa dele. A decisao de
@@ -68,7 +67,6 @@ func (h *handlers) resolveTenantFeatures(ctx context.Context, domain string) *Te
 	f.CloudAPI = lic.FeatCloudAPI
 	f.Automations = lic.FeatAutomations
 	f.Reports = lic.FeatReports
-	f.SMS = lic.FeatSMS
 	f.Expired = lic.Expired()
 	if lic.ValidUntil != nil {
 		f.ValidUntil = lic.ValidUntil.Format("2006-01-02")
@@ -91,7 +89,6 @@ func licenseSummary(lic *db.TenantLicense) fiber.Map {
 		"feat_cloud_api":   lic.FeatCloudAPI,
 		"feat_automations": lic.FeatAutomations,
 		"feat_reports":     lic.FeatReports,
-		"feat_sms":         lic.FeatSMS,
 		"notes":            lic.Notes,
 		"expirada":         lic.Expired(),
 	}

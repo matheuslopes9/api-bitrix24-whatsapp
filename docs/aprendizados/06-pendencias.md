@@ -40,7 +40,7 @@ Corrigido em 25/09:
 - [x] "First-touch" do `application_token` aceitava o primeiro que chegasse.
 - [x] `/bitrix/crm/*` confiava em `?domain=`/`user_id`; histórico trazia
       conversas de outros clientes; envio aceitava número alheio.
-- [x] `/ui/bitrix/*`, histórico, permissões e SMS aceitavam outro portal/número.
+- [x] `/ui/bitrix/*`, histórico e permissões aceitavam outro portal/número.
 - [x] `/bitrix/partner/link` transferia número por prefixo; `bp/send`
       disparava por número de outro portal.
 

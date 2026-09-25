@@ -67,7 +67,7 @@ Sessões cloud usam prefixo `cloud:` no JID (por isso o casamento por número ex
 
 ## Features por plano
 
-O acesso a templates/automação/SMS/relatórios é resolvido por
+O acesso a templates/automação/relatórios é resolvido por
 `resolveTenantFeatures(ctx, domain)`
 ([internal/api/plan_features.go](../../internal/api/plan_features.go)) a partir da
 definição do plano — inclusive no trial (o Trial é um plano separado, code

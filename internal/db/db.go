@@ -342,39 +342,11 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				ADD COLUMN IF NOT EXISTS meta_template_vars INT NOT NULL DEFAULT 0;
 		`},
 		{"021_sms_provider", `
-			-- Modulo SMS Campaigns: Bitrix Marketing > Campanhas SMS escolhe o
-			-- UC Talk como provedor. Bitrix manda POSTs de SMS pra gente, nos
-			-- entregamos via WhatsApp e reportamos status de volta. Tudo
-			-- isolado em tabela propria — nao toca nada existente.
-			CREATE TABLE IF NOT EXISTS bitrix_sms_messages (
-				bitrix_message_id   TEXT PRIMARY KEY,           -- id que o Bitrix nos manda
-				domain              TEXT NOT NULL,              -- portal Bitrix
-				sender_code         TEXT NOT NULL DEFAULT 'uctalk_whatsapp',
-				session_jid         TEXT NOT NULL DEFAULT '',   -- sessao WA usada
-				to_phone            TEXT NOT NULL,              -- E.164 normalizado
-				body                TEXT NOT NULL,
-				wa_message_id       TEXT NOT NULL DEFAULT '',   -- id retornado pelo WA
-				status              TEXT NOT NULL DEFAULT 'queued', -- queued|sent|delivered|undelivered|failed
-				error_msg           TEXT NOT NULL DEFAULT '',
-				bindings_json       TEXT NOT NULL DEFAULT '',   -- bindings CRM raw (opcional)
-				created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-				sent_at             TIMESTAMPTZ,
-				status_updated_at   TIMESTAMPTZ
-			);
-			CREATE INDEX IF NOT EXISTS idx_bsm_domain         ON bitrix_sms_messages (domain);
-			CREATE INDEX IF NOT EXISTS idx_bsm_wa_message_id  ON bitrix_sms_messages (wa_message_id) WHERE wa_message_id <> '';
-			CREATE INDEX IF NOT EXISTS idx_bsm_status         ON bitrix_sms_messages (status);
-			CREATE INDEX IF NOT EXISTS idx_bsm_created_at     ON bitrix_sms_messages (created_at);
-
-			-- Sessao WA padrao do tenant pra disparar campanhas SMS.
-			-- Vazio = nao configurado, modulo desativado pra esse tenant.
-			ALTER TABLE bitrix_portals
-				ADD COLUMN IF NOT EXISTS default_sms_session_jid TEXT NOT NULL DEFAULT '';
-
-			-- Confirmacao do aviso de risco de banimento (modal 1a vez).
-			-- false = ainda nao mostrou. Marcamos true quando o tenant aceita.
-			ALTER TABLE bitrix_portals
-				ADD COLUMN IF NOT EXISTS sms_risk_acknowledged BOOLEAN NOT NULL DEFAULT FALSE;
+			-- O modulo de Campanhas SMS foi REMOVIDO (25/09/2026). Esta migration
+			-- criava a tabela bitrix_sms_messages e duas colunas em bitrix_portals;
+			-- como toda migration roda em todo boot, deixar o CREATE aqui recriaria
+			-- o que a 051 apaga. Fica o nome, sem efeito.
+			SELECT 1;
 		`},
 		{"020_messages_retention", `
 			-- Indice em created_at pra suportar a purga rolling (1 ano) e
@@ -443,9 +415,9 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 		{"025_portal_application_token", `
 			-- application_token do Bitrix24: token que o Bitrix gera pra cada
 			-- install/app e envia em TODA chamada server-to-server (event handlers,
-			-- BizProc activities, SMS sender callbacks). Persistir no install pra
+			-- BizProc activities). Persistir no install pra
 			-- validar com constant-time-compare nos endpoints publicos
-			-- (/bitrix/bp/send, /bitrix/sms/send) — bloqueia atacante anonimo
+			-- (/bitrix/bp/send) — bloqueia atacante anonimo
 			-- mandando POSTs com auth[domain] forjado.
 			ALTER TABLE bitrix_portals
 				ADD COLUMN IF NOT EXISTS application_token TEXT NOT NULL DEFAULT '';
@@ -623,7 +595,6 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				feat_cloud_api     BOOLEAN NOT NULL DEFAULT FALSE, -- Cloud API + Templates
 				feat_automations   BOOLEAN NOT NULL DEFAULT FALSE, -- robos BizProc
 				feat_reports       BOOLEAN NOT NULL DEFAULT FALSE,
-				feat_sms           BOOLEAN NOT NULL DEFAULT FALSE, -- oculto na UI por ora
 
 				-- Vigencia. NULL = sem prazo (nao vence).
 				-- Vencer NAO bloqueia o app: so' mostra aviso e notifica o
@@ -850,6 +821,17 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			 WHERE session_jid <> ''
 			   AND session_jid NOT LIKE 'cloud:%'
 			   AND session_jid <> SPLIT_PART(SPLIT_PART(session_jid, '@', 1), ':', 1);
+		`},
+		{"051_remove_sms", `
+			-- Campanhas SMS (Bitrix Marketing > Campanhas SMS roteadas pro
+			-- WhatsApp) sairam do produto em 25/09/2026. Disparo em massa pelo
+			-- WhatsApp nao oficial e' o caminho mais curto pro banimento do
+			-- numero, e a feature nunca foi liberada a cliente (feat_sms era
+			-- oculto na UI). A tabela era so' log de auditoria com 30 dias.
+			DROP TABLE IF EXISTS bitrix_sms_messages;
+			ALTER TABLE bitrix_portals DROP COLUMN IF EXISTS default_sms_session_jid;
+			ALTER TABLE bitrix_portals DROP COLUMN IF EXISTS sms_risk_acknowledged;
+			ALTER TABLE tenant_licenses DROP COLUMN IF EXISTS feat_sms;
 		`},
 	}
 

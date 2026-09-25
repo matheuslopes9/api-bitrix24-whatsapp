@@ -114,7 +114,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		domain = memberID
 	}
 	// applicationToken chega aqui no fluxo Marketplace e e usado pra validar
-	// POSTs server-to-server futuros (/bitrix/bp/send, /bitrix/sms/send).
+	// POSTs server-to-server futuros (/bitrix/bp/send).
 	// Persiste apos UpsertBitrixPortal abaixo.
 
 	h.log.Info("partner install parsed",
@@ -141,7 +141,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 
 	// PROVA antes de gravar. Este endpoint e' publico (o Bitrix chama sem
 	// nada nosso) e sobrescrevia tokens E o application_token — que e' o que
-	// autentica os eventos seguintes (sms/send, bp/send, cookie da aba do
+	// autentica os eventos seguintes (bp/send, cookie da aba do
 	// CRM). Forjar um install era tomar o portal.
 	if dominioInformado {
 		ident, err := bitrix.VerificarToken(c.Context(), domain, accessToken)
@@ -184,7 +184,7 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 	}
 
 	// Persiste application_token assim que recebido. Sem isso, endpoints
-	// publicos /bitrix/bp/send e /bitrix/sms/send caem no "first-touch"
+	// publico /bitrix/bp/send cai no "first-touch"
 	// (qualquer POST com auth[domain] valido aceita o primeiro token).
 	if applicationToken != "" && domain != "" {
 		if err := h.repo.SetPortalApplicationToken(c.Context(), domain, applicationToken); err != nil {
@@ -216,12 +216,11 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		h.log.Info("partner install: connector activated", zap.String("domain", domain))
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
 
-		// Best-effort: registra UC Talk como provedor SMS no portal (Marketing >
-		// Campanhas SMS) e como atividade BizProc (CRM > Automacoes). Falhas
-		// aqui NAO quebram install — modulos ficam desativados pro tenant
-		// caso scopes (messageservice / bizproc) nao estejam no manifest.
+		// Best-effort: registra UC Talk como atividade BizProc (CRM >
+		// Automacoes). Falha aqui NAO quebra install — o modulo fica
+		// desativado pro tenant se o scope bizproc nao estiver no manifest.
+		// (Campanhas SMS foram removidas: nao ha' mais provedor a registrar.)
 		if portalFresh, _ := h.repo.GetBitrixPortalByDomain(ctx, domain); portalFresh != nil {
-			h.RegisterSMSSenderForPortal(ctx, portalFresh)
 			h.RegisterBPRobotForPortal(ctx, portalFresh)
 		}
 	}()
@@ -361,6 +360,10 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		signUserCookie(h.cfg.App.Secret, normalizePortalDomain(domain), ident.UserID, tenantExpires),
 		tenantExpires,
 		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
+
+	// Campanhas SMS foram removidas: tira o provedor antigo do portal, se
+	// existir. Em background — nao atrasa a abertura do app.
+	go h.removerProvedorSMSLegado(context.Background(), existing)
 
 	// Trial automatico de 7 dias no primeiro install. Idempotente — se ja
 	// existe licenca, nao faz nada (caso de re-install).

@@ -28,7 +28,6 @@ type TenantLicense struct {
 	FeatCloudAPI    bool `db:"feat_cloud_api"`   // Cloud API (Meta) + Templates
 	FeatAutomations bool `db:"feat_automations"` // robos BizProc
 	FeatReports     bool `db:"feat_reports"`
-	FeatSMS         bool `db:"feat_sms"` // oculto na UI por enquanto
 
 	// ValidUntil nil = sem prazo. Vencer NAO bloqueia o app.
 	ValidUntil *time.Time `db:"valid_until"`
@@ -82,12 +81,12 @@ type LicensePayment struct {
 }
 
 const licenseCols = `domain, max_sessions, feat_cloud_api, feat_automations,
-	feat_reports, feat_sms, valid_until, notes, welcome_shown,
+	feat_reports, valid_until, notes, welcome_shown,
 	master_auto_set_at, created_at, updated_at`
 
 func scanLicense(r interface{ Scan(...any) error }, l *TenantLicense) error {
 	return r.Scan(&l.Domain, &l.MaxSessions, &l.FeatCloudAPI, &l.FeatAutomations,
-		&l.FeatReports, &l.FeatSMS, &l.ValidUntil, &l.Notes, &l.WelcomeShown,
+		&l.FeatReports, &l.ValidUntil, &l.Notes, &l.WelcomeShown,
 		&l.MasterAutoSetAt, &l.CreatedAt, &l.UpdatedAt)
 }
 
@@ -152,19 +151,18 @@ func (r *Repository) SaveLicenseFeatures(ctx context.Context, l *TenantLicense) 
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO tenant_licenses
 			(domain, max_sessions, feat_cloud_api, feat_automations,
-			 feat_reports, feat_sms, valid_until, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			 feat_reports, valid_until, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (domain) DO UPDATE SET
 			max_sessions     = EXCLUDED.max_sessions,
 			feat_cloud_api   = EXCLUDED.feat_cloud_api,
 			feat_automations = EXCLUDED.feat_automations,
 			feat_reports     = EXCLUDED.feat_reports,
-			feat_sms         = EXCLUDED.feat_sms,
 			valid_until      = EXCLUDED.valid_until,
 			notes            = EXCLUDED.notes,
 			updated_at       = NOW()`,
 		l.Domain, l.MaxSessions, l.FeatCloudAPI, l.FeatAutomations,
-		l.FeatReports, l.FeatSMS, l.ValidUntil, l.Notes)
+		l.FeatReports, l.ValidUntil, l.Notes)
 	return err
 }
 

@@ -452,13 +452,6 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 			"code":  "plan_pro_required",
 		})
 	}
-	// NOTA: NAO exigir portal.DefaultSMSSessionJID aqui. Esse campo e' do
-	// fluxo de SMS (sessao default que o master escolhe pra rotear SMS do
-	// Bitrix). Os robots BizProc carregam a PROPRIA sessao escolhida no
-	// dropdown (properties[session_jid]) — validada nos handlers abaixo.
-	// BUG HISTORICO: o check antigo respondia 200 {"result":"no_session"}
-	// quando o default de SMS nao estava configurado, dropando TODO disparo
-	// de automacao silenciosamente (Bitrix via 200 e achava que enviou).
 
 	code := strings.TrimSpace(c.FormValue("code"))
 	toPhone := normalizeWAPhone(c.FormValue("properties[to_phone]"))
@@ -618,7 +611,7 @@ func (h *handlers) processBPRobotSend(j *bpSendJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Gate de sessao + intervalo minimo (mesmo do SMS).
+	// Gate de sessao + intervalo minimo (ver wa_send_gate.go).
 	gate := GetWASessionGate(j.sessionJID)
 	gate.Lock()
 	if !gate.WaitMinInterval(ctx.Done()) {

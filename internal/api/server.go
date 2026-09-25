@@ -222,14 +222,6 @@ func New(
 	crm.Get("/master/status", h.bitrixCRMMasterStatus)
 	crm.Post("/master/set", h.bitrixCRMMasterSet)
 
-	// ─── SMS Provider (Marketing > Campanhas SMS via WhatsApp) ────────────
-	// Modulo isolado em sms_provider.go. Bitrix bate em /bitrix/sms/send,
-	// UI do dashboard usa os /ui/sms/* abaixo. Nao toca em rotas existentes.
-	bx.Post("/sms/send", h.smsProviderSend)
-	ui.Get("/sms/status", h.uiSMSStatus)
-	ui.Post("/sms/set-session", h.escoparAoTenant, h.uiSMSSetSession)
-	ui.Post("/sms/ack-risk", h.uiSMSAckRisk)
-	ui.Get("/sms/messages", h.uiSMSMessages)
 
 	// ─── BizProc Robot (CRM > Automacoes) ─────────────────────────────────
 	// Modulo isolado em bp_robot.go. Bitrix bate em /bitrix/bp/send quando
@@ -339,8 +331,6 @@ func New(
 	admin.Post("/api/tenant/permissions", h.adminTenantSetPermission)
 	admin.Get("/api/tenant/master", h.adminTenantMasterStatus)
 	admin.Post("/api/tenant/master", h.adminTenantSetMaster)
-	admin.Get("/api/tenant/sms-debug", h.adminTenantSMSDebug)
-	admin.Post("/api/tenant/sms-register", h.adminTenantSMSRegister)
 	admin.Post("/api/tenant/bp-register", h.adminTenantBPRegister)
 	admin.Get("/api/tenant/bp-debug", h.adminTenantBPDebug)
 	admin.Get("/api/tenant/bp-debug-sessions", h.adminTenantBPDebugSessions)
@@ -348,7 +338,6 @@ func New(
 	// Aliases GET pra facilitar teste rapido via browser
 	admin.Get("/api/tenant/bp-register", h.adminTenantBPRegister)
 	admin.Get("/api/tenant/bp-reregister", h.adminTenantBPReregister)
-	admin.Get("/api/tenant/sms-register", h.adminTenantSMSRegister)
 	// Seed de templates Nao Oficiais de exemplo (pra testar automacoes).
 	admin.Post("/api/tenant/seed-templates", h.adminTenantSeedTemplates)
 	admin.Get("/api/tenant/seed-templates", h.adminTenantSeedTemplates)

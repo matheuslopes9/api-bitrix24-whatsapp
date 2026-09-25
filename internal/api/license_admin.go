@@ -91,7 +91,6 @@ func (h *handlers) adminSaveLicense(c *fiber.Ctx) error {
 		FeatCloudAPI    bool   `json:"feat_cloud_api"`
 		FeatAutomations bool   `json:"feat_automations"`
 		FeatReports     bool   `json:"feat_reports"`
-		FeatSMS         bool   `json:"feat_sms"`
 		ValidUntil      string `json:"valid_until"`
 		Notes           string `json:"notes"`
 	}
@@ -113,7 +112,6 @@ func (h *handlers) adminSaveLicense(c *fiber.Ctx) error {
 		FeatCloudAPI:    req.FeatCloudAPI,
 		FeatAutomations: req.FeatAutomations,
 		FeatReports:     req.FeatReports,
-		FeatSMS:         req.FeatSMS,
 		ValidUntil:      validUntil,
 		Notes:           strings.TrimSpace(req.Notes),
 	}
