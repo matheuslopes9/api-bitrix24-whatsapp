@@ -54,8 +54,14 @@ func main() {
 	// X-API-Key de /wa/* e /stats/*. Vazio, o middleware de API liberava
 	// tudo e os cookies eram assinados com chave vazia — qualquer um forjava.
 	// Melhor nao subir do que subir aberto.
-	if len(strings.TrimSpace(cfg.App.Secret)) < 16 {
-		log.Fatal("APP_SECRET ausente ou curto demais (minimo 16 caracteres) — o app nao sobe sem ele")
+	//
+	// Curto so' avisa: travar o boot por tamanho derrubaria um ambiente que
+	// hoje funciona. Troque por um segredo longo e aleatorio.
+	switch n := len(strings.TrimSpace(cfg.App.Secret)); {
+	case n == 0:
+		log.Fatal("APP_SECRET ausente — o app nao sobe sem ele")
+	case n < 16:
+		log.Warn("SEGURANCA: APP_SECRET curto (menos de 16 caracteres) — troque por um segredo longo e aleatorio")
 	}
 
 	// Portais que resolvem pra IP interno (on-premise na mesma rede). Sem
