@@ -50,6 +50,14 @@ func main() {
 	}
 	log.Info("config loaded", zap.String("env", cfg.App.Env))
 
+	// APP_SECRET assina os cookies de tenant, de usuario e de admin, e e' a
+	// X-API-Key de /wa/* e /stats/*. Vazio, o middleware de API liberava
+	// tudo e os cookies eram assinados com chave vazia — qualquer um forjava.
+	// Melhor nao subir do que subir aberto.
+	if len(strings.TrimSpace(cfg.App.Secret)) < 16 {
+		log.Fatal("APP_SECRET ausente ou curto demais (minimo 16 caracteres) — o app nao sobe sem ele")
+	}
+
 	// Portais que resolvem pra IP interno (on-premise na mesma rede). Sem
 	// isso a verificacao de token recusa o endereco como SSRF e o portal
 	// fica sem login. Ver bitrix/verificar.go.
@@ -161,6 +169,19 @@ func main() {
 
 		var waID string
 		var err error
+
+		// Numero ja' enviando/esperando: o job volta pro fim da fila em vez
+		// de prender este worker. Sem isso, uma rajada num numero so'
+		// ocupava os 20 workers e as mensagens dos outros clientes esperavam
+		// junto. A pausa curta evita girar em falso quando so' sobrou fila
+		// desse numero. Nao conta como tentativa: nada falhou.
+		if waManager.NumeroOcupado(job.SessionJID) {
+			time.Sleep(300 * time.Millisecond)
+			if err := q.PushOutbound(c, job); err != nil {
+				return fmt.Errorf("devolvendo job pra fila (numero ocupado): %w", err)
+			}
+			return nil
+		}
 
 		// Ritmo por NUMERO: 20 workers mandavam rajadas pelo mesmo WhatsApp
 		// pra contatos diferentes. Ver whatsapp/ritmo.go. Segurado ate' o

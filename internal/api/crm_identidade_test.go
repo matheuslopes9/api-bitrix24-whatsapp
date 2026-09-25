@@ -24,21 +24,21 @@ func handlersDeTeste() *handlers {
 }
 
 func TestUserCookieIdaEVolta(t *testing.T) {
-	raw := signUserCookie(segredoTeste, "a.bitrix24.com.br", "42", time.Now().Add(time.Hour))
-	d, u, ok := verifyUserCookie(segredoTeste, raw)
-	if !ok || d != "a.bitrix24.com.br" || u != "42" {
-		t.Fatalf("verify = %q %q %v", d, u, ok)
+	raw := signUserCookie(segredoTeste, "a.bitrix24.com.br", "42", "Fulano | de Tal", time.Now().Add(time.Hour))
+	d, u, nome, ok := verifyUserCookie(segredoTeste, raw)
+	if !ok || d != "a.bitrix24.com.br" || u != "42" || nome != "Fulano | de Tal" {
+		t.Fatalf("verify = %q %q %q %v", d, u, nome, ok)
 	}
 	// Trocar o usuario sem refazer a assinatura tem que falhar.
 	adulterado := strings.Replace(raw, "|42|", "|1|", 1)
-	if _, _, ok := verifyUserCookie(segredoTeste, adulterado); ok {
+	if _, _, _, ok := verifyUserCookie(segredoTeste, adulterado); ok {
 		t.Fatal("aceitou cookie com usuario trocado")
 	}
-	if _, _, ok := verifyUserCookie("outro-segredo", raw); ok {
+	if _, _, _, ok := verifyUserCookie("outro-segredo", raw); ok {
 		t.Fatal("aceitou cookie assinado com outro segredo")
 	}
-	vencido := signUserCookie(segredoTeste, "a.bitrix24.com.br", "42", time.Now().Add(-time.Minute))
-	if _, _, ok := verifyUserCookie(segredoTeste, vencido); ok {
+	vencido := signUserCookie(segredoTeste, "a.bitrix24.com.br", "42", "Fulano | de Tal", time.Now().Add(-time.Minute))
+	if _, _, _, ok := verifyUserCookie(segredoTeste, vencido); ok {
 		t.Fatal("aceitou cookie vencido")
 	}
 }
@@ -81,7 +81,7 @@ func cookiesDe(dominio, usuario string) []*http.Cookie {
 	exp := time.Now().Add(time.Hour)
 	return []*http.Cookie{
 		{Name: tenantCookieName, Value: signTenantCookie(segredoTeste, dominio, exp)},
-		{Name: userCookieName, Value: signUserCookie(segredoTeste, dominio, usuario, exp)},
+		{Name: userCookieName, Value: signUserCookie(segredoTeste, dominio, usuario, "Fulano | de Tal", exp)},
 	}
 }
 

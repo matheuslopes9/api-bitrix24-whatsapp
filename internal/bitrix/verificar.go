@@ -31,6 +31,9 @@ type IdentidadeBitrix struct {
 	Dominio string
 	UserID  string
 	Admin   bool
+	// Nome como esta' no cadastro do Bitrix. E' o que assina as mensagens
+	// do operador — antes vinha da tela, e qualquer um assinava como quiser.
+	Nome string
 }
 
 // ErrTokenRecusado: o portal respondeu, mas nao aceitou o token.
@@ -60,8 +63,10 @@ func VerificarToken(ctx context.Context, dominio, accessToken string) (*Identida
 
 	var r struct {
 		Result struct {
-			ID    json.Number `json:"ID"`
-			Admin bool        `json:"ADMIN"`
+			ID       json.Number `json:"ID"`
+			Admin    bool        `json:"ADMIN"`
+			Name     string      `json:"NAME"`
+			LastName string      `json:"LAST_NAME"`
 		} `json:"result"`
 		Error string `json:"error"`
 	}
@@ -75,7 +80,8 @@ func VerificarToken(ctx context.Context, dominio, accessToken string) (*Identida
 		}
 		return nil, fmt.Errorf("%w: %s", ErrTokenRecusado, motivo)
 	}
-	return &IdentidadeBitrix{Dominio: dominio, UserID: r.Result.ID.String(), Admin: r.Result.Admin}, nil
+	nome := strings.TrimSpace(r.Result.Name + " " + r.Result.LastName)
+	return &IdentidadeBitrix{Dominio: dominio, UserID: r.Result.ID.String(), Admin: r.Result.Admin, Nome: nome}, nil
 }
 
 // DominioSeguro normaliza e recusa o que nao pode ser um portal.

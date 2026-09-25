@@ -79,3 +79,22 @@ func (m *Manager) AguardarVez(ctx context.Context, sessionJID, texto string) (li
 		})
 	}, nil
 }
+
+// NumeroOcupado diz se o numero ja' esta' enviando ou esperando a vez.
+//
+// Serve pra fila nao prender worker: com 20 workers e uma rajada num numero
+// so', todos ficavam parados esperando o ritmo daquele numero, e as
+// mensagens dos OUTROS clientes esperavam junto. Ocupado -> o job volta pro
+// fim da fila e o worker segue.
+func (m *Manager) NumeroOcupado(sessionJID string) bool {
+	v, ok := vezes.Load(chaveDoNumero(sessionJID))
+	if !ok {
+		return false
+	}
+	vez := v.(*vezDoNumero)
+	if !vez.mu.TryLock() {
+		return true
+	}
+	vez.mu.Unlock()
+	return false
+}

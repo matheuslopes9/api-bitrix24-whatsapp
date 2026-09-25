@@ -40,7 +40,18 @@ func (h *handlers) uiStartSession(c *fiber.Ctx) error {
 	// Registra a intencao ANTES de criar a sessao: o cliente vai buscar o
 	// proprio QR em seguida, e nesse momento ainda nao existe vinculo em
 	// bitrix_accounts pra provar que o numero e' dele.
+	//
+	// Numero que ja' e' de OUTRO portal e' recusado: senao, pedir
+	// "pareamento" do numero alheio registrava quem pediu como dono — e dali
+	// ele via o QR, vinculava e desvinculava o numero do outro cliente.
 	if dominio, err := h.tenantDoPedido(c); err == nil {
+		dono, derr := h.repo.DonoDoNumero(c.Context(), numeroBase(body.Phone))
+		if derr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": derr.Error()})
+		}
+		if dono != "" && dono != dominio {
+			return c.Status(403).JSON(fiber.Map{"error": "este numero ja' esta' conectado a outro portal"})
+		}
 		h.registrarPareamento(dominio, body.Phone)
 	}
 	if err := h.waManager.AddSession(c.Context(), body.Phone); err != nil {

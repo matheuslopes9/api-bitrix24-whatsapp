@@ -78,3 +78,22 @@ func TestContextoCanceladoNaoPrendeONumero(t *testing.T) {
 		t.Fatal("numero ficou travado")
 	}
 }
+
+func TestNumeroOcupadoEnquantoAlguemTemAVez(t *testing.T) {
+	m := &Manager{}
+	num := "5500000000005@s.whatsapp.net"
+	if m.NumeroOcupado(num) {
+		t.Fatal("numero nunca usado nao pode estar ocupado")
+	}
+	lib, _ := m.AguardarVez(context.Background(), num, "x")
+	if !m.NumeroOcupado(num) {
+		t.Fatal("com a vez tomada, deveria estar ocupado")
+	}
+	if m.NumeroOcupado("5500000000006@s.whatsapp.net") {
+		t.Fatal("outro numero nao pode aparecer ocupado")
+	}
+	lib()
+	if m.NumeroOcupado(num) {
+		t.Fatal("depois de liberar nao pode seguir ocupado")
+	}
+}

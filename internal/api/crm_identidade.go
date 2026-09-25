@@ -18,6 +18,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -28,33 +29,39 @@ import (
 
 const userCookieName = "uctalk_user"
 
-// signUserCookie: "exp|domain|userID|hmac".
-func signUserCookie(secret, domain, userID string, expiresAt time.Time) string {
-	payload := strconv.FormatInt(expiresAt.Unix(), 10) + "|" + domain + "|" + userID
+// signUserCookie: "exp|domain|userID|base64url(nome)|hmac". O nome vai
+// codificado porque pode conter "|".
+func signUserCookie(secret, domain, userID, nome string, expiresAt time.Time) string {
+	payload := strconv.FormatInt(expiresAt.Unix(), 10) + "|" + domain + "|" + userID + "|" +
+		base64.RawURLEncoding.EncodeToString([]byte(nome))
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("user-v1:" + payload))
+	mac.Write([]byte("user-v2:" + payload))
 	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func verifyUserCookie(secret, raw string) (domain, userID string, ok bool) {
+func verifyUserCookie(secret, raw string) (domain, userID, nome string, ok bool) {
 	partes := strings.Split(raw, "|")
-	if len(partes) != 4 {
-		return "", "", false
+	if len(partes) != 5 {
+		return "", "", "", false
 	}
 	exp, err := strconv.ParseInt(partes[0], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", "", false
+		return "", "", "", false
 	}
-	payload := strings.Join(partes[:3], "|")
+	payload := strings.Join(partes[:4], "|")
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("user-v1:" + payload))
-	if subtle.ConstantTimeCompare([]byte(partes[3]), []byte(hex.EncodeToString(mac.Sum(nil)))) != 1 {
-		return "", "", false
+	mac.Write([]byte("user-v2:" + payload))
+	if subtle.ConstantTimeCompare([]byte(partes[4]), []byte(hex.EncodeToString(mac.Sum(nil)))) != 1 {
+		return "", "", "", false
 	}
 	if partes[1] == "" || partes[2] == "" {
-		return "", "", false
+		return "", "", "", false
 	}
-	return partes[1], partes[2], true
+	n, err := base64.RawURLEncoding.DecodeString(partes[3])
+	if err != nil {
+		return "", "", "", false
+	}
+	return partes[1], partes[2], string(n), true
 }
 
 // exigirIdentidadeCRM protege as rotas JSON de /bitrix/crm/*.
@@ -73,7 +80,7 @@ func (h *handlers) exigirIdentidadeCRM(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "sessao expirada — reabra a aba do UC Talk", "codigo": "sem_identidade"})
 	}
-	udom, userID, ok := verifyUserCookie(h.cfg.App.Secret, c.Cookies(userCookieName))
+	udom, userID, nome, ok := verifyUserCookie(h.cfg.App.Secret, c.Cookies(userCookieName))
 	if !ok || udom != dominio {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "sessao expirada — reabra a aba do UC Talk", "codigo": "sem_identidade"})
 	}
@@ -84,6 +91,7 @@ func (h *handlers) exigirIdentidadeCRM(c *fiber.Ctx) error {
 	}
 	c.Locals("tenant_domain", dominio)
 	c.Locals("crm_user_id", userID)
+	c.Locals("crm_user_nome", nome)
 	args := c.Request().URI().QueryArgs()
 	args.Set("domain", dominio)
 	if args.Has("user_id") {
@@ -93,6 +101,12 @@ func (h *handlers) exigirIdentidadeCRM(c *fiber.Ctx) error {
 		args.Set("caller_user_id", userID)
 	}
 	return c.Next()
+}
+
+// nomeDoOperadorCRM e' o nome confirmado pelo Bitrix no handshake.
+func nomeDoOperadorCRM(c *fiber.Ctx) string {
+	n, _ := c.Locals("crm_user_nome").(string)
+	return strings.TrimSpace(n)
 }
 
 // identidadeCRM devolve portal e usuario confirmados (so' valem depois do

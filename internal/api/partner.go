@@ -357,7 +357,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	// Usuario confirmado pelo portal — e' o que as rotas /bitrix/crm/* usam
 	// no lugar do user_id que a tela declarava. Ver crm_identidade.go.
 	setPartitionedCookie(c, userCookieName,
-		signUserCookie(h.cfg.App.Secret, normalizePortalDomain(domain), ident.UserID, tenantExpires),
+		signUserCookie(h.cfg.App.Secret, normalizePortalDomain(domain), ident.UserID, ident.Nome, tenantExpires),
 		tenantExpires,
 		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
 
@@ -770,6 +770,36 @@ function salvarERedirecionarAdmin(auth, isInstall) {
     tryProfile();
   }
 
+  // garantirAbasCRM registra as abas UC Talk em Contato, Lead e Negocio se
+  // estiverem faltando. O servidor tenta no install com o token do app, que
+  // age como quem instalou: se nao era admin, placement.bind e' recusado e o
+  // cliente fica sem a aba (visto em crm.uctechnology.com.br, 25/09). Aqui e'
+  // com o usuario LOGADO — quando um admin abre o app, as abas aparecem.
+  // Chama pronto() em ate' 3s de qualquer jeito: nunca segura o painel.
+  function garantirAbasCRM(pronto) {
+    var feito = false;
+    function fim(){ if (!feito) { feito = true; pronto(); } }
+    setTimeout(fim, 3000);
+    try {
+      if (typeof BX24 === 'undefined' || !BX24.isAdmin || !BX24.isAdmin()) { fim(); return; }
+      var handler = window.location.origin + '/bitrix/crm/tab';
+      var alvo = ['CRM_CONTACT_DETAIL_TAB', 'CRM_LEAD_DETAIL_TAB', 'CRM_DEAL_DETAIL_TAB'];
+      BX24.callMethod('placement.get', {}, function(res) {
+        if (res.error()) { fim(); return; }
+        var tem = {};
+        (res.data() || []).forEach(function(pl){ if (pl.handler === handler) tem[pl.placement] = true; });
+        var faltam = alvo.filter(function(pl){ return !tem[pl]; });
+        if (!faltam.length) { fim(); return; }
+        var restam = faltam.length;
+        faltam.forEach(function(pl){
+          BX24.callMethod('placement.bind', {PLACEMENT: pl, HANDLER: handler, TITLE: 'UC Talk'}, function(){
+            if (--restam === 0) fim();
+          });
+        });
+      });
+    } catch(e) { fim(); }
+  }
+
   withUserID(function(userID){
     fetch('/bitrix/auth', {
       method: 'POST',
@@ -780,6 +810,7 @@ function salvarERedirecionarAdmin(auth, isInstall) {
                             member_id:memberID, user_id:userID})
     })
     .then(function(r){return r.json();})
+    .then(function(){ return new Promise(function(ok){ garantirAbasCRM(ok); }); })
     .then(function(){
       // Se é fluxo de instalação, chama installFinish para marcar INSTALLED:true
       // Isso libera event.bind e demais funcionalidades do app no Bitrix.

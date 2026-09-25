@@ -683,6 +683,43 @@ func (r *Repository) GetMessagesByPhone(ctx context.Context, phone string, limit
 	return scanMessages(rows)
 }
 
+// GetMessagesByPhoneNoEscopo e' GetMessagesByPhone restrito aos numeros do
+// escopo (o lado NOSSO da conversa).
+//
+// O filtro TEM que estar na consulta, antes do LIMIT. A primeira correcao
+// filtrava depois, em Go: um contato que tinha conversado muito com outro
+// cliente enchia as N linhas com mensagens alheias, e a aba mostrava o
+// historico deste portal incompleto — ou vazio.
+func (r *Repository) GetMessagesByPhoneNoEscopo(ctx context.Context, phone string, limit int, escopo EscopoNumeros) ([]Message, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	pattern := phone + "@%"
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, wa_message_id, session_id, contact_id,
+		       COALESCE(from_jid,''), COALESCE(to_jid,''), COALESCE(author_name,''),
+		       direction, message_type,
+		       COALESCE(content,''), COALESCE(media_url,''), COALESCE(media_mime,''),
+		       COALESCE(media_size,0),
+		       status, retry_count, COALESCE(error_msg,''),
+		       sent_at, delivered_at, created_at
+		FROM messages
+		WHERE (from_jid LIKE $1
+		    OR to_jid   LIKE $1
+		    OR from_jid IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		    OR to_jid   IN (SELECT wa_jid FROM contact_mapping WHERE wa_phone = $2)
+		    OR contact_id IN (SELECT id FROM contact_mapping WHERE wa_phone = $2))
+		  AND `+filtroEscopo(4, 5)+`
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, pattern, phone, limit, escopo.Todos, escopo.Numeros)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
 // GetMessagesByPhoneForSession e' a versao ESCOPADA POR SESSAO do
 // GetMessagesByPhone.
 //
@@ -2614,6 +2651,9 @@ type TenantUsage struct {
 // whatsapp_sessions -> bitrix_accounts (o vinculo de dominio). Storage nao
 // da pra medir por tenant sem tocar o disco (arquivos .db sao por telefone,
 // nao por dominio) — fica de fora aqui; a UI mostra sessoes como proxy.
+// O casamento sessao <-> conta e' pelo numero base (sqlNumeroBase). Com
+// SPLIT_PART no ':' toda sessao Cloud API virava "cloud" e cada cliente com
+// Cloud API somava as sessoes e mensagens Cloud de TODOS os outros.
 func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error) {
 	// Base: um row por dominio de bitrix_accounts.
 	rows, err := r.pool.Query(ctx, `
@@ -2626,7 +2666,7 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 			       COUNT(*) FILTER (WHERE ws.status='active' AND ws.jid LIKE 'cloud:%')     AS cloud
 			  FROM bitrix_accounts ba
 			  JOIN whatsapp_sessions ws
-			    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1) = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+			    ON `+sqlNumeroBase("ws.jid")+` = `+sqlNumeroBase("ba.session_jid")+`
 			 GROUP BY ba.domain
 		),
 		msg AS (
@@ -2636,7 +2676,7 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 			       COUNT(*) FILTER (WHERE m.created_at > NOW() - INTERVAL '30 days')  AS m30
 			  FROM bitrix_accounts ba
 			  JOIN whatsapp_sessions ws
-			    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1) = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+			    ON `+sqlNumeroBase("ws.jid")+` = `+sqlNumeroBase("ba.session_jid")+`
 			  JOIN messages m ON m.session_id = ws.id
 			 GROUP BY ba.domain
 		),

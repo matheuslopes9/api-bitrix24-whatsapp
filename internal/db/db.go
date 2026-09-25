@@ -833,6 +833,16 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			ALTER TABLE bitrix_portals DROP COLUMN IF EXISTS sms_risk_acknowledged;
 			ALTER TABLE tenant_licenses DROP COLUMN IF EXISTS feat_sms;
 		`},
+		{"052_pareamentos", `
+			-- Dono de numero em pareamento, ainda sem bitrix_accounts. Antes so'
+			-- em memoria: um restart entre parear e vincular deixava o numero sem
+			-- dono. Ver db/pareamentos.go.
+			CREATE TABLE IF NOT EXISTS pareamentos (
+				numero    TEXT PRIMARY KEY,
+				dominio   TEXT NOT NULL,
+				criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+		`},
 	}
 
 	for _, m := range migrations {

@@ -242,7 +242,7 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 				msgBody.Text = "📎 Arquivo recebido: " + job.MediaName + "\n⚠️ Não foi possível transferir o arquivo (pode ser muito grande para o Bitrix24 ou o upload expirou)."
 			}
 		} else {
-			msgBody.Files = []ConnectorFile{{Name: job.MediaName, URL: downloadURL}}
+			msgBody.Files = []ConnectorFile{{Name: NomeParaBitrix(job.MediaName), URL: downloadURL}}
 			p.log.Info("media uploaded to disk", zap.String("file", job.MediaName), zap.String("url", downloadURL))
 		}
 	} else if msgBody.Text == "" {

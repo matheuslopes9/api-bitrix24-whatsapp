@@ -91,7 +91,7 @@ func deliverQRInboundViaPublicLink(
 		Message: bitrix.ConnectorMsgBody{
 			ID:    job.MessageID,
 			Text:  job.Text,
-			Files: []bitrix.ConnectorFile{{Name: job.MediaName, URL: publicURL}},
+			Files: []bitrix.ConnectorFile{{Name: bitrix.NomeParaBitrix(job.MediaName), URL: publicURL}},
 		},
 		Chat: bitrix.ConnectorChat{ID: chatExtID},
 	}

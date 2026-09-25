@@ -383,13 +383,16 @@ func (r *Repository) ListBitrixAccountsByDomain(ctx context.Context, domain stri
 // 'failed' nem como 'delivered'.
 func (r *Repository) CountFailedMessagesByDomain(ctx context.Context, domain string, since time.Time) (int, error) {
 	var n int
+	// Casamento pelo numero base (sqlNumeroBase), nao por SPLIT_PART no ':'.
+	// Cortar no primeiro ':' reduzia TODA sessao Cloud API ("cloud:<id>") a
+	// "cloud": cada falha Cloud de um cliente contava pra todos os clientes
+	// com Cloud API.
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*)
 		  FROM messages m
 		  JOIN whatsapp_sessions ws ON m.session_id = ws.id
 		  JOIN bitrix_accounts ba
-		    ON SPLIT_PART(SPLIT_PART(ws.jid,'@',1),':',1)
-		     = SPLIT_PART(SPLIT_PART(ba.session_jid,'@',1),':',1)
+		    ON `+sqlNumeroBase("ws.jid")+` = `+sqlNumeroBase("ba.session_jid")+`
 		 WHERE LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) = LOWER($1)
 		   AND m.status = 'failed'
 		   AND m.created_at >= $2`, domain, since).Scan(&n)

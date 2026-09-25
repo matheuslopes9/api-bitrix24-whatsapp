@@ -67,13 +67,19 @@ func (h *handlers) cloudWebhookReceive(c *fiber.Ctx) error {
 	body := c.Body()
 
 	// Validação de assinatura HMAC-SHA256 (X-Hub-Signature-256: sha256=<hex>).
-	if sess.CloudAppSecret != "" {
-		got := c.Get("X-Hub-Signature-256")
-		if !verifyMetaSignature(sess.CloudAppSecret, body, got) {
-			h.log.Warn("cloud webhook: invalid signature",
-				zap.String("session_id", sessionIDStr))
-			return c.Status(401).SendString("invalid signature")
-		}
+	//
+	// Sem App Secret cadastrado a assinatura era PULADA: bastava o UUID da
+	// sessao pra injetar "mensagens de cliente" no Contact Center. Agora a
+	// sessao sem App Secret recusa — o erro no log diz o que cadastrar.
+	if sess.CloudAppSecret == "" {
+		h.log.Error("cloud webhook: sessao sem App Secret da Meta — evento recusado. Cadastre o App Secret na sessao Cloud API.",
+			zap.String("session_id", sessionIDStr))
+		return c.Status(401).SendString("app secret not configured")
+	}
+	if !verifyMetaSignature(sess.CloudAppSecret, body, c.Get("X-Hub-Signature-256")) {
+		h.log.Warn("cloud webhook: invalid signature",
+			zap.String("session_id", sessionIDStr))
+		return c.Status(401).SendString("invalid signature")
 	}
 
 	// Parse: { object, entry: [ { id, changes: [ { value: { messages, contacts, statuses } } ] } ] }

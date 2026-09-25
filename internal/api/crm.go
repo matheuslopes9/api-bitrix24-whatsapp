@@ -1187,7 +1187,10 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 		lineID = 1
 	}
 
-	operatorName := body.OperatorName
+	// Nome do cadastro do Bitrix (confirmado no handshake), nao o que a tela
+	// manda: operator_name vinha do corpo e qualquer um assinava a mensagem
+	// com o nome de outra pessoa.
+	operatorName := nomeDoOperadorCRM(c)
 	if operatorName == "" {
 		operatorName = "UC Talk"
 	}
@@ -1381,29 +1384,16 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	// ── Fonte 1: banco local ──────────────────────────────────────────────
 	if phone != "" {
 		phoneNorm := normalizeWAPhone(phone)
-		localMsgs, dbErr := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
-		// GetMessagesByPhone casa pelo telefone do CONTATO em toda a tabela.
-		// Sem este filtro a aba mostrava a conversa desse contato com OUTROS
-		// clientes — e oferecia o numero deles como opcao de envio (visto no
-		// homolog: crm.uctechnology.com.br exibindo +558196807479).
-		if dbErr == nil {
-			escopo, eErr := h.escopoRelatorio(c)
-			if eErr != nil {
-				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": eErr.Error()})
-			}
-			aceita := aceitaEscopo(escopo)
-			doPortal := localMsgs[:0]
-			for _, m := range localMsgs {
-				nosso := m.ToJID
-				if m.Direction == db.DirOutbound {
-					nosso = m.FromJID
-				}
-				if aceita(nosso) {
-					doPortal = append(doPortal, m)
-				}
-			}
-			localMsgs = doPortal
+		// So' as conversas dos numeros DESTE portal. Sem escopo, a aba
+		// mostrava a conversa do contato com OUTROS clientes — e oferecia o
+		// numero deles como opcao de envio (visto no homolog:
+		// crm.uctechnology.com.br exibindo +558196807479). O filtro vai na
+		// consulta, antes do LIMIT; ver GetMessagesByPhoneNoEscopo.
+		escopo, eErr := h.escopoRelatorio(c)
+		if eErr != nil {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": eErr.Error()})
 		}
+		localMsgs, dbErr := h.repo.GetMessagesByPhoneNoEscopo(c.Context(), phoneNorm, limit, escopo)
 		h.log.Info("crm history: local db query",
 			zap.String("phone_raw", phone),
 			zap.String("phone_norm", phoneNorm),
@@ -3141,6 +3131,7 @@ BX24.init(function() {
     // cookie que ele devolve. Em paralelo, check-access saia antes do
     // cookie existir e voltava 401.
     handshake.then(function() {
+      garantirAbasCRM();
       return Promise.all([
         fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID)).then(function(r){ return r.json(); }),
         fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); }),
@@ -3175,6 +3166,30 @@ BX24.init(function() {
     });
   });
 });
+
+// garantirAbasCRM registra as abas UC Talk em Contato, Lead e Negocio quando
+// estiverem faltando.
+//
+// O servidor tenta registrar no install, mas com o token do app — que age
+// como quem instalou. Se quem instalou NAO e' admin do portal, placement.bind
+// e' recusado, a falha so' vai pro log e o cliente fica sem a aba (visto em
+// crm.uctechnology.com.br em 25/09). Aqui o registro e' feito com o usuario
+// LOGADO: quando um admin abre o app, as abas aparecem. Silencioso e
+// best-effort — nao atrasa nem bloqueia o painel.
+function garantirAbasCRM() {
+  if (!BX24.isAdmin || !BX24.isAdmin()) return;
+  var alvo = ['CRM_CONTACT_DETAIL_TAB', 'CRM_LEAD_DETAIL_TAB', 'CRM_DEAL_DETAIL_TAB'];
+  var handler = _baseUrl + '/bitrix/crm/tab';
+  BX24.callMethod('placement.get', {}, function(res) {
+    if (res.error()) return;
+    var tem = {};
+    (res.data() || []).forEach(function(p) { if (p.handler === handler) tem[p.placement] = true; });
+    alvo.forEach(function(pl) {
+      if (tem[pl]) return;
+      BX24.callMethod('placement.bind', { PLACEMENT: pl, HANDLER: handler, TITLE: 'UC Talk' }, function() {});
+    });
+  });
+}
 
 function showDenied(msg) {
   document.getElementById('wrap').innerHTML =

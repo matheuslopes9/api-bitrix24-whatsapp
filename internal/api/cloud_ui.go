@@ -41,8 +41,12 @@ func (h *handlers) uiCreateCloudSession(c *fiber.Ctx) error {
 	body.PhoneNumberID = strings.TrimSpace(body.PhoneNumberID)
 	body.AccessToken = strings.TrimSpace(body.AccessToken)
 	body.DisplayPhone = strings.TrimSpace(body.DisplayPhone)
-	if body.PhoneNumberID == "" || body.AccessToken == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "phone_number_id e access_token são obrigatórios"})
+	body.AppSecret = strings.TrimSpace(body.AppSecret)
+	// app_secret obrigatorio: e' com ele que o webhook confere que a mensagem
+	// veio da Meta. Sem ele o webhook recusa tudo (ver cloudWebhookReceive) —
+	// melhor avisar aqui do que a sessao nunca receber nada.
+	if body.PhoneNumberID == "" || body.AccessToken == "" || body.AppSecret == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "phone_number_id, access_token e app_secret são obrigatórios"})
 	}
 	if body.VerifyToken == "" {
 		body.VerifyToken = randomHex(16)

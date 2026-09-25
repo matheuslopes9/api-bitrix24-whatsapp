@@ -22,6 +22,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -92,7 +93,13 @@ func (h *handlers) numerosDoTenant(c *fiber.Ctx) (map[string]bool, error) {
 			meus[n] = true
 		}
 	}
-	// Pareamento em curso: ainda sem vinculo em bitrix_accounts.
+	// Pareamento em curso: ainda sem vinculo em bitrix_accounts. Do banco
+	// (sobrevive ao restart) e da memoria (o que acabou de ser pedido).
+	if pend, err := h.repo.PareamentosDoDominio(c.Context(), dominio); err == nil {
+		for _, n := range pend {
+			meus[n] = true
+		}
+	}
 	h.pareamentos.Range(func(k, v any) bool {
 		if fone, ok := k.(string); ok {
 			if dono, ok := v.(string); ok && dono == dominio {
@@ -124,11 +131,20 @@ func (h *handlers) registrarPareamento(dominio, fone string) {
 		return
 	}
 	h.pareamentos.Store(numeroBase(fone), dominio)
+	// Tambem no banco: em memoria o registro morria no restart e o numero
+	// ficava sem dono. Falha aqui nao impede o pareamento — so' volta ao
+	// comportamento antigo para este numero.
+	if h.repo != nil {
+		_ = h.repo.SalvarPareamento(context.Background(), numeroBase(fone), dominio)
+	}
 }
 
 // esquecerPareamento limpa a intencao quando ela deixa de ser necessaria.
 func (h *handlers) esquecerPareamento(fone string) {
 	h.pareamentos.Delete(numeroBase(fone))
+	if h.repo != nil {
+		_ = h.repo.ApagarPareamento(context.Background(), numeroBase(fone))
+	}
 }
 
 // filtrarSessoesDoTenant reduz uma lista de JIDs aos que sao do chamador.
