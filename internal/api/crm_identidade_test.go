@@ -137,3 +137,43 @@ func TestEscoparAoTenantRecusaOutroPortal(t *testing.T) {
 		t.Errorf("sem domain: %d %q — esperado portal do cookie preenchido na query e no corpo", st, corpo)
 	}
 }
+
+// Visto no homolog em 25/09: um POST anonimo em /bitrix/connector/event,
+// sem auth[domain], saiu de verdade pelo WhatsApp. Sem dominio nao ha' como
+// saber de quem e' o evento — recusado em qualquer modo.
+func TestEventoSemDominioEhRecusado(t *testing.T) {
+	for _, modo := range []string{"", "exigir", "observar"} {
+		t.Setenv("CONNECTOR_EVENT_TOKEN", modo)
+		h := handlersDeTeste()
+		app := fiber.New()
+		app.Post("/evt", func(c *fiber.Ctx) error {
+			if h.eventoPodeUsarSessao(c, "551920187040:4@s.whatsapp.net") {
+				return c.SendString("enviaria")
+			}
+			return c.SendString("recusado")
+		})
+		req := httptest.NewRequest("POST", "/evt", strings.NewReader("data[CONNECTOR]=wa_qr_551920187040&data[MESSAGES][0][message][text]=forjado"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if string(b) != "recusado" {
+			t.Errorf("modo %q: evento sem auth[domain] %s", modo, b)
+		}
+	}
+}
+
+// "observar" deixava forjar resposta de operador por quem soubesse o dominio.
+// O padrao tem que ser exigir a prova.
+func TestModoPadraoExigeProva(t *testing.T) {
+	t.Setenv("CONNECTOR_EVENT_TOKEN", "")
+	if modoTokenDoEvento() != "exigir" {
+		t.Fatal("padrao deveria ser exigir")
+	}
+	t.Setenv("CONNECTOR_EVENT_TOKEN", "OBSERVAR")
+	if modoTokenDoEvento() != "observar" {
+		t.Fatal("valvula de emergencia nao funciona")
+	}
+}

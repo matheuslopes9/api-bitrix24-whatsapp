@@ -22,11 +22,16 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.uber.org/zap"
@@ -195,19 +200,54 @@ func aceitaEscopo(e db.EscopoNumeros) func(string) bool {
 // garanteWhatsApp evita nil deref em instalacao sem manager (teste/dev).
 func (h *handlers) garanteWhatsApp() *whatsapp.Manager { return h.waManager }
 
-// modoTokenDoEvento controla a checagem do application_token nos eventos do
-// Contact Center (CONNECTOR_EVENT_TOKEN = "observar" | "exigir").
+// modoTokenDoEvento controla a prova de origem dos eventos do Contact Center
+// (CONNECTOR_EVENT_TOKEN = "exigir" | "observar"). Padrao: exigir.
 //
-// Comeca em "observar" de proposito: as respostas do operador chegam pelo
-// evento do APP LOCAL, e o application_token gravado pode ser o do Partner
-// App — o codigo convive com os dois. Exigir sem conferir isso cortaria toda
-// resposta de operador em producao. Em "observar" a divergencia vai pro log;
-// com o log limpo, muda-se pra "exigir".
+// A primeira versao comecava em "observar" pra nao cortar resposta de
+// operador caso o application_token gravado fosse o do Partner App e o
+// evento viesse do app local. Mas "observar" deixava o furo aberto: quem
+// soubesse o dominio de um cliente enviava pelo numero dele — confirmado
+// no homolog em 25/09. Agora a prova aceita tambem o access_token do evento,
+// conferido no proprio portal, entao a divergencia de application_token nao
+// corta atendimento. "observar" fica so' como valvula de emergencia.
 func modoTokenDoEvento() string {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CONNECTOR_EVENT_TOKEN")), "exigir") {
-		return "exigir"
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CONNECTOR_EVENT_TOKEN")), "observar") {
+		return "observar"
 	}
-	return "observar"
+	return "exigir"
+}
+
+// tokensDeEventoConfirmados guarda access_tokens ja' conferidos no portal,
+// pra nao chamar o Bitrix a cada resposta de operador. Token do Bitrix vale
+// 1h; o cache vale menos que isso.
+var tokensDeEventoConfirmados sync.Map // sha256(dominio|token) -> validade
+
+const validadeTokenDeEvento = 30 * time.Minute
+
+// eventoTemProvaDoPortal: o evento prova que veio do portal se o
+// application_token bate OU se o access_token e' aceito pelo proprio portal.
+func (h *handlers) eventoTemProvaDoPortal(c *fiber.Ctx, dominio string) (bool, string) {
+	accessTok := strings.TrimSpace(c.FormValue("auth[access_token]"))
+	if _, err := h.validateBitrixAppToken(c.Context(), dominio, c.FormValue("auth[application_token]"), accessTok); err == nil {
+		return true, "application_token"
+	}
+	if accessTok == "" {
+		return false, "sem access_token e application_token nao confere"
+	}
+	soma := sha256.Sum256([]byte(dominio + "|" + accessTok))
+	chave := hex.EncodeToString(soma[:])
+	if v, ok := tokensDeEventoConfirmados.Load(chave); ok {
+		if ate, _ := v.(time.Time); time.Now().Before(ate) {
+			return true, "access_token (cache)"
+		}
+		tokensDeEventoConfirmados.Delete(chave)
+	}
+	ident, err := bitrix.VerificarToken(c.Context(), dominio, accessTok)
+	if err != nil || ident.Dominio != dominio {
+		return false, "access_token recusado pelo portal"
+	}
+	tokensDeEventoConfirmados.Store(chave, time.Now().Add(validadeTokenDeEvento))
+	return true, "access_token"
 }
 
 // eventoPodeUsarSessao decide se um evento de resposta do operador pode
@@ -218,15 +258,19 @@ func modoTokenDoEvento() string {
 // WhatsApp dele. Aqui:
 //   - o dominio do evento TEM que ser o dono do numero. Isso vale sempre:
 //     evento legitimo vem do portal que tem o conector, nunca de outro;
-//   - o application_token e' conferido conforme modoTokenDoEvento.
+//   - a origem tem que ser provada (eventoTemProvaDoPortal).
 func (h *handlers) eventoPodeUsarSessao(c *fiber.Ctx, sessionJID string) bool {
 	dominio := normalizePortalDomain(c.FormValue("auth[domain]"))
 	exigir := modoTokenDoEvento() == "exigir"
 	if dominio == "" {
-		// Payload JSON (connector.data.set send_message) nao traz auth.
-		h.log.Warn("connector event: sem auth[domain] — origem nao verificavel",
-			zap.String("session_jid", sessionJID), zap.String("modo", modoTokenDoEvento()))
-		return !exigir
+		// Recusado SEMPRE, em qualquer modo. A primeira versao deixava
+		// passar em "observar" — e bastava OMITIR auth[domain] pra pular a
+		// checagem de dono: no homolog, um POST anonimo com so' conector,
+		// chat e texto saiu de verdade pelo WhatsApp (25/09). Evento
+		// legitimo do Bitrix sempre traz auth[domain].
+		h.log.Error("connector event: sem auth[domain] — descartado",
+			zap.String("session_jid", sessionJID))
+		return false
 	}
 	contas, err := h.repo.ListBitrixAccountsByDomain(c.Context(), dominio)
 	if err != nil {
@@ -247,12 +291,14 @@ func (h *handlers) eventoPodeUsarSessao(c *fiber.Ctx, sessionJID string) bool {
 			zap.String("domain", dominio), zap.String("session_jid", sessionJID))
 		return false
 	}
-	accessTok := c.FormValue("auth[access_token]")
-	if _, err := h.validateBitrixAppToken(c.Context(), dominio, c.FormValue("auth[application_token]"), accessTok); err != nil {
-		h.log.Warn("connector event: application_token nao confere",
-			zap.String("domain", dominio), zap.String("modo", modoTokenDoEvento()), zap.Error(err))
+	ok, via := h.eventoTemProvaDoPortal(c, dominio)
+	if !ok {
+		h.log.Error("connector event: sem prova de origem — descartado",
+			zap.String("domain", dominio), zap.String("session_jid", sessionJID),
+			zap.String("motivo", via), zap.String("modo", modoTokenDoEvento()))
 		return !exigir
 	}
+	h.log.Info("connector event: origem confirmada", zap.String("domain", dominio), zap.String("via", via))
 	return true
 }
 

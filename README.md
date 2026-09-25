@@ -237,7 +237,7 @@ Segurança dos eventos do Bitrix:
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `CONNECTOR_EVENT_TOKEN` | `observar` | `exigir` recusa resposta de operador cujo `application_token` não confere. Em `observar` só registra no log — mude para `exigir` depois de ver o log limpo (o evento vem do app local, e o token gravado pode ser o do Partner App). |
+| `CONNECTOR_EVENT_TOKEN` | `exigir` | Resposta de operador só sai se o evento provar que veio do portal: `application_token` igual ao gravado **ou** `access_token` aceito pelo próprio portal (conferido em `/rest/profile`, com cache de 30min). `observar` desliga a exigência — só como válvula de emergência, porque deixa qualquer um que saiba o domínio do cliente enviar pelo número dele. |
 | `BITRIX_DOMINIOS_REDE_INTERNA` | vazio | Portais on-premise que resolvem para IP interno. Sem isso a verificação de token recusa o endereço (proteção contra SSRF) e o portal fica sem login. Separados por vírgula. |
 
 ### 2. `uctalk_email` — o proxy de e-mail

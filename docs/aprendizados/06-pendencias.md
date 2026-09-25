@@ -46,11 +46,11 @@ Corrigido em 25/09:
 
 Ainda aberto:
 
-- [ ] **`CONNECTOR_EVENT_TOKEN=exigir`.** Hoje em `observar`: o domínio do
-      evento já é conferido contra o dono do número, mas `application_token`
-      divergente só vai pro log. Procurar no log por
-      `connector event: application_token nao confere` — sem ocorrência em
-      evento legítimo, mudar para `exigir`.
+- [x] **Resposta de operador forjada.** Em `observar`, bastava omitir
+      `auth[domain]` (ou saber o domínio do cliente) para enviar pelo número
+      dele — **confirmado no homolog**: um POST anônimo saiu pelo WhatsApp.
+      Agora sem domínio é recusado sempre, e a origem precisa de prova
+      (`application_token` ou `access_token` conferido no portal).
 - [ ] Nome do operador (`operator_name`) ainda vem da tela.
 - [ ] `/webhook/cloud/:id` pula a assinatura se `CloudAppSecret` estiver vazio.
 - [ ] `APP_SECRET` vazio libera `/wa/*` e `/stats/*` — falhar no boot.

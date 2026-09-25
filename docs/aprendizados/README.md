@@ -31,5 +31,5 @@ que a lição sobreviva mesmo depois que o código mudar.
 ## Como atualizar o grafo depois de editar estes docs
 
 ```bash
-graphify . --update    # re-extrai só o que mudou e atualiza graphify-out/
+graphify update .    # re-extrai o código (sem LLM) e atualiza graphify-out/
 ```

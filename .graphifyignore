@@ -1,0 +1,11 @@
+# Fora do grafo de conhecimento (sintaxe do .gitignore).
+
+# Chart.js minificado: vira dezenas de "comunidades" de funcoes de uma letra
+# (an, ns, zt...) que aparecem ate' entre os nos mais conectados e escondem
+# a estrutura real do sistema.
+internal/api/assets/
+
+# Codigo morto: as migrations que valem estao em internal/db/db.go.
+migrations/
+
+graphify-out/
