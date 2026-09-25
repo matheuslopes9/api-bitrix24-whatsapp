@@ -288,6 +288,8 @@ func (h *handlers) handleCloudInboundMessage(ctx context.Context, sess *db.Whats
 		MessageType: msgType,
 		Content:     text,
 		MediaMime:   mediaMime,
+		MediaURL:    h.salvarMidia(mediaName, mediaMime, mediaData),
+		MediaSize:   int64(len(mediaData)),
 		Status:      db.MsgReceived,
 		SentAt:      &now,
 	}

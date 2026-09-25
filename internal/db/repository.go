@@ -936,7 +936,7 @@ type StatsRow struct {
 	AvgResponseSecs float64   `db:"avg_response_secs" json:"avg_response_secs"`
 }
 
-func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, error) {
+func (r *Repository) GetDailyStats(ctx context.Context, days int, escopo EscopoNumeros) ([]StatsRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			DATE(created_at)            AS date,
@@ -946,9 +946,10 @@ func (r *Repository) GetDailyStats(ctx context.Context, days int) ([]StatsRow, e
 			0::float8                   AS avg_response_secs
 		FROM messages
 		WHERE created_at >= NOW() - make_interval(days => $1)
+		  AND `+filtroEscopo(2, 3)+`
 		GROUP BY DATE(created_at)
 		ORDER BY date DESC
-	`, fmt.Sprintf("%d", days))
+	`, fmt.Sprintf("%d", days), escopo.Todos, escopo.Numeros)
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1001,7 @@ type StatsContactRow struct {
 	OutboundCount int64  `db:"outbound_count" json:"outbound_count"`
 }
 
-func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSessionRow, error) {
+func (r *Repository) GetStatsBySession(ctx context.Context, days int, escopo EscopoNumeros) ([]StatsSessionRow, error) {
 	// Agrupa pelo telefone do "nosso" lado:
 	//   - outbound: from_jid (a sessao enviou)
 	//   - inbound:  to_jid   (a sessao recebeu)
@@ -1019,6 +1020,7 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 			WHERE created_at >= NOW() - make_interval(days => $1)
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END IS NOT NULL
 			  AND CASE WHEN direction = 'outbound' THEN from_jid ELSE to_jid END != ''
+			  AND `+filtroEscopo(2, 3)+`
 		),
 		msg_norm AS (
 			SELECT
@@ -1067,7 +1069,7 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 		WHERE m.norm_jid <> ''
 		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
-	`, fmt.Sprintf("%d", days))
+	`, fmt.Sprintf("%d", days), escopo.Todos, escopo.Numeros)
 	if err != nil {
 		return nil, err
 	}
@@ -1083,7 +1085,7 @@ func (r *Repository) GetStatsBySession(ctx context.Context, days int) ([]StatsSe
 	return out, nil
 }
 
-func (r *Repository) GetStatsByType(ctx context.Context, days int) ([]StatsTypeRow, error) {
+func (r *Repository) GetStatsByType(ctx context.Context, days int, escopo EscopoNumeros) ([]StatsTypeRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			message_type,
@@ -1092,9 +1094,10 @@ func (r *Repository) GetStatsByType(ctx context.Context, days int) ([]StatsTypeR
 			SUM(CASE WHEN direction = 'outbound' THEN 1 ELSE 0 END) AS outbound_count
 		FROM messages
 		WHERE created_at >= NOW() - make_interval(days => $1)
+		  AND `+filtroEscopo(2, 3)+`
 		GROUP BY message_type
 		ORDER BY total_messages DESC
-	`, fmt.Sprintf("%d", days))
+	`, fmt.Sprintf("%d", days), escopo.Todos, escopo.Numeros)
 	if err != nil {
 		return nil, err
 	}
@@ -1110,16 +1113,17 @@ func (r *Repository) GetStatsByType(ctx context.Context, days int) ([]StatsTypeR
 	return out, nil
 }
 
-func (r *Repository) GetStatsByHour(ctx context.Context, days int) ([]StatsHourRow, error) {
+func (r *Repository) GetStatsByHour(ctx context.Context, days int, escopo EscopoNumeros) ([]StatsHourRow, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			EXTRACT(HOUR FROM created_at)::int AS hour,
 			COUNT(*)                           AS total_messages
 		FROM messages
 		WHERE created_at >= NOW() - make_interval(days => $1)
+		  AND `+filtroEscopo(2, 3)+`
 		GROUP BY hour
 		ORDER BY hour
-	`, fmt.Sprintf("%d", days))
+	`, fmt.Sprintf("%d", days), escopo.Todos, escopo.Numeros)
 	if err != nil {
 		return nil, err
 	}
@@ -1135,7 +1139,7 @@ func (r *Repository) GetStatsByHour(ctx context.Context, days int) ([]StatsHourR
 	return out, nil
 }
 
-func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]StatsContactRow, error) {
+func (r *Repository) GetTopContacts(ctx context.Context, days, limit int, escopo EscopoNumeros) ([]StatsContactRow, error) {
 	// Agrupa pelo telefone do contato (o "outro lado"):
 	//   - outbound: to_jid   (nos enviamos PARA ele)
 	//   - inbound:  from_jid (ele enviou PARA nos)
@@ -1154,6 +1158,9 @@ func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]Sta
 			WHERE created_at >= NOW() - make_interval(days => $1)
 			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END IS NOT NULL
 			  AND CASE WHEN direction = 'outbound' THEN to_jid ELSE from_jid END != ''
+			  -- O escopo filtra pelo NOSSO lado (o numero do cliente UC Talk),
+			  -- nao pelo contato: e' isso que diz de quem e' a conversa.
+			  AND `+filtroEscopo(2, 3)+`
 		)
 		SELECT
 			m.norm_jid                                              AS wa_jid,
@@ -1172,8 +1179,8 @@ func (r *Repository) GetTopContacts(ctx context.Context, days, limit int) ([]Sta
 		WHERE m.norm_jid <> '' AND m.norm_jid LIKE '%@%'
 		GROUP BY m.norm_jid
 		ORDER BY total_messages DESC
-		LIMIT $2
-	`, fmt.Sprintf("%d", days), limit)
+		LIMIT $4
+	`, fmt.Sprintf("%d", days), escopo.Todos, escopo.Numeros, limit)
 	if err != nil {
 		return nil, err
 	}

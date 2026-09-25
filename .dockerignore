@@ -19,6 +19,6 @@
 .gitignore
 .claude/
 sessions/
-media/
+/media/
 *_test.go
 README.md

@@ -62,7 +62,12 @@ type RedisConfig struct {
 type WhatsAppConfig struct {
 	SessionsDir string
 	MediaDir    string
-	LogLevel    string
+	// MediaMaxMB: acima disso o arquivo nao e' guardado pra aba do CRM
+	// (continua indo pro Bitrix normalmente). MediaRetentionDays: por quanto
+	// tempo os arquivos ficam no volume.
+	MediaMaxMB         int
+	MediaRetentionDays int
+	LogLevel           string
 }
 
 type BitrixConfig struct {
@@ -121,9 +126,11 @@ func Load() (*Config, error) {
 			// depende do working directory do processo — se divergir de /app,
 			// os arquivos .db do whatsmeow (chaves de cripto) vao pra outro
 			// lugar que NAO e' o volume, e o QR cai a cada deploy.
-			SessionsDir: getEnvWithDefault("WA_SESSIONS_DIR", "/app/sessions"),
-			MediaDir:    getEnvWithDefault("WA_MEDIA_DIR", "/app/media"),
-			LogLevel:    getEnvWithDefault("WA_LOG_LEVEL", "INFO"),
+			SessionsDir:        getEnvWithDefault("WA_SESSIONS_DIR", "/app/sessions"),
+			MediaDir:           getEnvWithDefault("WA_MEDIA_DIR", "/app/media"),
+			MediaMaxMB:         getIntWithDefault("MEDIA_MAX_MB", 64),
+			MediaRetentionDays: getIntWithDefault("MEDIA_RETENTION_DAYS", 90),
+			LogLevel:           getEnvWithDefault("WA_LOG_LEVEL", "INFO"),
 		},
 		Bitrix: BitrixConfig{
 			Domain:       viper.GetString("BITRIX_DOMAIN"),

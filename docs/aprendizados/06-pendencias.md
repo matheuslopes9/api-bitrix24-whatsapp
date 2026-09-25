@@ -26,6 +26,44 @@ Vários segredos circularam em chat durante o desenvolvimento e a operação.
 
 ---
 
+## 🔴 Segurança — identidade do tenant (auditoria de 25/09)
+
+A auditoria de rotas achou que **a identidade do cliente não é verificada**.
+Já corrigido: `/debug/*`, `/sim/*` e `/bitrix/webhook` públicos; relatórios e
+painel globais. Ainda aberto, em ordem:
+
+- [ ] **`POST /bitrix/auth` emite cookie de cliente sem validar o token.**
+      Qualquer um manda `{domain: vítima, access_token: lixo}`, recebe o
+      cookie da vítima e **sobrescreve o token real** — derruba a integração
+      dela. Todo o isolamento do `/ui/*` depende desse cookie. Correção:
+      chamar `app.info`/`profile` no Bitrix com o token recebido e conferir
+      domínio e `member_id` antes de gravar e antes de emitir o cookie.
+- [ ] **`/bitrix/install` e `/bitrix/callback`** gravam tokens e
+      `application_token` sem validação. Mesma correção.
+- [ ] **`/bitrix/connector/event`** não confere `application_token`: dá pra
+      forjar resposta de operador e enviar pela sessão de outro cliente.
+- [ ] **`/bitrix/crm/*`** confia no `?domain=` e no `user_id` informados por
+      quem chama. `crm/history` usa `GetMessagesByPhone`, sem filtro de
+      tenant — **visto no homolog**: a aba do CRM do portal
+      crm.uctechnology.com.br mostrava as conversas e o número (+558196807479)
+      de outro cliente, com opção de enviar por ele.
+- [ ] **`/ui/bitrix/accounts` e `/ui/bitrix/queues*`** aceitam `session_jid`
+      e domínio de outro tenant (listar, vincular, desvincular).
+- [ ] `/bitrix/partner/link` transfere número de outro tenant (match por
+      prefixo do telefone).
+
+---
+
+## 🟡 Bitrix — abas do CRM não registradas
+
+O app instalado por usuário **não administrador** não consegue fazer
+`placement.bind`: as abas UC Talk em contato, lead e negócio simplesmente não
+aparecem, e a falha só vai para o log. Visto em crm.uctechnology.com.br em
+25/09 — registrado à mão com um usuário admin via BX24. Precisa virar aviso na
+Saúde do cliente e ação de "registrar abas" que use o usuário logado.
+
+---
+
 ## 🔴 Banco de dados — investigar
 
 Em 24/09 o Postgres entrou em **recovery mode** e demorou mais de 10 minutos

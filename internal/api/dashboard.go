@@ -89,10 +89,19 @@ func dashboardCallerAllowed(c *fiber.Ctx, secret string) bool {
 // whatsmeow em memoria, ignora Cloud API. Tenants que so usam Cloud
 // apareciam como "0 sessões ativas / Sem sessão" mesmo com a sessao
 // funcionando.
+//
+// Tudo aqui e' do tenant que chamou. Ate' a correcao, os numeros, as filas
+// e a contagem de mensagens eram do sistema inteiro: o portal
+// crm.uctechnology.com.br, sem nenhum numero proprio, exibia como
+// "conectado" o numero de outro cliente.
 func (h *handlers) uiOverview(c *fiber.Ctx) error {
-	in, out, dead := h.q.Lengths(c.Context())
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	in, out, dead := h.q.LengthsDe(c.Context(), aceitaEscopo(escopo))
 
-	stats, _ := h.repo.GetDailyStats(c.Context(), 1)
+	stats, _ := h.repo.GetDailyStats(c.Context(), 1, escopo)
 	var msgsIn, msgsOut int64
 	for _, s := range stats {
 		msgsIn += s.InboundCount
@@ -100,9 +109,12 @@ func (h *handlers) uiOverview(c *fiber.Ctx) error {
 	}
 
 	dbSessions, _ := h.repo.ListActiveSessions(c.Context())
+	aceita := aceitaEscopo(escopo)
 	jids := make([]string, 0, len(dbSessions))
 	for _, s := range dbSessions {
-		jids = append(jids, s.JID)
+		if aceita(s.JID) {
+			jids = append(jids, s.JID)
+		}
 	}
 
 	return c.JSON(fiber.Map{

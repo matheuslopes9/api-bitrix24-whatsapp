@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 	"go.uber.org/zap"
@@ -1441,20 +1442,34 @@ func localMsgsToCRM(msgs []db.Message) []crmMessage {
 			ourJID = m.ToJID
 		}
 		kind, phone := classifySessionJID(ourJID)
-		out = append(out, crmMessage{
+		cm := crmMessage{
 			ID:           m.WAMessageID,
 			Direction:    string(m.Direction),
 			Type:         msgType,
 			Content:      m.Content,
 			MediaURL:     m.MediaURL,
 			MediaMime:    m.MediaMime,
+			MediaSize:    m.MediaSize,
 			AuthorName:   m.AuthorName,
 			Status:       string(m.Status),
 			CreatedAt:    m.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			SessionJID:   ourJID,
 			SessionPhone: phone,
 			Kind:         kind,
-		})
+		}
+		// Arquivo guardado por nos: a tela recebe o id, nunca o caminho em
+		// disco — quem entrega e' /ui/media/:id, que confere o dono.
+		switch {
+		case strings.HasPrefix(m.MediaURL, media.PrefixoLocal):
+			cm.MediaURL = ""
+			cm.MediaID = m.ID.String()
+			cm.MediaName = media.NomeDaRef(m.MediaURL)
+		case strings.HasPrefix(m.MediaURL, media.PrefixoGrande):
+			cm.MediaURL = ""
+			cm.MediaName = media.NomeDaRef(m.MediaURL)
+			cm.MediaGrande = true
+		}
+		out = append(out, cm)
 	}
 	return out
 }
@@ -1651,7 +1666,14 @@ type crmMessage struct {
 	Content    string `json:"content"`
 	MediaURL   string `json:"media_url,omitempty"`
 	MediaMime  string `json:"media_mime,omitempty"`
-	AuthorID   string `json:"author_id,omitempty"`
+	// MediaID: id da mensagem pra buscar o arquivo em /ui/media/:id. Vazio
+	// quando nao ha arquivo guardado do nosso lado.
+	MediaID   string `json:"media_id,omitempty"`
+	MediaName string `json:"media_name,omitempty"`
+	MediaSize int64  `json:"media_size,omitempty"`
+	// MediaGrande: arquivo acima do limite, que so' existe no Contact Center.
+	MediaGrande bool   `json:"media_grande,omitempty"`
+	AuthorID    string `json:"author_id,omitempty"`
 	AuthorName string `json:"author_name,omitempty"`
 	Status     string `json:"status"`
 	CreatedAt  string `json:"created_at"`
@@ -2015,6 +2037,14 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 .bst{font-size:11px;line-height:1}
 .bst.sent{color:#94a3b8}.bst.delivered{color:#94a3b8}.bst.failed{color:#f87171}
 .bmedia{display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:11px;font-style:italic;margin-bottom:2px}
+.bimg{display:block;max-width:240px;max-height:240px;border-radius:8px;cursor:zoom-in;margin-bottom:2px}
+.baudio{display:block;width:240px;max-width:100%;height:36px}
+.bvideo{display:block;max-width:260px;max-height:260px;border-radius:8px;background:#000}
+.bfile{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.06);color:#e2e8f0;text-decoration:none;max-width:260px}
+.bfile:hover{background:rgba(255,255,255,.1)}
+.bfile-ic{font-size:18px;flex-shrink:0}
+.bfile-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+.bfile-sz{flex-shrink:0;font-size:10.5px;color:#94a3b8}
 
 /* compositor */
 .composer{background:#1e2736;border-top:1px solid #2d3a4e;padding:8px 12px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
@@ -2651,12 +2681,7 @@ function renderSessionMessages() {
     var st = isOut ? '<span class="bst delivered">✓✓</span>' : '';
     var content = '';
     if (m.type && m.type !== 'text') {
-      var icon = mediaIcon(m.type);
-      if (m.media_url) {
-        content = '<a href="' + esc(m.media_url) + '" target="_blank" style="display:flex;align-items:center;gap:5px;color:#60a5fa;text-decoration:none;">' + icon + ' ' + mediaLabel(m.type) + '</a>';
-      } else {
-        content = '<div class="bmedia">' + icon + ' ' + mediaLabel(m.type) + '</div>';
-      }
+      content = renderMidia(m);
       if (m.content) content += '<div style="margin-top:3px">' + esc(m.content) + '</div>';
     } else {
       content = esc(m.content || '');
@@ -2803,6 +2828,58 @@ function mediaIcon(t){
 function mediaLabel(t){
   var l={image:'Imagem',video:'Vídeo',audio:'Áudio',document:'Documento',sticker:'Sticker'};
   return l[t]||'Arquivo';
+}
+
+// escAttr: esc() nao escapa aspas, e o nome do arquivo vem do cliente final
+// — dentro de atributo, uma aspa no nome fecharia o atributo.
+function escAttr(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function tamanhoLegivel(b){
+  if (!b) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return Math.round(b/1024) + ' KB';
+  return (b/1048576).toFixed(1).replace('.', ',') + ' MB';
+}
+
+// renderMidia desenha o arquivo da mensagem. O arquivo vem de /ui/media/:id,
+// que so' entrega mensagem de numero do proprio portal. Mensagens antigas
+// (de antes de guardarmos arquivos) nao tem media_id e ficam so' no rotulo.
+function renderMidia(m){
+  var icon = mediaIcon(m.type), label = mediaLabel(m.type);
+  var nome = m.media_name || label;
+  if (m.media_id) {
+    var src = '/ui/media/' + encodeURIComponent(m.media_id);
+    if (m.type === 'image' || m.type === 'sticker') {
+      return '<a href="' + src + '" target="_blank" rel="noopener"><img class="bimg" src="' + src + '" loading="lazy" alt="' + escAttr(nome) + '" onerror="midiaFalhou(this)"></a>';
+    }
+    if (m.type === 'audio') {
+      return '<audio class="baudio" controls preload="none" src="' + src + '" onerror="midiaFalhou(this)"></audio>';
+    }
+    if (m.type === 'video') {
+      return '<video class="bvideo" controls preload="metadata" src="' + src + '" onerror="midiaFalhou(this)"></video>';
+    }
+    return '<a class="bfile" href="' + src + '?baixar=1" target="_blank" rel="noopener">'
+         + '<span class="bfile-ic">' + icon + '</span>'
+         + '<span class="bfile-nm">' + esc(nome) + '</span>'
+         + '<span class="bfile-sz">' + tamanhoLegivel(m.media_size) + '</span></a>';
+  }
+  if (m.media_grande) {
+    return '<div class="bmedia">' + icon + ' ' + esc(nome) + ' (' + tamanhoLegivel(m.media_size) + ') — arquivo grande, abra pelo Contact Center</div>';
+  }
+  if (m.media_url && /^https:\/\//i.test(m.media_url)) {
+    return '<a href="' + escAttr(m.media_url) + '" target="_blank" rel="noopener" class="bfile"><span class="bfile-ic">' + icon + '</span><span class="bfile-nm">' + label + '</span></a>';
+  }
+  return '<div class="bmedia">' + icon + ' ' + (m.media_name ? esc(m.media_name) : label) + '</div>';
+}
+
+// Arquivo que nao carrega (retencao ja' apagou, ou sem permissao): troca o
+// player quebrado por um aviso, em vez de deixar um quadro vazio.
+function midiaFalhou(el){
+  var a = el.closest('a') || el;
+  var d = document.createElement('div');
+  d.className = 'bmedia';
+  d.textContent = '📎 Arquivo indisponível (pode ter expirado)';
+  a.replaceWith(d);
 }
 
 // ── Templates (quick replies) ────────────────────────────────────────────

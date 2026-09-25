@@ -553,6 +553,32 @@ func (q *Queue) Lengths(ctx context.Context) (inbound, outbound, dead int64) {
 	return
 }
 
+// LengthsDe conta, em cada fila, so' os jobs cuja sessao o filtro aceita.
+//
+// Existe porque Lengths e' global: o painel do cliente mostrava a fila e as
+// falhas de TODOS os clientes como se fossem dele. Le as listas inteiras, o
+// que e' aceitavel porque entrada e saida ficam perto de zero em operacao
+// normal e a dead queue e' justamente o que precisa estar pequena.
+func (q *Queue) LengthsDe(ctx context.Context, aceita func(sessionJID string) bool) (inbound, outbound, dead int64) {
+	contar := func(key string) int64 {
+		itens, err := q.rdb.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			return 0
+		}
+		var n int64
+		for _, s := range itens {
+			var j struct {
+				SessionJID string `json:"session_jid"`
+			}
+			if json.Unmarshal([]byte(s), &j) == nil && aceita(j.SessionJID) {
+				n++
+			}
+		}
+		return n
+	}
+	return contar(keyInbound), contar(keyOutbound), contar(keyDead)
+}
+
 // Ping verifica conectividade com o Redis (pro monitoramento do admin).
 func (q *Queue) Ping(ctx context.Context) error {
 	return q.rdb.Ping(ctx).Err()

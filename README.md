@@ -223,6 +223,16 @@ cliente → Credenciais do app**. A env global só serve quando há um app únic
 As de e-mail (`SMTP_HOST`, `EMAIL_SENDER`, `ALERT_RECIPIENTS`) também são
 opcionais — valem como carga inicial da aba **Alertas**.
 
+**Volumes** — os dois precisam ser persistentes:
+
+| Mount path | Para quê |
+|---|---|
+| `/app/sessions` | Pareamento do WhatsApp. Sem volume, todo deploy pede QR de novo. |
+| `/app/media` | Arquivos das conversas, exibidos na aba do CRM. Sem volume, somem a cada deploy. |
+
+Arquivos: `MEDIA_MAX_MB` (padrão 64 — acima disso o arquivo vai só pro Bitrix)
+e `MEDIA_RETENTION_DAYS` (padrão 90 — depois disso a mensagem fica, o arquivo não).
+
 ### 2. `uctalk_email` — o proxy de e-mail
 
 Mesmo repositório, com **Build Path `tools/oauth2-email-service`**.
@@ -326,6 +336,16 @@ apagada por engano junto de um bloco substituído.
   pareamento.
 - `tools/**/.env`, `tools/*.msg` e certificados estão no `.gitignore`.
 - O painel admin é o único com `X-Frame-Options: DENY`; o resto roda em iframe.
+- `/debug/*`, `/sim/*` e `/bitrix/webhook` exigem login do admin. Eram
+  públicos: permitiam chamar qualquer método REST no Bitrix de qualquer
+  cliente e enviar WhatsApp por qualquer número.
+- Relatórios e o painel do cliente são **filtrados pelo portal**
+  (`internal/db/escopo.go`). O escopo vazio não enxerga nada — relatório de
+  todos os clientes só com `X-API-Key`.
+- Arquivos das conversas (`/ui/media/:id`) só saem para o portal dono do
+  número, e só abrem no navegador tipos seguros (imagem, áudio, vídeo, PDF).
+  O resto vai como download: o arquivo vem do cliente final e um `.html`
+  aberto na nossa origem rodaria script com o cookie do operador.
 
 ---
 

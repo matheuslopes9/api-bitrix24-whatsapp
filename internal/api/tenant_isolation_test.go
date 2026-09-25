@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+)
 
 // numeroBase e' a CHAVE de comparacao do isolamento entre clientes. Se ela
 // normalizar errado, o efeito e' um dos dois desastres:
@@ -74,5 +78,41 @@ func TestJIDCloudNaoViraVazio(t *testing.T) {
 	outro := numeroBase("cloud:987654321@s.whatsapp.net")
 	if got == outro {
 		t.Fatalf("dois phone_id distintos colidiram em %q", got)
+	}
+}
+
+// O escopo vazio de relatorio NAO pode enxergar nada. E' a garantia de que
+// um handler que esqueca de preencher o escopo mostre tela vazia — e nao o
+// banco inteiro, que foi o bug dos relatorios e do /ui/overview.
+func TestEscopoVazioNaoAceitaNenhumNumero(t *testing.T) {
+	aceita := aceitaEscopo(db.EscopoNumeros{})
+	for _, jid := range []string{"558196807479:7@s.whatsapp.net", "cloud:123", "", "cloud@s.whatsapp.net"} {
+		if aceita(jid) {
+			t.Errorf("escopo vazio aceitou %q", jid)
+		}
+	}
+}
+
+func TestEscopoDoTenantSoAceitaOsProprios(t *testing.T) {
+	aceita := aceitaEscopo(db.EscopoNumeros{Numeros: []string{"5519987717792", "cloud:111"}})
+	casos := map[string]bool{
+		"5519987717792:7@s.whatsapp.net":  true, // device suffix nao importa
+		"5519987717792:44@s.whatsapp.net": true,
+		"558196807479:7@s.whatsapp.net":   false, // numero de outro cliente
+		"cloud:111":                       true,
+		"cloud:222":                       false, // outra Cloud API nao casa so' por ser Cloud
+		"cloud@s.whatsapp.net":            false, // legado sem id: nao da' pra dizer de quem e'
+	}
+	for jid, esperado := range casos {
+		if got := aceita(jid); got != esperado {
+			t.Errorf("aceita(%q) = %v, esperado %v", jid, got, esperado)
+		}
+	}
+}
+
+func TestEscopoGlobalAceitaTudo(t *testing.T) {
+	aceita := aceitaEscopo(db.EscopoNumeros{Todos: true})
+	if !aceita("558196807479:7@s.whatsapp.net") || !aceita("cloud:1") {
+		t.Fatal("escopo global recusou numero")
 	}
 }

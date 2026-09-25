@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
 )
 
@@ -140,6 +141,52 @@ func (h *handlers) filtrarSessoesDoTenant(c *fiber.Ctx, jids []string) ([]string
 // sessoesQRDoTenant e' o atalho usado pelos handlers de /ui/sessions.
 func (h *handlers) sessoesQRDoTenant(c *fiber.Ctx) ([]string, error) {
 	return h.filtrarSessoesDoTenant(c, h.waManager.ListSessions())
+}
+
+// localEscopoGlobal marca o pedido que pode ver relatorio de todos os
+// clientes. So' o grupo /stats (X-API-Key da UC Technology) liga isso.
+const localEscopoGlobal = "escopo_global"
+
+// marcarEscopoGlobal e' o middleware que liga localEscopoGlobal.
+func marcarEscopoGlobal(c *fiber.Ctx) error {
+	c.Locals(localEscopoGlobal, true)
+	return c.Next()
+}
+
+// escopoRelatorio decide de quais numeros um relatorio pode contar.
+//
+// Os mesmos handlers servem /stats/* (global, X-API-Key) e /ui/stats/*
+// (cliente). Antes os dois devolviam o banco inteiro: o painel de um cliente
+// listava os numeros, os volumes e os CONTATOS — nome e telefone de quem
+// conversou — dos outros clientes.
+//
+// Sem marca de global, o escopo e' sempre o do tenant. Se o tenant nao puder
+// ser determinado, falha: relatorio de todo mundo nunca e' o padrao.
+func (h *handlers) escopoRelatorio(c *fiber.Ctx) (db.EscopoNumeros, error) {
+	if global, _ := c.Locals(localEscopoGlobal).(bool); global {
+		return db.EscopoNumeros{Todos: true}, nil
+	}
+	meus, err := h.numerosDoTenant(c)
+	if err != nil {
+		return db.EscopoNumeros{}, err
+	}
+	numeros := make([]string, 0, len(meus))
+	for n := range meus {
+		numeros = append(numeros, n)
+	}
+	return db.EscopoNumeros{Numeros: numeros}, nil
+}
+
+// aceitaEscopo transforma o escopo em filtro de sessao (para a fila Redis).
+func aceitaEscopo(e db.EscopoNumeros) func(string) bool {
+	if e.Todos {
+		return func(string) bool { return true }
+	}
+	meus := make(map[string]bool, len(e.Numeros))
+	for _, n := range e.Numeros {
+		meus[n] = true
+	}
+	return func(jid string) bool { return meus[numeroBase(jid)] }
 }
 
 // garanteWhatsApp evita nil deref em instalacao sem manager (teste/dev).

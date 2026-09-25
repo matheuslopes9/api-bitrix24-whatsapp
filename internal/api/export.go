@@ -43,11 +43,15 @@ func (h *handlers) exportStats(c *fiber.Ctx) error {
 
 // buildReportData busca os dados e retorna headers + rows genéricos
 func (h *handlers) buildReportData(c *fiber.Ctx, report string, days int) (headers []string, rows [][]string, title string, err error) {
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return nil, nil, "", err
+	}
 	switch report {
 	case "daily":
 		title = "Volume Diário"
 		headers = []string{"Data", "Total", "Recebidas", "Enviadas"}
-		data, e := h.repo.GetDailyStats(c.Context(), days)
+		data, e := h.repo.GetDailyStats(c.Context(), days, escopo)
 		if e != nil {
 			return nil, nil, "", e
 		}
@@ -63,7 +67,7 @@ func (h *handlers) buildReportData(c *fiber.Ctx, report string, days int) (heade
 	case "sessions":
 		title = "Por Número WhatsApp"
 		headers = []string{"Número", "JID", "Total", "Recebidas", "Enviadas", "Falhas"}
-		data, e := h.repo.GetStatsBySession(c.Context(), days)
+		data, e := h.repo.GetStatsBySession(c.Context(), days, escopo)
 		if e != nil {
 			return nil, nil, "", e
 		}
@@ -85,7 +89,7 @@ func (h *handlers) buildReportData(c *fiber.Ctx, report string, days int) (heade
 	case "types":
 		title = "Por Tipo de Mensagem"
 		headers = []string{"Tipo", "Total", "Recebidas", "Enviadas"}
-		data, e := h.repo.GetStatsByType(c.Context(), days)
+		data, e := h.repo.GetStatsByType(c.Context(), days, escopo)
 		if e != nil {
 			return nil, nil, "", e
 		}
@@ -101,7 +105,7 @@ func (h *handlers) buildReportData(c *fiber.Ctx, report string, days int) (heade
 	case "hours":
 		title = "Volume por Hora do Dia"
 		headers = []string{"Hora", "Total"}
-		data, e := h.repo.GetStatsByHour(c.Context(), days)
+		data, e := h.repo.GetStatsByHour(c.Context(), days, escopo)
 		if e != nil {
 			return nil, nil, "", e
 		}
@@ -115,7 +119,7 @@ func (h *handlers) buildReportData(c *fiber.Ctx, report string, days int) (heade
 	case "contacts":
 		title = "Top Contatos"
 		headers = []string{"Nome", "Telefone", "JID", "Total", "Recebidas", "Enviadas"}
-		data, e := h.repo.GetTopContacts(c.Context(), days, 100)
+		data, e := h.repo.GetTopContacts(c.Context(), days, 100, escopo)
 		if e != nil {
 			return nil, nil, "", e
 		}

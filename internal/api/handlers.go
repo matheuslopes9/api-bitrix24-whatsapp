@@ -14,6 +14,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
@@ -31,6 +32,9 @@ type handlers struct {
 	q            *queue.Queue
 	metrics      *telemetry.Metrics
 	log          *zap.Logger
+	// midias guarda os arquivos das conversas pra aba do CRM exibir. Pode ser
+	// nil (volume indisponivel): a aba volta a mostrar so' o rotulo.
+	midias *media.Store
 
 	// pareamentos registra quem pediu o pareamento de cada numero, enquanto
 	// o vinculo em bitrix_accounts ainda nao existe.
@@ -53,9 +57,10 @@ func newHandlers(
 	bitrixClient *bitrix.Client,
 	q *queue.Queue,
 	metrics *telemetry.Metrics,
+	midias *media.Store,
 	log *zap.Logger,
 ) *handlers {
-	return &handlers{cfg: cfg, repo: repo, waManager: waManager, cloudMgr: cloudMgr, bitrixClient: bitrixClient, q: q, metrics: metrics, log: log}
+	return &handlers{cfg: cfg, repo: repo, waManager: waManager, cloudMgr: cloudMgr, bitrixClient: bitrixClient, q: q, metrics: metrics, midias: midias, log: log}
 }
 
 // GET /health
@@ -1733,7 +1738,11 @@ func (h *handlers) dailyStats(c *fiber.Ctx) error {
 	if days < 1 || days > 90 {
 		days = 7
 	}
-	stats, err := h.repo.GetDailyStats(c.Context(), days)
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	stats, err := h.repo.GetDailyStats(c.Context(), days, escopo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -1742,7 +1751,11 @@ func (h *handlers) dailyStats(c *fiber.Ctx) error {
 
 // GET /stats/queues
 func (h *handlers) queueStats(c *fiber.Ctx) error {
-	in, out, dead := h.q.Lengths(c.Context())
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	in, out, dead := h.q.LengthsDe(c.Context(), aceitaEscopo(escopo))
 	return c.JSON(fiber.Map{
 		"inbound":  in,
 		"outbound": out,
@@ -1756,7 +1769,11 @@ func (h *handlers) sessionStats(c *fiber.Ctx) error {
 	if days < 1 || days > 90 {
 		days = 7
 	}
-	data, err := h.repo.GetStatsBySession(c.Context(), days)
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	data, err := h.repo.GetStatsBySession(c.Context(), days, escopo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -1769,7 +1786,11 @@ func (h *handlers) typeStats(c *fiber.Ctx) error {
 	if days < 1 || days > 90 {
 		days = 7
 	}
-	data, err := h.repo.GetStatsByType(c.Context(), days)
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	data, err := h.repo.GetStatsByType(c.Context(), days, escopo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -1782,7 +1803,11 @@ func (h *handlers) hourStats(c *fiber.Ctx) error {
 	if days < 1 || days > 90 {
 		days = 7
 	}
-	data, err := h.repo.GetStatsByHour(c.Context(), days)
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	data, err := h.repo.GetStatsByHour(c.Context(), days, escopo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
@@ -1799,7 +1824,11 @@ func (h *handlers) contactStats(c *fiber.Ctx) error {
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	data, err := h.repo.GetTopContacts(c.Context(), days, limit)
+	escopo, err := h.escopoRelatorio(c)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	data, err := h.repo.GetTopContacts(c.Context(), days, limit, escopo)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}

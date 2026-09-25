@@ -2,7 +2,7 @@
 CREDENCIAIS.md
 bin/
 sessions/
-media/
+/media/
 *.db
 *.log
 

@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/api"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
@@ -35,6 +37,7 @@ func handleCloudOutbound(
 	metrics *telemetry.Metrics,
 	appBase string,
 	job *queue.OutboundJob,
+	midias *media.Store,
 ) error {
 	// Resolve o telefone do destinatário a partir do ToJID.
 	// ToJID pode vir como "5519999999@s.whatsapp.net", "phone@s.whatsapp.net" ou só dígitos.
@@ -166,8 +169,10 @@ func handleCloudOutbound(
 
 	// Salva no banco (mesmo padrão do whatsmeow path).
 	msgType := db.MsgTypeText
+	var mediaRef string
 	if len(fileData) > 0 {
-		msgType = db.MsgTypeDocument
+		msgType = tipoDaMidia(fileMime)
+		mediaRef = api.SalvarMidia(midias, log, fileName, fileMime, fileData)
 	}
 	now := time.Now()
 	outMsg := &db.Message{
@@ -180,6 +185,8 @@ func handleCloudOutbound(
 		MessageType: msgType,
 		Content:     job.Text,
 		MediaMime:   fileMime,
+		MediaURL:    mediaRef,
+		MediaSize:   int64(len(fileData)),
 		Status:      db.MsgDelivered,
 		SentAt:      &now,
 	}

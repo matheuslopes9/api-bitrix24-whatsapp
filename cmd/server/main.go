@@ -19,6 +19,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/logbuffer"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/watchdog"
@@ -87,6 +88,16 @@ func main() {
 	log.Info("Redis connected", zap.String("addr", cfg.Redis.Addr()))
 	defer rdb.Close()
 
+	// ─── Arquivos das conversas (aba do CRM) ─────────────────────────────
+	// Sem volume disponivel o app segue: a aba do CRM so' volta a mostrar o
+	// rotulo do arquivo, como antes. Nao vale derrubar o atendimento por isso.
+	midias, err := media.NewStore(cfg.WhatsApp.MediaDir, int64(cfg.WhatsApp.MediaMaxMB)*1024*1024)
+	if err != nil {
+		log.Warn("midias: armazenamento indisponivel — aba do CRM nao exibira arquivos",
+			zap.String("dir", cfg.WhatsApp.MediaDir), zap.Error(err))
+		midias = nil
+	}
+
 	// ─── Métricas ────────────────────────────────────────────────────────
 	metrics := telemetry.New()
 
@@ -103,7 +114,7 @@ func main() {
 	// ─── WhatsApp Manager (QR Code via whatsmeow) ─────────────────────────
 	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
 	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, nil)
-	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, bitrixClient, cfg.App.BaseURL(), metrics, log))
+	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, bitrixClient, cfg.App.BaseURL(), metrics, midias, log))
 
 	// Carrega todas as sessões QR salvas no banco
 	if err := waManager.LoadAll(ctx); err != nil {
@@ -137,7 +148,7 @@ func main() {
 		// Detecta pelo prefixo "cloud:" do SessionJID e envia via Graph API.
 		// O resto do worker (whatsmeow) continua exatamente como estava.
 		if whatsapp.IsCloudJID(job.SessionJID) {
-			return handleCloudOutbound(c, cloudMgr, bitrixClient, q, repo, log, metrics, cfg.App.BaseURL(), job)
+			return handleCloudOutbound(c, cloudMgr, bitrixClient, q, repo, log, metrics, cfg.App.BaseURL(), job, midias)
 		}
 
 		var waID string
@@ -263,8 +274,10 @@ func main() {
 		//            o telefone real via lid_phone_map (populado em msgs inbound)
 		//            para que o CRM tab encontre a msg ao buscar pelo número.
 		msgType := db.MsgTypeText
+		var mediaRef string
 		if len(fileData) > 0 {
-			msgType = db.MsgTypeDocument
+			msgType = tipoDaMidia(fileMime)
+			mediaRef = api.SalvarMidia(midias, log, fileName, fileMime, fileData)
 		}
 		toJIDForDB := stripDeviceSuffix(job.ToJID)
 		if strings.HasSuffix(toJIDForDB, "@lid") {
@@ -304,6 +317,8 @@ func main() {
 			MessageType: msgType,
 			Content:     job.Text,
 			MediaMime:   fileMime,
+			MediaURL:    mediaRef,
+			MediaSize:   int64(len(fileData)),
 			Status:      db.MsgDelivered,
 			SentAt:      &now,
 		}
@@ -401,8 +416,29 @@ func main() {
 		}
 	}()
 
+	// ─── Limpeza dos arquivos das conversas ─────────────────────────────
+	// Retencao propria, bem menor que a das mensagens (365d): arquivo pesa.
+	// Depois dela a mensagem continua no historico, so' sem o arquivo.
+	if midias != nil {
+		go func() {
+			for {
+				if n, err := midias.ApagarAntigos(cfg.WhatsApp.MediaRetentionDays, time.Now()); err != nil {
+					log.Warn("cleanup: arquivos antigos", zap.Error(err))
+				} else if n > 0 {
+					log.Info("cleanup: dias de arquivos apagados",
+						zap.Int("dias", n), zap.Int("retencao_dias", cfg.WhatsApp.MediaRetentionDays))
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(24 * time.Hour):
+				}
+			}
+		}()
+	}
+
 	// ─── HTTP Server ─────────────────────────────────────────────────────
-	app := api.New(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
+	app := api.New(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, midias, log)
 
 	go func() {
 		if err := app.Listen(":" + cfg.App.Port); err != nil {
@@ -447,6 +483,7 @@ func buildMessageHandler(
 	bitrixClient *bitrix.Client,
 	appBase string,
 	metrics *telemetry.Metrics,
+	midias *media.Store,
 	log *zap.Logger,
 ) whatsapp.MessageHandler {
 	return func(sessionID uuid.UUID, sessionJID string, evt *events.Message) {
@@ -509,7 +546,7 @@ func buildMessageHandler(
 			msgType = db.MsgTypeImage
 			text = img.GetCaption()
 			mediaMime = img.GetMimetype()
-			mediaName = "image.jpg"
+			mediaName = media.TrocarExtensao("image.jpg", mediaMime)
 			if data, err := waManager.DownloadMedia(sessionJID, img); err == nil {
 				mediaData = data
 			} else {
@@ -518,9 +555,11 @@ func buildMessageHandler(
 		} else if aud := waMsg.GetAudioMessage(); aud != nil {
 			msgType = db.MsgTypeAudio
 			mediaMime = aud.GetMimetype()
-			mediaName = "audio.ogg"
+			// Extensao pelo tipo REAL: o nome fixo "audio.ogg" fazia um MP3
+			// chegar ao Bitrix como ".ogg", e o player nao tocava.
+			mediaName = media.TrocarExtensao("audio.ogg", mediaMime)
 			if aud.GetPTT() {
-				mediaName = "voice.ogg"
+				mediaName = media.TrocarExtensao("voice.ogg", mediaMime)
 			}
 			if data, err := waManager.DownloadMediaFromMessage(sessionJID, waMsg, aud); err == nil {
 				mediaData = data
@@ -530,7 +569,9 @@ func buildMessageHandler(
 			}
 		} else if doc := waMsg.GetDocumentMessage(); doc != nil {
 			msgType = db.MsgTypeDocument
-			text = doc.GetFileName()
+			// So' a legenda. O nome ja' vai no proprio arquivo; repetido como
+			// texto, aparecia duas vezes em cada documento no Open Lines.
+			text = doc.GetCaption()
 			mediaMime = doc.GetMimetype()
 			mediaName = doc.GetFileName()
 			if mediaName == "" {
@@ -554,12 +595,17 @@ func buildMessageHandler(
 				mediaData = data
 			} else {
 				log.Warn("download document failed", zap.Error(err))
+				// Sem o arquivo e sem legenda a mensagem seria descartada
+				// como vazia — o operador precisa saber que algo chegou.
+				if strings.TrimSpace(text) == "" {
+					text = "📎 " + mediaName + " (não foi possível baixar o arquivo)"
+				}
 			}
 		} else if vid := waMsg.GetVideoMessage(); vid != nil {
 			msgType = db.MsgTypeVideo
 			text = vid.GetCaption()
 			mediaMime = vid.GetMimetype()
-			mediaName = "video.mp4"
+			mediaName = media.TrocarExtensao("video.mp4", mediaMime)
 			if data, err := waManager.DownloadMedia(sessionJID, vid); err == nil {
 				mediaData = data
 			} else {
@@ -687,8 +733,12 @@ func buildMessageHandler(
 			MessageType: msgType,
 			Content:     text,
 			MediaMime:   mediaMime,
-			Status:      db.MsgReceived,
-			SentAt:      &ts,
+			// Guarda o arquivo pra aba do CRM exibir. O Bitrix recebe o dele
+			// pelo caminho de sempre; aqui e' so' a nossa copia.
+			MediaURL:  api.SalvarMidia(midias, log, mediaName, mediaMime, mediaData),
+			MediaSize: int64(len(mediaData)),
+			Status:    db.MsgReceived,
+			SentAt:    &ts,
 		}
 		if err := repo.InsertMessage(ctx, msg); err != nil {
 			log.Warn("insert message failed", zap.String("msg_id", evt.Info.ID), zap.Error(err))

@@ -11,6 +11,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
@@ -25,6 +26,7 @@ func New(
 	bitrixClient *bitrix.Client,
 	q *queue.Queue,
 	metrics *telemetry.Metrics,
+	midias *media.Store,
 	log *zap.Logger,
 ) *fiber.App {
 
@@ -42,7 +44,7 @@ func New(
 		Format: "[${time}] ${status} ${method} ${path} ${latency}\n",
 	}))
 
-	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, log)
+	h := newHandlers(cfg, repo, waManager, cloudMgr, bitrixClient, q, metrics, midias, log)
 
 	// Aviso diario de vencimento de licenca pro financeiro.
 	h.IniciarAvisosDeLicenca(context.Background())
@@ -136,6 +138,10 @@ func New(
 	ui.Post("/bp-robots/refresh", h.requireAutomations, h.uiBPRobotsRefresh)
 	ui.Get("/bp-robots/refresh", h.requireAutomations, h.uiBPRobotsRefresh)
 
+	// Arquivo de uma mensagem, pra aba do CRM exibir. So' entrega mensagem
+	// de numero do proprio tenant — ver uiMedia.
+	ui.Get("/media/:id", h.uiMedia)
+
 	ui.Get("/history/sessions", h.uiHistorySessions)
 	ui.Get("/history/conversations", h.uiHistoryConversations)
 	ui.Get("/history/messages", h.uiHistoryMessages)
@@ -161,19 +167,27 @@ func New(
 	bx.Get("/oauth/start", h.bitrixOAuthStart)
 	bx.Get("/callback", h.bitrixOAuthCallback)
 	bx.Post("/callback", h.bitrixOAuthCallback)   // Bitrix local app envia POST no install
-	bx.Post("/webhook", h.bitrixWebhook)                // Recebe eventos do Bitrix (legado)
+	// Legado, sem nenhum evento do Bitrix apontando pra ca'. Era publico e
+	// virou relay aberto: qualquer POST enfileirava texto livre saindo do
+	// numero de WhatsApp de QUALQUER cliente. Fica so' pro super-admin.
+	bx.Post("/webhook", h.requireAdminAuth, h.bitrixWebhook)
 	bx.Post("/connector/event", h.bitrixConnectorEvent) // ONIMCONNECTORMESSAGEADD — reply do operador
 
-	// ─── Debug (sem auth — apenas para diagnóstico) ───────────────────────
-	app.Post("/debug/bitrix-event", h.debugBitrixEvent)
-	app.Get("/debug/bitrix-event", h.debugBitrixEvent)
-	app.Get("/debug/connector-status", h.debugConnectorStatus) // ?domain=...&line=...
-	app.Get("/debug/event-bindings", h.debugEventBindings)     // ?domain=...
-	app.Get("/debug/connector-list", h.debugConnectorList)     // ?domain=...
-	app.Get("/debug/connector-data", h.debugConnectorData)      // ?domain=...&line=...&connector=...
-	app.Post("/debug/rebind-event", h.debugRebindEvent)         // body: {domain, handler_url}
-	app.Post("/debug/bitrix-call", h.debugBitrixCall)           // body: {domain, method, params}
-	app.Get("/debug/dead-queue", h.debugDeadQueue)              // lê jobs da dead queue
+	// ─── Debug — SO' super-admin ─────────────────────────────────────────
+	// Ficou publico por muito tempo, e era o pior buraco do sistema: sem
+	// login, qualquer um executava metodo REST no Bitrix de qualquer cliente
+	// (bitrix-call), redirecionava as respostas dos operadores para uma URL
+	// propria (rebind-event) e lia o conteudo da dead queue.
+	dbg := app.Group("/debug", h.requireAdminAuth)
+	dbg.Post("/bitrix-event", h.debugBitrixEvent)
+	dbg.Get("/bitrix-event", h.debugBitrixEvent)
+	dbg.Get("/connector-status", h.debugConnectorStatus) // ?domain=...&line=...
+	dbg.Get("/event-bindings", h.debugEventBindings)     // ?domain=...
+	dbg.Get("/connector-list", h.debugConnectorList)     // ?domain=...
+	dbg.Get("/connector-data", h.debugConnectorData)     // ?domain=...&line=...&connector=...
+	dbg.Post("/rebind-event", h.debugRebindEvent)        // body: {domain, handler_url}
+	dbg.Post("/bitrix-call", h.debugBitrixCall)          // body: {domain, method, params}
+	dbg.Get("/dead-queue", h.debugDeadQueue)             // lê jobs da dead queue
 
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
@@ -216,7 +230,7 @@ func New(
 	bx.Post("/bp/send", h.bpRobotSend)
 
 	// ─── Relatórios (com auth — para clientes externos via X-API-Key) ────
-	stats := app.Group("/stats", authMiddleware(cfg.App.Secret))
+	stats := app.Group("/stats", authMiddleware(cfg.App.Secret), marcarEscopoGlobal)
 	stats.Get("/daily", h.dailyStats)
 	stats.Get("/queues", h.queueStats)
 	stats.Get("/sessions", h.sessionStats)
@@ -236,15 +250,18 @@ func New(
 	ui.Get("/stats/contacts", h.contactStats)
 	ui.Get("/stats/export", h.exportStats)
 
-	// ─── Simulador interno (testes sem WA/Bitrix reais) ─────────────────
-	app.Get("/sim", h.simPage)
-	app.Post("/sim/inbound", h.simInbound)
-	app.Post("/sim/outbound", h.simOutbound)
-	app.Get("/sim/history", h.simHistory)
-	app.Get("/sim/recent", h.simRecent)
-	app.Get("/sim/sessions", h.simSessions)
-	app.Get("/sim/lidmap", h.simLIDMap)
-	app.Post("/sim/clear", h.simClear)
+	// ─── Simulador interno — SO' super-admin ────────────────────────────
+	// Tambem era publico: /sim/history devolvia a conversa de qualquer
+	// telefone e /sim/recent as ultimas mensagens de todos os clientes.
+	sim := app.Group("/sim", h.requireAdminAuth)
+	sim.Get("", h.simPage)
+	sim.Post("/inbound", h.simInbound)
+	sim.Post("/outbound", h.simOutbound)
+	sim.Get("/history", h.simHistory)
+	sim.Get("/recent", h.simRecent)
+	sim.Get("/sessions", h.simSessions)
+	sim.Get("/lidmap", h.simLIDMap)
+	sim.Post("/clear", h.simClear)
 
 	// ─── Painel super-admin ──────────────────────────────────────────────
 	// /admin/login é público; /admin e /admin/api/* exigem cookie assinado.
