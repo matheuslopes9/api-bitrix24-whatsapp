@@ -611,19 +611,23 @@ func (h *handlers) processBPRobotSend(j *bpSendJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Gate de sessao + intervalo minimo (ver wa_send_gate.go).
-	gate := GetWASessionGate(j.sessionJID)
-	gate.Lock()
-	if !gate.WaitMinInterval(ctx.Done()) {
-		gate.Unlock()
-		h.log.Warn("bp-robot: context cancelled in queue",
-			zap.String("domain", j.domain), zap.String("to", j.toPhone))
-		return
-	}
-
 	var waMsgID string
 	var sendErr error
 	isCloud := strings.HasPrefix(j.sessionJID, "cloud:")
+
+	// Ritmo por numero, o MESMO da fila do operador (whatsapp/ritmo.go).
+	// Antes o robo tinha um controle proprio que nao conversava com a fila:
+	// uma automacao disparando e o atendimento somavam as duas taxas no
+	// mesmo WhatsApp. Cloud API fica de fora — a Meta controla a taxa dela.
+	if !isCloud {
+		liberar, err := h.waManager.AguardarVez(ctx, j.sessionJID, j.bodyText)
+		if err != nil {
+			h.log.Warn("bp-robot: desistiu esperando o ritmo do numero",
+				zap.String("domain", j.domain), zap.String("to", j.toPhone), zap.Error(err))
+			return
+		}
+		defer liberar()
+	}
 
 	switch {
 	case j.mode == "official" && isCloud:
@@ -641,9 +645,6 @@ func (h *handlers) processBPRobotSend(j *bpSendJob) {
 		h.waManager.SendTyping(ctx, j.sessionJID, toJID, WAHumanTypingDuration(j.bodyText))
 		waMsgID, sendErr = h.waManager.Send(ctx, j.sessionJID, toJID, j.bodyText)
 	}
-
-	gate.MarkSent()
-	gate.Unlock()
 
 	if sendErr != nil {
 		h.log.Warn("bp-robot: send failed",

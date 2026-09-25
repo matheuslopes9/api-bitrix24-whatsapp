@@ -162,6 +162,15 @@ func main() {
 		var waID string
 		var err error
 
+		// Ritmo por NUMERO: 20 workers mandavam rajadas pelo mesmo WhatsApp
+		// pra contatos diferentes. Ver whatsapp/ritmo.go. Segurado ate' o
+		// fim do envio (inclusive a legenda que vai separada).
+		liberarVez, errVez := waManager.AguardarVez(c, job.SessionJID, job.Text)
+		if errVez != nil {
+			return fmt.Errorf("aguardando ritmo do numero: %w", errVez)
+		}
+		defer liberarVez()
+
 		// Mostra "digitando..." no WhatsApp antes de enviar — simula comportamento humano
 		// e evita que o WA interprete envios rápidos como spam.
 		typingDur := waManager.TypingDelay(job.Text)

@@ -2,9 +2,7 @@ package queue
 
 import (
 	"context"
-	"math/rand"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 )
@@ -45,26 +43,6 @@ func (wp *WorkerPool) lockForJID(jid string) *sync.Mutex {
 		wp.jidLocks[jid] = &sync.Mutex{}
 	}
 	return wp.jidLocks[jid]
-}
-
-// typingDelay simula o tempo de digitação com base no tamanho do texto.
-// Para mídia ou texto curto: 1–2s. Para textos longos: até 4s.
-// Adiciona jitter para parecer mais humano.
-func typingDelay(text string) time.Duration {
-	base := 1000 // ms mínimo
-	perChar := 30 // ms por caractere (simula ~200 chars/min)
-	chars := len([]rune(text))
-	if chars > 100 {
-		chars = 100 // cap em 100 chars de influência
-	}
-	ms := base + chars*perChar
-	if ms > 4000 {
-		ms = 4000 // máximo 4s
-	}
-	// jitter ±30%
-	jitter := int(float64(ms) * 0.3)
-	ms += rand.Intn(2*jitter+1) - jitter
-	return time.Duration(ms) * time.Millisecond
 }
 
 // StartInbound inicia N workers consumindo a fila inbound.
