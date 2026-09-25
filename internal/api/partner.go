@@ -37,12 +37,12 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	}
 
-	// Loga tudo para diagnóstico — body bruto, headers, query string
+	// O corpo NAO vai pro log: ele traz access_token, refresh_token e
+	// application_token em texto, e o log e' lido pelo painel admin.
 	h.log.Info("partner install received",
 		zap.String("method", c.Method()),
 		zap.String("content_type", c.Get("Content-Type")),
-		zap.String("query", string(c.Request().URI().QueryString())),
-		zap.String("raw_body", string(c.Body())),
+		zap.Int("body_bytes", len(c.Body())),
 	)
 
 	// O Bitrix Partner App (Marketplace) envia no INSTALL:
@@ -102,8 +102,16 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		// SERVER_ENDPOINT é sempre oauth.bitrix.info — não é o domain do portal
 		_ = serverEndpoint
 	}
-	if domain == "" {
-		domain = h.cfg.Bitrix.Domain
+	dominioInformado := strings.TrimSpace(domain) != ""
+	if !dominioInformado {
+		// Placeholder = member_id, migrado pro dominio real em /bitrix/auth.
+		// Antes caia em BITRIX_DOMAIN: um install sem dominio, que ninguem
+		// consegue verificar, sobrescrevia os tokens desse portal.
+		if strings.TrimSpace(memberID) == "" {
+			h.log.Warn("partner install: sem dominio e sem member_id — ignorado")
+			return c.JSON(fiber.Map{"status": "pending_auth"})
+		}
+		domain = memberID
 	}
 	// applicationToken chega aqui no fluxo Marketplace e e usado pra validar
 	// POSTs server-to-server futuros (/bitrix/bp/send, /bitrix/sms/send).
@@ -130,6 +138,30 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 
 	// Normaliza domain: remove https:// e trailing slash para chave consistente
 	domain = normalizePortalDomain(domain)
+
+	// PROVA antes de gravar. Este endpoint e' publico (o Bitrix chama sem
+	// nada nosso) e sobrescrevia tokens E o application_token — que e' o que
+	// autentica os eventos seguintes (sms/send, bp/send, cookie da aba do
+	// CRM). Forjar um install era tomar o portal.
+	if dominioInformado {
+		ident, err := bitrix.VerificarToken(c.Context(), domain, accessToken)
+		if err != nil {
+			h.log.Warn("partner install: token recusado — nada gravado",
+				zap.String("domain", domain), zap.Error(err))
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "token do Bitrix invalido para este portal"})
+		}
+		domain = ident.Dominio
+	} else if memberID != "" {
+		// Sem dominio nao da' pra perguntar ao portal. So' segue se for
+		// instalacao NOVA: portal ja' conhecido nao tem token sobrescrito
+		// por um POST que ninguem consegue verificar. O token real chega
+		// depois por /bitrix/auth, que verifica.
+		if prev, err := h.repo.GetBitrixPortalByMemberID(c.Context(), memberID); err == nil && prev != nil && prev.AccessToken != "" {
+			h.log.Warn("partner install: sem dominio para portal ja' existente — ignorado",
+				zap.String("member_id", memberID), zap.String("portal", prev.Domain))
+			return c.JSON(fiber.Map{"status": "pending_auth"})
+		}
+	}
 
 	expiresIn := 3600
 	fmt.Sscanf(expiresInStr, "%d", &expiresIn)
@@ -221,7 +253,21 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e access_token são obrigatórios"})
 	}
 
-	domain := normalizePortalDomain(body.Domain)
+	// PROVA DE IDENTIDADE antes de gravar qualquer coisa ou emitir cookie.
+	//
+	// Antes o comentario acima dizia "o token em si e' a prova" — mas nada o
+	// conferia. {domain: <vitima>, access_token: "x"} recebia o cookie da
+	// vitima (que abre todo o /ui/*) e ainda sobrescrevia o token real dela.
+	ident, err := bitrix.VerificarToken(c.Context(), body.Domain, body.AccessToken)
+	if err != nil {
+		h.log.Warn("partner auth: token recusado",
+			zap.String("domain", body.Domain), zap.Error(err))
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "token do Bitrix invalido para este portal"})
+	}
+	domain := ident.Dominio
+	// O usuario vem do PORTAL, nao do corpo: body.UserID era declarado por
+	// quem chamava e decidia quem virava master.
+	body.UserID = ident.UserID
 	expiresIn := body.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = 3600
@@ -235,6 +281,16 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	if err != nil && body.MemberID != "" {
 		// Pode ser o placeholder criado no install onde domain = member_id
 		existing, err = h.repo.GetBitrixPortalByMemberID(c.Context(), body.MemberID)
+		// So' migra PLACEHOLDER (dominio que nao e' dominio de verdade, criado
+		// no install sem auth[domain]). Um portal real nunca troca de dominio
+		// por aqui: member_id vem do corpo, e com ele qualquer um renomeava o
+		// portal de outro cliente para o proprio dominio.
+		if err == nil && existing.Domain != domain && !ehPlaceholderDePortal(existing) {
+			h.log.Warn("partner auth: member_id pertence a outro portal — ignorado",
+				zap.String("member_id", body.MemberID),
+				zap.String("portal", existing.Domain), zap.String("pedido", domain))
+			existing, err = nil, fmt.Errorf("member_id de outro portal")
+		}
 		if err == nil && existing.Domain != domain {
 			// Migra o placeholder: atualiza o domain para o valor real
 			h.log.Info("partner auth: migrating portal domain from placeholder",
@@ -279,38 +335,14 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		h.log.Warn("partner auth: save token failed", zap.String("domain", domain), zap.Error(err))
 	}
 
-	// Garante que existe um bitrix_account vinculando cada sessão WA ativa a este portal.
-	// O ProcessInbound usa bitrix_accounts para saber para qual Bitrix enviar mensagens.
-	// Para o Partner App, as credenciais OAuth são as globais do app (client_id/secret da config).
-	activeSessions := h.waManager.ListSessions()
-	for _, jid := range activeSessions {
-		// Verifica se já existe account para este JID
-		if _, err := h.repo.GetBitrixAccountByJID(c.Context(), jid); err == nil {
-			continue // já existe, não sobrescreve
-		}
-		lineID := existing.OpenLineID
-		if lineID == 0 {
-			lineID = 1
-		}
-		acct := &db.BitrixAccount{
-			ID:           generateUUID(),
-			SessionJID:   jid,
-			Domain:       normalizePortalDomain(domain),
-			ClientID:     h.cfg.Bitrix.ClientID,
-			ClientSecret: h.cfg.Bitrix.ClientSecret,
-			OpenLineID:   lineID,
-			ConnectorID:  existing.ConnectorID,
-			RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
-			Status:       db.BitrixAccountActive,
-		}
-		if err := h.repo.UpsertBitrixAccount(c.Context(), acct); err != nil {
-			h.log.Warn("partner auth: auto-create bitrix_account failed",
-				zap.String("jid", jid), zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("partner auth: bitrix_account auto-created",
-				zap.String("jid", jid), zap.String("domain", domain))
-		}
-	}
+	// NAO vincula mais "toda sessao ativa sem dono" a este portal.
+	//
+	// Era herança do tempo de um cliente so'. Multi-tenant, isso entregava ao
+	// primeiro portal que abrisse o app qualquer numero ainda sem vinculo —
+	// inclusive o que OUTRO cliente acabou de parear e ainda nao ligou a uma
+	// fila. O vinculo agora e' sempre explicito: Filas Bitrix ou
+	// /bitrix/partner/link, os dois conferindo o dono do numero.
+	activeSessions, _ := h.repo.ListBitrixAccountsByDomain(c.Context(), domain)
 
 	// Cookie tenant assinado HMAC: identifica o tenant em chamadas /ui/*
 	// subsequentes do iframe. Sem isso, dependiamos de ?domain= query —
@@ -321,6 +353,12 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 	// e nada de /ui/* funciona dentro do iframe Bitrix.
 	setPartitionedCookie(c, tenantCookieName,
 		signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domain), tenantExpires),
+		tenantExpires,
+		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
+	// Usuario confirmado pelo portal — e' o que as rotas /bitrix/crm/* usam
+	// no lugar do user_id que a tela declarava. Ver crm_identidade.go.
+	setPartitionedCookie(c, userCookieName,
+		signUserCookie(h.cfg.App.Secret, normalizePortalDomain(domain), ident.UserID, tenantExpires),
 		tenantExpires,
 		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
 
@@ -348,6 +386,7 @@ func (h *handlers) bitrixPartnerAuth(c *fiber.Ctx) error {
 		"domain":      domain,
 		"sessions":    len(activeSessions),
 		"auto_master": autoMasterResult, // "set" | "already_set" | "skipped" | "failed:..."
+		"user_id":     ident.UserID,
 	})
 }
 
@@ -416,11 +455,23 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		AccessToken string `json:"access_token"`
 		Phone       string `json:"phone"` // número ou JID parcial
 	}
-	if err := c.BodyParser(&body); err != nil || body.Domain == "" || body.Phone == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain e phone são obrigatórios"})
+	if err := c.BodyParser(&body); err != nil || body.Phone == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "phone é obrigatório"})
 	}
 
-	domain := normalizePortalDomain(body.Domain)
+	// O portal vem do cookie emitido por /bitrix/auth (token conferido no
+	// Bitrix), nao do corpo. Antes qualquer POST com {domain, phone}
+	// transferia o numero de outro cliente pro portal informado — e o
+	// match era por PREFIXO: phone="5" pegava a primeira sessao do processo.
+	cookieDom, ok := verifyTenantCookie(h.cfg.App.Secret, c.Cookies(tenantCookieName))
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "sessao expirada — reabra o app pelo Bitrix24"})
+	}
+	if body.Domain != "" && normalizePortalDomain(body.Domain) != cookieDom {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "portal diferente da sessao"})
+	}
+	domain := cookieDom
+	c.Locals("tenant_domain", domain)
 
 	// Busca o portal para obter connector_id e open_line_id
 	portal, err := h.repo.GetBitrixPortalByDomain(c.Context(), domain)
@@ -451,9 +502,10 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		phone = phone[:idx]
 	}
 
+	// Numero EXATO (numeroBase), nunca prefixo.
 	sessionJID := ""
 	for _, jid := range h.waManager.ListSessions() {
-		if strings.HasPrefix(jid, phone) {
+		if phone != "" && numeroBase(jid) == numeroBase(phone) {
 			sessionJID = jid
 			break
 		}
@@ -461,6 +513,12 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 	if sessionJID == "" {
 		h.log.Warn("partner link: active session not found for phone", zap.String("phone", phone))
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "sessão WA não encontrada para " + phone})
+	}
+	// So' vincula numero deste portal ou que ele mesmo esta' pareando.
+	if ok, resp := h.exigirNumeroDoPortal(c, sessionJID); !ok {
+		h.log.Warn("partner link: numero de outro portal — recusado",
+			zap.String("domain", domain), zap.String("jid", sessionJID))
+		return resp
 	}
 
 	acct := &db.BitrixAccount{
@@ -481,6 +539,12 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 	}
 
 	// Salva o token em bitrix_tokens para que o bitrixClient.call() funcione
+	if body.AccessToken != "" {
+		if _, err := bitrix.VerificarToken(c.Context(), domain, body.AccessToken); err != nil {
+			h.log.Warn("partner link: token do corpo recusado — nao gravado", zap.Error(err))
+			body.AccessToken = ""
+		}
+	}
 	if body.AccessToken != "" {
 		creds := h.portalToCreds(portal)
 		if err := h.bitrixClient.SaveToken(c.Context(), creds, body.AccessToken, portal.RefreshToken, 3600); err != nil {
@@ -538,7 +602,13 @@ func (h *handlers) bitrixConnectPage(c *fiber.Ctx) error {
 //     janela exata entre install e primeiro POST legitimo poderia se passar
 //     pelo cliente. Risco baixo, ganho de compatibilidade alto.
 //   - Apos isso, compara com subtle.ConstantTimeCompare.
-func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken string) (*db.BitrixPortal, error) {
+//
+// ATUALIZACAO (25/09): o "risco baixo" nao era baixo — o first-touch
+// aceitava QUALQUER token, de qualquer um, pra todo portal instalado antes
+// da feature, e dali em diante o atacante e' que era o dono do portal. Agora
+// o primeiro token so' e' gravado se o mesmo pedido trouxer um access_token
+// que o PORTAL confirme (os eventos do Bitrix trazem auth[access_token]).
+func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken, accessToken string) (*db.BitrixPortal, error) {
 	if domain == "" || appToken == "" {
 		return nil, fmt.Errorf("auth missing (domain ou application_token vazio)")
 	}
@@ -547,6 +617,9 @@ func (h *handlers) validateBitrixAppToken(ctx context.Context, domain, appToken 
 		return nil, fmt.Errorf("portal nao encontrado: %s", domain)
 	}
 	if portal.ApplicationToken == "" {
+		if _, err := bitrix.VerificarToken(ctx, portal.Domain, accessToken); err != nil {
+			return nil, fmt.Errorf("primeiro application_token sem prova do portal: %w", err)
+		}
 		// First-touch: persiste o token recebido.
 		if err := h.repo.SetPortalApplicationToken(ctx, portal.Domain, appToken); err != nil {
 			h.log.Warn("validate app token: first-touch save failed",
@@ -753,3 +826,14 @@ if (typeof BX24 !== 'undefined') {
 </script>
 </body>
 </html>`
+
+// ehPlaceholderDePortal: registro criado no install sem auth[domain], que
+// usa o member_id (ou algo que nao e' dominio) no lugar do dominio. So'
+// esse pode ser migrado pro dominio real em /bitrix/auth.
+func ehPlaceholderDePortal(p *db.BitrixPortal) bool {
+	if p == nil {
+		return false
+	}
+	d := strings.TrimSpace(p.Domain)
+	return d == "" || d == p.MemberID || !strings.Contains(d, ".")
+}

@@ -233,6 +233,13 @@ opcionais — valem como carga inicial da aba **Alertas**.
 Arquivos: `MEDIA_MAX_MB` (padrão 64 — acima disso o arquivo vai só pro Bitrix)
 e `MEDIA_RETENTION_DAYS` (padrão 90 — depois disso a mensagem fica, o arquivo não).
 
+Segurança dos eventos do Bitrix:
+
+| Variável | Padrão | Para quê |
+|---|---|---|
+| `CONNECTOR_EVENT_TOKEN` | `observar` | `exigir` recusa resposta de operador cujo `application_token` não confere. Em `observar` só registra no log — mude para `exigir` depois de ver o log limpo (o evento vem do app local, e o token gravado pode ser o do Partner App). |
+| `BITRIX_DOMINIOS_REDE_INTERNA` | vazio | Portais on-premise que resolvem para IP interno. Sem isso a verificação de token recusa o endereço (proteção contra SSRF) e o portal fica sem login. Separados por vírgula. |
+
 ### 2. `uctalk_email` — o proxy de e-mail
 
 Mesmo repositório, com **Build Path `tools/oauth2-email-service`**.
@@ -342,6 +349,15 @@ apagada por engano junto de um bloco substituído.
 - Relatórios e o painel do cliente são **filtrados pelo portal**
   (`internal/db/escopo.go`). O escopo vazio não enxerga nada — relatório de
   todos os clientes só com `X-API-Key`.
+- **Identidade do cliente é conferida no próprio Bitrix.** `/bitrix/auth`,
+  `/bitrix/install` e `/bitrix/callback` chamam `/rest/profile` no domínio
+  informado com o token recebido (`internal/bitrix/verificar.go`) antes de
+  gravar token ou emitir cookie. O cookie de tenant e o de usuário
+  (`uctalk_user`) só nascem daí.
+- `/bitrix/crm/*` exige os dois cookies e ignora `domain`/`user_id` enviados
+  pela tela (`crm_identidade.go`). As rotas `/ui/bitrix/*`, histórico,
+  permissões e SMS são presas ao portal do cookie (`escoparAoTenant`), e
+  envio só sai por número do próprio portal.
 - Arquivos das conversas (`/ui/media/:id`) só saem para o portal dono do
   número, e só abrem no navegador tipos seguros (imagem, áudio, vídeo, PDF).
   O resto vai como download: o arquivo vem do cliente final e um `.html`

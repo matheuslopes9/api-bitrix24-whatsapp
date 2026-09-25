@@ -50,6 +50,14 @@ func main() {
 	}
 	log.Info("config loaded", zap.String("env", cfg.App.Env))
 
+	// Portais que resolvem pra IP interno (on-premise na mesma rede). Sem
+	// isso a verificacao de token recusa o endereco como SSRF e o portal
+	// fica sem login. Ver bitrix/verificar.go.
+	if v := strings.TrimSpace(os.Getenv("BITRIX_DOMINIOS_REDE_INTERNA")); v != "" {
+		bitrix.PermitirRedeInterna(strings.Split(v, ","))
+		log.Info("verificacao de token: dominios liberados em rede interna", zap.String("dominios", v))
+	}
+
 	// SEGURANCA: alerta se credenciais admin sao fracas. Em producao, isso
 	// expoe TODOS os tenants (super-admin gerencia portais, sessoes, planos).
 	// Heuristica: senha < 12 chars OU igual ao user OU contendo "admin"/"password".

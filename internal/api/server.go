@@ -106,21 +106,21 @@ func New(
 	ui.Post("/sessions/cloud", h.requireCloudAPI, h.uiCreateCloudSession)
 	ui.Get("/sessions/cloud/:session_id/webhook-info", h.uiCloudWebhookInfo)
 	// ─── Bitrix Accounts (multi-tenant) ──────────────────────────────────
-	ui.Post("/bitrix/accounts", h.uiCreateBitrixAccount)
-	ui.Get("/bitrix/accounts", h.uiListBitrixAccounts)
-	ui.Delete("/bitrix/accounts", h.uiDeleteBitrixAccount)
+	ui.Post("/bitrix/accounts", h.escoparAoTenant, h.uiCreateBitrixAccount)
+	ui.Get("/bitrix/accounts", h.escoparAoTenant, h.uiListBitrixAccounts)
+	ui.Delete("/bitrix/accounts", h.escoparAoTenant, h.uiDeleteBitrixAccount)
 	// ─── Filas Bitrix (Partner App portals) ──────────────────────────────────
-	ui.Get("/bitrix/queues", h.uiListBitrixQueues)
-	ui.Put("/bitrix/queues", h.uiUpdateBitrixQueue)
-	ui.Get("/bitrix/lines", h.uiListOpenLines)          // Lista open lines disponíveis no portal
-	ui.Post("/bitrix/queues/link", h.uiLinkQueue)       // Cria vínculo portal+sessão+fila
-	ui.Delete("/bitrix/queues/link", h.uiUnlinkQueue)   // Remove vínculo
-	ui.Post("/bitrix/queues/activate", h.uiActivateConnector) // Força register+activate
+	ui.Get("/bitrix/queues", h.escoparAoTenant, h.uiListBitrixQueues)
+	ui.Put("/bitrix/queues", h.escoparAoTenant, h.uiUpdateBitrixQueue)
+	ui.Get("/bitrix/lines", h.escoparAoTenant, h.uiListOpenLines)          // Lista open lines disponíveis no portal
+	ui.Post("/bitrix/queues/link", h.escoparAoTenant, h.uiLinkQueue)       // Cria vínculo portal+sessão+fila
+	ui.Delete("/bitrix/queues/link", h.escoparAoTenant, h.uiUnlinkQueue)   // Remove vínculo
+	ui.Post("/bitrix/queues/activate", h.escoparAoTenant, h.uiActivateConnector) // Força register+activate
 	// ─── Permissões CRM (sem auth admin — uso interno do dashboard) ──────
 	ui.Get("/permissions/list", h.uiPermissionsList)
 	ui.Get("/permissions/user-info", h.uiPermissionsUserInfo)
 	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
-	ui.Post("/permissions/grant", h.uiPermissionsGrant)
+	ui.Post("/permissions/grant", h.escoparAoTenant, h.uiPermissionsGrant)
 	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
 	// ─── Templates de mensagem — feature contratada ─────────────────────
 	// /list e /debug seguem abertos: a UI so' fica vazia pra quem nao tem
@@ -142,9 +142,9 @@ func New(
 	// de numero do proprio tenant — ver uiMedia.
 	ui.Get("/media/:id", h.uiMedia)
 
-	ui.Get("/history/sessions", h.uiHistorySessions)
-	ui.Get("/history/conversations", h.uiHistoryConversations)
-	ui.Get("/history/messages", h.uiHistoryMessages)
+	ui.Get("/history/sessions", h.escoparAoTenant, h.uiHistorySessions)
+	ui.Get("/history/conversations", h.escoparAoTenant, h.uiHistoryConversations)
+	ui.Get("/history/messages", h.escoparAoTenant, h.uiHistoryMessages)
 
 	// ─── WhatsApp Sessions ───────────────────────────────────────────────
 	wa := app.Group("/wa", authMiddleware(cfg.App.Secret))
@@ -201,26 +201,33 @@ func New(
 	app.Post("/bitrix-app", h.bitrixAppMenu)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
+	// A pagina da aba continua aberta (o Bitrix a carrega no iframe). Todo
+	// o resto exige a identidade confirmada — ver crm_identidade.go. Antes
+	// eram publicas e confiavam no ?domain= e no user_id de quem chamava.
 	bx.Get("/crm/tab", h.bitrixCRMTab)
 	bx.Post("/crm/tab", h.bitrixCRMTab)
-	bx.Get("/crm/entity", h.bitrixCRMEntity)
-	bx.Post("/crm/send", h.bitrixCRMSend)
-	bx.Get("/crm/sessions", h.bitrixCRMSessions)
-	bx.Get("/crm/lines", h.bitrixCRMLines)
-	bx.Get("/crm/history", h.bitrixCRMHistory)
-	bx.Post("/crm/upload", h.bitrixCRMUpload)
-	bx.Get("/crm/debug", h.bitrixCRMDebug) // diagnóstico temporário
-	bx.Get("/crm/check-access", h.bitrixCRMCheckAccess)
-	bx.Get("/crm/allowed-sessions", h.bitrixCRMAllowedSessions)
-	bx.Get("/crm/master/status", h.bitrixCRMMasterStatus)
-	bx.Post("/crm/master/set", h.bitrixCRMMasterSet)
+	// "Diagnostico temporario" que vazava contagens e conteudo de mensagem
+	// de qualquer telefone: so' super-admin. Registrado ANTES do grupo pra
+	// nao passar pelo middleware de identidade do CRM (o admin nao tem).
+	bx.Get("/crm/debug", h.requireAdminAuth, h.bitrixCRMDebug)
+	crm := bx.Group("/crm", h.exigirIdentidadeCRM)
+	crm.Get("/entity", h.bitrixCRMEntity)
+	crm.Post("/send", h.bitrixCRMSend)
+	crm.Get("/sessions", h.bitrixCRMSessions)
+	crm.Get("/lines", h.bitrixCRMLines)
+	crm.Get("/history", h.bitrixCRMHistory)
+	crm.Post("/upload", h.bitrixCRMUpload)
+	crm.Get("/check-access", h.bitrixCRMCheckAccess)
+	crm.Get("/allowed-sessions", h.bitrixCRMAllowedSessions)
+	crm.Get("/master/status", h.bitrixCRMMasterStatus)
+	crm.Post("/master/set", h.bitrixCRMMasterSet)
 
 	// ─── SMS Provider (Marketing > Campanhas SMS via WhatsApp) ────────────
 	// Modulo isolado em sms_provider.go. Bitrix bate em /bitrix/sms/send,
 	// UI do dashboard usa os /ui/sms/* abaixo. Nao toca em rotas existentes.
 	bx.Post("/sms/send", h.smsProviderSend)
 	ui.Get("/sms/status", h.uiSMSStatus)
-	ui.Post("/sms/set-session", h.uiSMSSetSession)
+	ui.Post("/sms/set-session", h.escoparAoTenant, h.uiSMSSetSession)
 	ui.Post("/sms/ack-risk", h.uiSMSAckRisk)
 	ui.Get("/sms/messages", h.uiSMSMessages)
 

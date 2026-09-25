@@ -83,7 +83,7 @@ func (h *handlers) smsProviderSend(c *fiber.Ctx) error {
 	appToken := c.FormValue("auth[application_token]")
 	domainRaw := c.FormValue("auth[domain]")
 	domain := normalizePortalDomain(domainRaw)
-	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken)
+	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken, c.FormValue("auth[access_token]"))
 	if err != nil {
 		h.log.Warn("sms-provider: auth invalid",
 			zap.String("domain", domainRaw), zap.Error(err))

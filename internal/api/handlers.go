@@ -205,6 +205,15 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 			}()),
 		)
 
+		// Sem dominio, nada aqui e' verificavel. Portal ja' conhecido por esse
+		// member_id nao e' tocado — senao qualquer POST com o member_id de um
+		// cliente criava/trocava o placeholder e o application_token dele.
+		if prev, err := h.repo.GetBitrixPortalByMemberID(c.Context(), partnerMemberID); err == nil && prev != nil && !ehPlaceholderDePortal(prev) {
+			h.log.Warn("partner install via callback: member_id de portal existente — ignorado",
+				zap.String("member_id", partnerMemberID), zap.String("portal", prev.Domain))
+			return c.Redirect(h.cfg.App.BaseURL()+"/bitrix-connect", fiber.StatusFound)
+		}
+
 		// Salva em bitrix_portals com member_id como identificador.
 		// Domain será "" por ora — preenchido em /bitrix/auth via BX24.js.
 		portal := &db.BitrixPortal{
@@ -268,6 +277,21 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "access_token missing")
 	}
 
+	// PROVA antes de gravar: mesmo buraco do /bitrix/install. Daqui pra
+	// baixo o token e' salvo por dominio ou pela conta do session_jid, e
+	// ninguem conferia se ele era de verdade.
+	dominioAlvo := domain
+	if strings.TrimSpace(dominioAlvo) == "" {
+		dominioAlvo = h.cfg.Bitrix.Domain
+	}
+	ident, err := bitrix.VerificarToken(c.Context(), dominioAlvo, accessToken)
+	if err != nil {
+		h.log.Warn("bitrix callback: token recusado — nada gravado",
+			zap.String("domain", dominioAlvo), zap.Error(err))
+		return fiber.NewError(fiber.StatusUnauthorized, "token do Bitrix invalido para este portal")
+	}
+	domain = ident.Dominio
+
 	exp := 3600
 	if expiresIn != "" {
 		fmt.Sscanf(expiresIn, "%d", &exp)
@@ -297,6 +321,14 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 					}
 				}
 			}
+		}
+		if err == nil && normalizePortalDomain(acct.Domain) != ident.Dominio {
+			// Token valido, mas de OUTRO portal: nao pode virar o token da
+			// conta de um numero que nao e' dele.
+			h.log.Warn("bitrix callback: session_jid pertence a outro portal — ignorado",
+				zap.String("session_jid", sessionJID),
+				zap.String("dono", acct.Domain), zap.String("token_de", ident.Dominio))
+			return fiber.NewError(fiber.StatusForbidden, "numero pertence a outro portal")
 		}
 		if err != nil {
 			h.log.Warn("bitrix callback: account not found by jid, will save token by domain",
@@ -523,8 +555,17 @@ func (h *handlers) uiListBitrixAccounts(c *fiber.Ctx) error {
 		RedirectURI  string      `json:"redirect_uri"`
 		Status       string      `json:"status"`
 	}
+	// Tenant ve so' as proprias contas. Antes a lista era de TODOS os
+	// clientes (dominio, numero, conector). Super-admin continua vendo tudo.
+	tenantDom := ""
+	if src, _ := c.Locals("auth_source").(string); src == "tenant" {
+		tenantDom, _ = c.Locals("tenant_domain").(string)
+	}
 	var safe []safeAccount
 	for _, a := range accounts {
+		if tenantDom != "" && normalizePortalDomain(a.Domain) != tenantDom {
+			continue
+		}
 		sessionType := "qr"
 		displayPhone := ""
 		// Tenta resolver o tipo + telefone real consultando whatsapp_sessions
@@ -1166,6 +1207,9 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 				zap.String("connector", connector), zap.Error(errAcct))
 			return c.SendStatus(fiber.StatusOK)
 		}
+		if !h.eventoPodeUsarSessao(c, acct.SessionJID) {
+			return c.SendStatus(fiber.StatusOK)
+		}
 		line := 0
 		fmt.Sscanf(lineStr, "%d", &line)
 		if line == 0 {
@@ -1211,6 +1255,11 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 		sessions := h.waManager.ListSessions()
 		if len(sessions) == 1 {
 			sessionJID := sessions[0]
+			// "A unica sessao do processo" nao diz de quem ela e': sem esta
+			// checagem, qualquer evento saia por ela.
+			if !h.eventoPodeUsarSessao(c, sessionJID) {
+				return c.SendStatus(fiber.StatusOK)
+			}
 			line := 0
 			fmt.Sscanf(lineStr, "%d", &line)
 			if err := h.q.PushOutbound(ctx, &queue.OutboundJob{
@@ -1268,6 +1317,10 @@ func (h *handlers) bitrixConnectorEvent(c *fiber.Ctx) error {
 			)
 			return c.SendStatus(fiber.StatusOK)
 		}
+	}
+
+	if !h.eventoPodeUsarSessao(c, sessionJID) {
+		return c.SendStatus(fiber.StatusOK)
 	}
 
 	line := 0

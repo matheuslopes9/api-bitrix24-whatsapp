@@ -870,6 +870,15 @@ func (h *handlers) bitrixCRMMasterSet(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "JSON invalido"})
 	}
+	// Portal e quem chama vem da sessao confirmada, nao do corpo: antes
+	// bastava se declarar o master atual pra trocar o master de qualquer
+	// portal. Super-admin (sem usuario Bitrix) segue com o caller do corpo.
+	if dom, uid := identidadeCRM(c); dom != "" {
+		body.Domain = dom
+		if uid != "" {
+			body.CallerUserID = uid
+		}
+	}
 	if body.Domain == "" || body.CallerUserID == "" || body.NewMasterUserID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "domain, caller_user_id e new_master_user_id obrigatorios"})
 	}
@@ -1104,8 +1113,14 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
+	// Portal e operador da sessao confirmada — nao do corpo, que qualquer um
+	// escrevia. Ver crm_identidade.go.
+	body.Domain, body.UserID = identidadeCRM(c)
 	if body.Domain == "" || body.Phone == "" || body.SessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
+	}
+	if ok, resp := h.exigirNumeroDoPortal(c, body.SessionJID); !ok {
+		return resp
 	}
 	if body.Message == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "message é obrigatório"})
@@ -1250,14 +1265,17 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 // Form fields: domain, phone, session_jid, user_id + file (multipart)
 // Mesmo guard de permissao do bitrixCRMSend.
 func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
-	domain := c.FormValue("domain")
+	// Portal e operador da sessao confirmada (ver bitrixCRMSend).
+	domain, userID := identidadeCRM(c)
 	phone := c.FormValue("phone")
 	sessionJID := c.FormValue("session_jid")
 	caption := c.FormValue("caption") // texto opcional junto ao arquivo
-	userID := c.FormValue("user_id")
 
 	if domain == "" || phone == "" || sessionJID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "domain, phone e session_jid são obrigatórios"})
+	}
+	if ok, resp := h.exigirNumeroDoPortal(c, sessionJID); !ok {
+		return resp
 	}
 	if userID == "" {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
@@ -1364,6 +1382,28 @@ func (h *handlers) bitrixCRMHistory(c *fiber.Ctx) error {
 	if phone != "" {
 		phoneNorm := normalizeWAPhone(phone)
 		localMsgs, dbErr := h.repo.GetMessagesByPhone(c.Context(), phoneNorm, limit)
+		// GetMessagesByPhone casa pelo telefone do CONTATO em toda a tabela.
+		// Sem este filtro a aba mostrava a conversa desse contato com OUTROS
+		// clientes — e oferecia o numero deles como opcao de envio (visto no
+		// homolog: crm.uctechnology.com.br exibindo +558196807479).
+		if dbErr == nil {
+			escopo, eErr := h.escopoRelatorio(c)
+			if eErr != nil {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": eErr.Error()})
+			}
+			aceita := aceitaEscopo(escopo)
+			doPortal := localMsgs[:0]
+			for _, m := range localMsgs {
+				nosso := m.ToJID
+				if m.Direction == db.DirOutbound {
+					nosso = m.FromJID
+				}
+				if aceita(nosso) {
+					doPortal = append(doPortal, m)
+				}
+			}
+			localMsgs = doPortal
+		}
 		h.log.Info("crm history: local db query",
 			zap.String("phone_raw", phone),
 			zap.String("phone_norm", phoneNorm),
@@ -2231,6 +2271,34 @@ function init() {
         + '</div>';
     }
 
+    // Handshake ANTES de tudo: o servidor confere o token no proprio Bitrix
+    // e devolve os cookies com portal e usuario confirmados. As rotas
+    // /bitrix/crm/* passaram a exigir isso — antes aceitavam o domain e o
+    // user_id que a tela mandasse, e qualquer um podia mandar qualquer um.
+    handshakeUCTalk(function(erro) {
+      if (erro) { showAccessDenied(erro); return; }
+      carregarOperador();
+    });
+  });
+}
+
+function handshakeUCTalk(pronto) {
+  var auth = BX24.getAuth ? BX24.getAuth() : null;
+  if (!auth || !auth.access_token) { pronto('Não foi possível obter a sessão do Bitrix24. Recarregue a página.'); return; }
+  fetch(_baseUrl + '/bitrix/auth', {
+    method: 'POST', credentials: 'include',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ domain: _domain, access_token: auth.access_token,
+                           refresh_token: auth.refresh_token, expires_in: auth.expires_in,
+                           member_id: auth.member_id })
+  }).then(function(r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function() { pronto(null); })
+    .catch(function(e) { pronto('Não foi possível validar a sessão com o Bitrix24 (' + (e && e.message || e) + ').'); });
+}
+
+function carregarOperador() {
     // Info do operador logado via BX24.js — depois disso, checa permissao
     BX24.callMethod('profile', {}, function(res) {
       var u = res.data() || {};
@@ -2281,7 +2349,6 @@ function init() {
         showAccessDenied('Erro ao verificar permissões: ' + (err && err.message || err));
       });
     });
-  });
 }
 
 // Substitui a UI inteira por pagina amigavel de acesso negado.
@@ -2999,7 +3066,11 @@ func (h *handlers) maybeSetTenantCookieFromBitrixPost(c *fiber.Ctx) {
 	if appToken == "" || domainRaw == "" {
 		return
 	}
-	if _, err := h.validateBitrixAppToken(c.Context(), domainRaw, appToken); err != nil {
+	accessTok := c.FormValue("auth[access_token]")
+	if accessTok == "" {
+		accessTok = c.FormValue("AUTH_ID")
+	}
+	if _, err := h.validateBitrixAppToken(c.Context(), domainRaw, appToken, accessTok); err != nil {
 		return
 	}
 	tenantExpires := time.Now().Add(tenantCookieTTL)
@@ -3066,13 +3137,15 @@ BX24.init(function() {
     } else {
       handshake = Promise.resolve(null);
     }
-    // Espera handshake + check-access + master.status em paralelo.
-    Promise.all([
-      handshake,
-      fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID)).then(function(r){ return r.json(); }),
-      fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); }),
-    ]).then(function(arr) {
-      arr.shift(); // remove handshake result, mantem [access, master]
+    // Handshake PRIMEIRO, depois o resto: as rotas /bitrix/crm/* exigem o
+    // cookie que ele devolve. Em paralelo, check-access saia antes do
+    // cookie existir e voltava 401.
+    handshake.then(function() {
+      return Promise.all([
+        fetch(_baseUrl + '/bitrix/crm/check-access?domain=' + encodeURIComponent(domain) + '&user_id=' + encodeURIComponent(userID)).then(function(r){ return r.json(); }),
+        fetch(_baseUrl + '/bitrix/crm/master/status?domain=' + encodeURIComponent(domain)).then(function(r){ return r.json(); }),
+      ]);
+    }).then(function(arr) {
       var access = arr[0] || {};
       var master = arr[1] || {};
       if (!access.allowed) {

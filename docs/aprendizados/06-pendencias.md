@@ -28,29 +28,32 @@ Vários segredos circularam em chat durante o desenvolvimento e a operação.
 
 ## 🔴 Segurança — identidade do tenant (auditoria de 25/09)
 
-A auditoria de rotas achou que **a identidade do cliente não é verificada**.
-Já corrigido: `/debug/*`, `/sim/*` e `/bitrix/webhook` públicos; relatórios e
-painel globais. Ainda aberto, em ordem:
+A auditoria de rotas achou que **a identidade do cliente não era verificada**.
+Corrigido em 25/09:
 
-- [ ] **`POST /bitrix/auth` emite cookie de cliente sem validar o token.**
-      Qualquer um manda `{domain: vítima, access_token: lixo}`, recebe o
-      cookie da vítima e **sobrescreve o token real** — derruba a integração
-      dela. Todo o isolamento do `/ui/*` depende desse cookie. Correção:
-      chamar `app.info`/`profile` no Bitrix com o token recebido e conferir
-      domínio e `member_id` antes de gravar e antes de emitir o cookie.
-- [ ] **`/bitrix/install` e `/bitrix/callback`** gravam tokens e
-      `application_token` sem validação. Mesma correção.
-- [ ] **`/bitrix/connector/event`** não confere `application_token`: dá pra
-      forjar resposta de operador e enviar pela sessão de outro cliente.
-- [ ] **`/bitrix/crm/*`** confia no `?domain=` e no `user_id` informados por
-      quem chama. `crm/history` usa `GetMessagesByPhone`, sem filtro de
-      tenant — **visto no homolog**: a aba do CRM do portal
-      crm.uctechnology.com.br mostrava as conversas e o número (+558196807479)
-      de outro cliente, com opção de enviar por ele.
-- [ ] **`/ui/bitrix/accounts` e `/ui/bitrix/queues*`** aceitam `session_jid`
-      e domínio de outro tenant (listar, vincular, desvincular).
-- [ ] `/bitrix/partner/link` transfere número de outro tenant (match por
-      prefixo do telefone).
+- [x] `/debug/*`, `/sim/*`, `/bitrix/webhook` e `/bitrix/crm/debug` públicos.
+- [x] Relatórios, export e painel mostravam dados de todos os clientes.
+- [x] `/bitrix/auth`, `/bitrix/install` e `/bitrix/callback` gravavam token e
+      emitiam cookie sem validar — agora o token é conferido em `/rest/profile`
+      do próprio portal. Cookie de tenant mudou de assinatura (os antigos,
+      possivelmente forjados, deixaram de valer).
+- [x] "First-touch" do `application_token` aceitava o primeiro que chegasse.
+- [x] `/bitrix/crm/*` confiava em `?domain=`/`user_id`; histórico trazia
+      conversas de outros clientes; envio aceitava número alheio.
+- [x] `/ui/bitrix/*`, histórico, permissões e SMS aceitavam outro portal/número.
+- [x] `/bitrix/partner/link` transferia número por prefixo; `bp/send`
+      disparava por número de outro portal.
+
+Ainda aberto:
+
+- [ ] **`CONNECTOR_EVENT_TOKEN=exigir`.** Hoje em `observar`: o domínio do
+      evento já é conferido contra o dono do número, mas `application_token`
+      divergente só vai pro log. Procurar no log por
+      `connector event: application_token nao confere` — sem ocorrência em
+      evento legítimo, mudar para `exigir`.
+- [ ] Nome do operador (`operator_name`) ainda vem da tela.
+- [ ] `/webhook/cloud/:id` pula a assinatura se `CloudAppSecret` estiver vazio.
+- [ ] `APP_SECRET` vazio libera `/wa/*` e `/stats/*` — falhar no boot.
 
 ---
 

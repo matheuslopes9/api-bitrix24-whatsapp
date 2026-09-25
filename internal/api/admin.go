@@ -154,7 +154,10 @@ func signTenantCookie(secret, domain string, expiresAt time.Time) string {
 	exp := strconv.FormatInt(expiresAt.Unix(), 10)
 	payload := exp + "|" + domain
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
+	// "v2:" so' entra no MAC. Invalida todo cookie emitido antes de o
+	// /bitrix/auth passar a validar o token — qualquer um deles pode ter
+	// sido forjado. Quem tinha cookie so' refaz o handshake ao abrir o app.
+	mac.Write([]byte("v2:" + payload))
 	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -183,7 +186,7 @@ func verifyTenantCookie(secret, raw string) (string, bool) {
 		}
 		payload := exp + "|" + domain
 		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write([]byte(payload))
+		mac.Write([]byte("v2:" + payload)) // ver signTenantCookie
 		expected := hex.EncodeToString(mac.Sum(nil))
 		if subtle.ConstantTimeCompare([]byte(gotMAC), []byte(expected)) != 1 {
 			return "", false

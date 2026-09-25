@@ -435,7 +435,7 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 	appToken := c.FormValue("auth[application_token]")
 	// SEGURANCA: valida application_token contra o que persistimos no install.
 	// Bloqueia atacante anonimo mandando POST com auth[domain] forjado.
-	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken)
+	portal, err := h.validateBitrixAppToken(c.Context(), domain, appToken, c.FormValue("auth[access_token]"))
 	if err != nil {
 		h.log.Warn("bp-robot: auth invalid",
 			zap.String("domain", domain), zap.Error(err))
@@ -464,6 +464,18 @@ func (h *handlers) bpRobotSend(c *fiber.Ctx) error {
 	toPhone := normalizeWAPhone(c.FormValue("properties[to_phone]"))
 	if toPhone == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "to_phone vazio"})
+	}
+
+	// O token prova o PORTAL, nao o numero: properties[session_jid] vem do
+	// dropdown do robo e nada impedia um portal de disparar pelo numero de
+	// outro cliente. Mesma regra das telas: so' numero do proprio portal.
+	if sj := strings.TrimSpace(c.FormValue("properties[session_jid]")); sj != "" {
+		c.Locals("tenant_domain", portal.Domain)
+		if ok, resp := h.exigirNumeroDoPortal(c, sj); !ok {
+			h.log.Warn("bp-robot: session_jid de outro portal — recusado",
+				zap.String("domain", portal.Domain), zap.String("session_jid", sj))
+			return resp
+		}
 	}
 
 	switch code {
