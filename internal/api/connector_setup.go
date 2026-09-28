@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -167,4 +168,41 @@ func (h *handlers) conectorDeEnvio(ctx context.Context, sessionJID string, porta
 		lineID = 1
 	}
 	return connectorID, lineID
+}
+
+// semearTokenDoPortal grava o token guardado em bitrix_portals APENAS quando
+// nao ha' um token utilizavel — e nunca quando o do portal ja' venceu.
+//
+// O BUG QUE ISTO CORRIGE: uiActivateConnector e uiLinkQueue chamavam SaveToken
+// com portal.AccessToken sem olhar o que ja' existia. Esse campo guarda o token
+// do ultimo install/auth e envelhece: quando o refresh tinha acabado de renovar
+// o token bom, a gravacao o subistituia por um vencido, e TODAS as chamadas
+// seguintes falhavam com "expired_token".
+//
+// O efeito pratico era o pior possivel: o botao "Forcar register+activate", que
+// o suporte usa justamente pra consertar um portal, comecava destruindo a
+// credencial boa. Medido no homolog em 28/09 — o testar-conexao autenticava e o
+// activate logo em seguida respondia expired_token nos cinco passos.
+//
+// Devolve o que aconteceu, pra aparecer no diagnostico em vez de virar "ok".
+func (h *handlers) semearTokenDoPortal(ctx context.Context, creds bitrix.TenantCreds, portal *db.BitrixPortal) string {
+	if portal == nil || portal.AccessToken == "" {
+		return "pulado: portal sem token guardado"
+	}
+	dominio := normalizePortalDomain(portal.Domain)
+	if t, err := h.repo.GetBitrixTokenUtilizavel(ctx, dominio); err == nil && t != nil && t.AccessToken != "" {
+		// Ja' existe token em uso. Sobrescrever so' faz sentido se o do portal
+		// for mais novo — e normalmente nao e'.
+		if !t.ExpiresAt.Before(portal.ExpiresAt) {
+			return "pulado: ja' existe token igual ou mais novo em uso"
+		}
+	}
+	restante := int(portal.ExpiresAt.Sub(timeNow()).Seconds())
+	if restante <= 0 {
+		return "pulado: o token do portal ja' venceu (gravar so' quebraria o que funciona)"
+	}
+	if err := h.bitrixClient.SaveToken(ctx, creds, portal.AccessToken, portal.RefreshToken, restante); err != nil {
+		return "erro: " + err.Error()
+	}
+	return "ok"
 }

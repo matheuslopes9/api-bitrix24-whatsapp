@@ -884,9 +884,8 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 
 	// Salva o token em bitrix_tokens para que o ProcessInbound consiga autenticar
 	creds := h.portalToCreds(portal)
-	if err := h.bitrixClient.SaveToken(c.Context(), creds, portal.AccessToken, portal.RefreshToken,
-		int(portal.ExpiresAt.Sub(timeNow()).Seconds())); err != nil {
-		h.log.Warn("uiLinkQueue: save token failed", zap.Error(err))
+	if r := h.semearTokenDoPortal(c.Context(), creds, portal); r != "ok" {
+		h.log.Info("uiLinkQueue: token do portal nao foi gravado", zap.String("motivo", r))
 	}
 
 	go func() {
@@ -965,13 +964,10 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 	h.log.Info("uiActivateConnector: using appBase", zap.String("appBase", appBase), zap.String("event_url", appBase+"/bitrix/connector/event"))
 	steps := map[string]string{}
 
-	// Salva token primeiro
-	if err := h.bitrixClient.SaveToken(c.Context(), creds, portal.AccessToken, portal.RefreshToken,
-		int(portal.ExpiresAt.Sub(timeNow()).Seconds())); err != nil {
-		steps["save_token"] = "erro: " + err.Error()
-	} else {
-		steps["save_token"] = "ok"
-	}
+	// Semeia o token SO' se fizer falta. Gravar por cima do que ja' funciona
+	// era o que fazia este proprio botao quebrar o portal que ele deveria
+	// consertar — ver semearTokenDoPortal.
+	steps["save_token"] = h.semearTokenDoPortal(c.Context(), creds, portal)
 
 	// Verifica qual app está sendo usado
 	if appInfo, err := h.bitrixClient.RawCall(c.Context(), creds, "app.info", map[string]interface{}{}); err == nil {
