@@ -329,3 +329,137 @@ administrador, o Bitrix recusa o registro.
 **Lição:** no Bitrix, o que o app pode fazer é o que **quem instalou** podia. Um
 app instalado por usuário comum é permanentemente limitado — vale conferir isso
 antes de culpar o código.
+
+---
+
+## 17. Dois dias sem receber mensagem, por um campo vazio
+
+**Sintoma:** `crm.uctechnology.com.br` parou de receber em 26/09 11:16. As seis
+últimas mensagens falharam e **nada mais passou por dois dias**. O painel do
+cliente não acusava nada de anormal.
+
+**Causa-raiz:** nenhuma credencial OAuth cadastrada — nem em
+`BITRIX_CLIENT_ID`/`BITRIX_CLIENT_SECRET`, nem na conta. Sem elas o token não
+renova. O padrão que isso cria é traiçoeiro: **toda vez que alguém abre o app no
+Bitrix chega um token novo, válido por 1 hora**, e tudo funciona. Passada a
+hora, para tudo — até alguém abrir de novo. Parece intermitência; é um ciclo.
+
+**Fix:** credenciais cadastradas. A mensagem de erro dizia isso desde o começo
+(`client_id do token="", da config=""`), e foi lida como "ou um ou outro" quando
+era **os dois**.
+
+**Lição:** um sistema que se recupera sozinho ao ser aberto esconde a falha. O
+alerta tem que disparar no *token que não renova*, não no *sintoma que some*.
+
+---
+
+## 18. O botão de reparo destruía a credencial antes de usá-la
+
+**Sintoma:** com o token recém-renovado e funcionando, "Forçar
+register+activate" respondia `expired_token` nos cinco passos.
+
+**Causa-raiz:** a ordem dos passos. `save_token` vinha primeiro e gravava
+`portal.AccessToken` — o token guardado em `bitrix_portals` no último install,
+já vencido — **por cima** do token bom em `bitrix_tokens`.
+
+**Fix:** `semearTokenDoPortal` só grava quando não há token utilizável, e nunca
+grava um já vencido. O motivo aparece no diagnóstico em vez de virar `ok`.
+
+**Lição:** a ferramenta de reparo é a que roda no pior momento, no estado mais
+frágil. Ela precisa de mais cuidado que o caminho normal, não menos.
+
+---
+
+## 19. `expired_token` sem volta
+
+**Sintoma:** a tela de Saúde dizia "token ok, válido até 14:04" enquanto **toda**
+chamada real respondia `expired_token`.
+
+**Causa-raiz:** o cliente só renova quando o `expires_at` **gravado** já passou.
+Mas quem invalida o token é o Bitrix, por conta própria — basta uma nova
+autorização ou um refresh feito noutro lugar. O banco seguia confiante e
+nenhuma renovação era tentada.
+
+**Fix:** na primeira recusa por token inválido, renovação forçada e uma nova
+tentativa. Se o `refresh_token` também morreu, o erro que sobe já diz o que
+fazer.
+
+**Lição:** validade local é palpite. A autoridade é quem emite — e a resposta
+dele vale mais que a nossa coluna.
+
+---
+
+## 20. O "Preview do app" nunca funcionou
+
+**Sintoma:** a tela que o suporte usa para ver o app como o cliente vê aparecia
+vazia, em Demonstração **e** com cliente selecionado.
+
+**Causa-raiz:** o painel lê o portal de `?portal=`; o preview montava a URL com
+`&domain=`. Dentro do iframe `PORTAL` ficava vazio, `apiUrl()` não anexava
+parâmetro e todo `/ui/*` respondia "tenant não identificado".
+
+**Fix:** o painel aceita os dois. Trocar só o produtor quebraria a aba do CRM,
+que lê `domain`.
+
+**Lição:** dois nomes para a mesma coisa em pontas diferentes é bug garantido —
+e silencioso, porque cada lado está "certo" isoladamente.
+
+---
+
+## 21. A tela escrevia `undefined` para o usuário
+
+**Sintoma:** "undefined ativas" no card e "undefined sessão(ões) ativa(s)" no
+rodapé do painel do cliente.
+
+**Causa-raiz:** `fetch().then(r => r.json())` **sem checar `r.ok`**. Num 403 o
+corpo é `{"error":...}`, `d.active_sessions` vem `undefined` e vai direto para o
+DOM. E o `.catch` no fim estava **vazio**: qualquer falha sumia e o painel
+seguia exibindo número velho como se fosse atual.
+
+**Fix:** guarda de `r.ok` + verificação de tipo, e o catch passa a mostrar
+`--` com o motivo.
+
+**Lição:** `r.json()` sem `r.ok` é o `catch {}` do front — transforma erro em
+dado. E estado desconhecido tem que **parecer** desconhecido.
+
+---
+
+## 22. A Saúde acusava conector quebrado com o conector ativo
+
+**Sintoma:** depois de republicar o conector, os cinco passos responderam `ok`,
+o `imconnector.status` respondeu `STATUS: true` — e a tela continuou dizendo
+"registrado, mas nao ativo+configurado".
+
+**Causa-raiz:** `GetConnectorStatus` devolve o conteúdo de `result` **já
+desembrulhado** pelo `client.call()`. O parse procurava `st.Result.STATUS`. O
+`encoding/json` aceita sem reclamar — campo ausente vira zero value — então os
+três booleanos viravam `false` **em silêncio**.
+
+**Fix:** parse na raiz, extraído para função testável, com teste sobre a
+resposta real copiada do homolog e outro que **recusa** a forma com envelope.
+
+**Lição:** é a segunda vez que `encoding/json` aceita a struct errada e some com
+o problema (ver #3 do ciclo da fila morta). Parse de resposta externa merece
+teste com a carga real — o compilador não ajuda aqui, e o log fica limpo.
+
+---
+
+## 23. Pânico em tarefa de fundo derrubava o app inteiro
+
+**Sintoma:** nenhum ainda — achado em varredura. Vale registrar antes de custar.
+
+**Causa-raiz:** 16 goroutines de fundo, **zero `recover()`**. Em Go, pânico em
+goroutine não sobe para o chamador: mata o **processo**. O `recover` do Fiber só
+cobre o que roda dentro de um handler HTTP.
+
+O pior ponto eram os workers da fila — por onde passa **toda** mensagem de
+cliente, com parse de JSON, acesso a mapa, download de mídia e chamada ao
+Bitrix. Uma única mensagem malformada tiraria o connector do ar para todos os
+clientes.
+
+**Fix:** pânico no processamento vira erro comum e o job segue para retry/fila
+morta; os três jobs perpétuos (alertas, reprocesso, licença) têm a contenção por
+**iteração**, para que uma volta ruim não mate o laço.
+
+**Lição:** `go func()` sem `recover` é um crash global esperando entrada
+estranha. O raio de alcance não é a goroutine — é o processo.

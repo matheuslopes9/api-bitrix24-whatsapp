@@ -78,7 +78,14 @@ falha só ia para o log. Visto em crm.uctechnology.com.br em 25/09.
 
 ---
 
-## 🟢 Conector não ficava ativo na Linha Aberta *(resolvido 28/09)*
+## 🟢 Conector não ficava ativo na Linha Aberta *(resolvido e VALIDADO no ar, 28/09)*
+
+> Confirmado no homolog: depois de republicar, o `imconnector.status` respondeu
+> `{"ERROR":false,"CONFIGURED":true,"STATUS":true}` e a fila zerou (6 mensagens
+> presas entregues, 0 falhas em 7 dias).
+>
+> **Portal já quebrado não se conserta no boot** — nada reativa retroativamente.
+> Para cada um: Saúde do cliente → "Forçar register+activate".
 
 **Sintoma medido:** a tela de Saúde mostrava `Conector wa_qr_558196807479 — falhou`.
 As três chamadas retornavam sucesso e o conector ficava inútil — sem
@@ -134,6 +141,49 @@ permissão por número inteira. Não atravessa clientes — o cookie de tenant s
 
 ---
 
+## 🟡 Credencial do Bitrix: duas fontes, e a que quase ninguém usa
+
+Descoberto rastreando a queda de dois dias em 28/09.
+
+- **`portalToCreds`** lê `BITRIX_CLIENT_ID`/`BITRIX_CLIENT_SECRET` do **ambiente**
+  — usada por **~40 chamadas** em 7 arquivos.
+- **`localCredsForDomain`** lê a credencial gravada na **conta** (o que a tela
+  "Credenciais do app" preenche) — usada por **3 chamadas**.
+
+Cadastrar pela tela dá a impressão de resolver e alcança quase nada. Hoje
+funciona porque a env está preenchida, mas a armadilha continua armada.
+
+- [ ] `portalToCreds` cair para a credencial da conta quando a env estiver
+      vazia. Enquanto isso, **a env é a fonte que vale** — a mesma para todos os
+      clientes.
+
+---
+
+## 🟡 WhatsApp — Status (`status@broadcast`) sem filtro
+
+Não há nenhum filtro para `status@broadcast` no caminho de entrada. Atualizações
+de Status dos contatos entram como mensagem normal: criam contato e vão para o
+Contact Center.
+
+- [ ] Filtrar na entrada. Não houve enxurrada até agora, mas é questão de o
+      número conectado ter uma agenda ativa.
+
+---
+
+## 🟢 Tarefas de fundo sem `recover` *(resolvido 28/09)*
+
+16 goroutines, zero `recover()`. Em Go, pânico em goroutine mata o **processo**
+— o `recover` do Fiber só cobre handler HTTP.
+
+- [x] Workers da fila: pânico vira erro e o job segue para retry/fila morta.
+      Era o pior ponto — passa **toda** mensagem de cliente por ali.
+- [x] Os três jobs perpétuos (alertas, reprocesso, licença): contenção por
+      iteração, para que uma volta ruim não mate o laço.
+- [ ] Sobram 4 goroutines em `cmd/server/main.go` (limpeza, boot) sem proteção.
+      Risco menor — fazem pouco — mas o mesmo raio de alcance.
+
+---
+
 ## 🔴 Banco de dados — investigar
 
 Em 24/09 o Postgres entrou em **recovery mode** e demorou mais de 10 minutos
@@ -142,8 +192,10 @@ sistema inteiro: sem banco, mensagem de cliente não é entregue.
 
 - [ ] Descobrir **por que** houve desligamento sujo (reinício do host, falta de
       memória, disco cheio). Se foi disco, volta a acontecer.
-- [ ] Conferir espaço livre e política de retenção de `messages`
-      (migration `020_messages_retention`).
+- [x] Política de retenção de `messages`: **já existe e roda** —
+      `DeleteOldMessages` é chamada diariamente ([cmd/server/main.go](../../cmd/server/main.go)),
+      365 dias rolling. A pendência anterior estava desatualizada.
+- [ ] Conferir espaço livre em disco no servidor.
 - [ ] Confirmar que existe **backup recente e restaurável** — houve um
       `pg_dump` antes da migração de licenças, mas não há rotina automática.
 

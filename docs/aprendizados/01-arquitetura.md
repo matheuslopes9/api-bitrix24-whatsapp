@@ -116,6 +116,30 @@ compartilhado por todos os caminhos de envio.
 A espera devolve o job ao fim da fila em vez de dormir dentro do worker — senão
 uma rajada num número ocupa os 20 workers e trava o envio de todos os outros.
 
+## Decisão: pânico em tarefa de fundo não derruba o processo
+
+Em Go, pânico dentro de `go func()` **não** sobe para quem disparou — mata o
+processo. O `recover` do Fiber ([server.go](../../internal/api/server.go)) só
+cobre o que roda dentro de um handler HTTP, então job periódico e trabalho
+disparado depois da resposta ficavam de fora.
+
+O ponto mais exposto eram os **workers da fila**: passa ali **toda** mensagem de
+cliente, com parse de JSON, acesso a mapa, download de mídia e chamada ao
+Bitrix. Uma mensagem malformada tiraria o connector do ar para todos os
+clientes.
+
+A regra que ficou:
+
+- **no processamento de job**, pânico vira erro comum — o job segue para retry
+  e, insistindo, para a fila morta, onde dá para inspecionar;
+- **em job periódico**, a contenção envolve **uma iteração**, nunca o laço: uma
+  volta ruim não pode matar o job;
+- a stack vai no log, porque pânico contido sem stack é quase impossível de
+  diagnosticar depois — não há crash nem core, só um erro solto.
+
+Ver `semPanico` em [internal/queue/worker.go](../../internal/queue/worker.go) e
+[internal/api/tarefas.go](../../internal/api/tarefas.go).
+
 ## Decisão: filas Redis para inbound/outbound
 
 Mensagens entram e saem por filas Redis processadas por worker pools. Isola picos
