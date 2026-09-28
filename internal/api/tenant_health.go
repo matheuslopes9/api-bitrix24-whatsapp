@@ -542,18 +542,11 @@ func (h *handlers) adminTestarConexao(c *fiber.Ctx) error {
 		// ser o conector marcado como inoperante (ERROR) ou o data.set que nunca
 		// pegou (CONFIGURED), e dizer o errado manda o suporte procurar no lugar
 		// errado.
-		var st struct {
-			Result struct {
-				Error      bool `json:"ERROR"`
-				Configured bool `json:"CONFIGURED"`
-				Status     bool `json:"STATUS"`
-			} `json:"result"`
-		}
-		if jerr := json.Unmarshal(raw, &st); jerr != nil {
+		r, okParse := lerStatusConector(raw)
+		if !okParse {
 			add(nome, false, "resposta inesperada do imconnector.status: "+string(raw))
 			continue
 		}
-		r := st.Result
 		det := "linha " + itoa(a.OpenLineID)
 		switch {
 		case r.Status:
@@ -592,4 +585,36 @@ func (h *handlers) adminTestarConexao(c *fiber.Ctx) error {
 	h.repo.WriteAudit(ctx, h.adminActor(c), "tenant.testar-conexao", domain,
 		"ok="+boolStr(tudoOK), clientIP(c))
 	return c.JSON(fiber.Map{"ok": tudoOK, "testes": testes})
+}
+
+// statusConector e' a resposta do imconnector.status.
+//
+// Os campos vem na RAIZ do que GetConnectorStatus devolve — o client.call() ja'
+// desembrulha o "result" do Bitrix:
+//
+//	{"LINE":7,"CONNECTOR":"wa_qr_...","ERROR":false,"CONFIGURED":true,"STATUS":true}
+type statusConector struct {
+	Connector  string `json:"CONNECTOR"`
+	Error      bool   `json:"ERROR"`
+	Configured bool   `json:"CONFIGURED"`
+	Status     bool   `json:"STATUS"`
+}
+
+// lerStatusConector interpreta a resposta e diz se deu pra entender.
+//
+// Existe como funcao separada por um motivo concreto: a primeira versao disto
+// procurava os campos DENTRO de um envelope "result" que nao existe. O
+// encoding/json aceita sem reclamar — campo ausente vira zero value —, entao os
+// tres booleanos viravam false em silencio e a tela de Saude acusava conector
+// quebrado com o conector PERFEITAMENTE ativo (medido no homolog em 28/09:
+// STATUS:true no Bitrix, "falhou" na tela).
+//
+// O ok=false depende de CONNECTOR vir preenchido. Sem ele nao entendemos a
+// resposta, e dizer "falhou" seria repetir o mesmo chute — so' que ao contrario.
+func lerStatusConector(raw []byte) (statusConector, bool) {
+	var s statusConector
+	if err := json.Unmarshal(raw, &s); err != nil || s.Connector == "" {
+		return s, false
+	}
+	return s, true
 }
