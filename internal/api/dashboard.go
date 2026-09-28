@@ -1501,7 +1501,15 @@ var qrLastCode = ''; // ultimo conteudo de QR mostrado — evita resetar timer a
 //      cards/listas agregados se ha so 1 portal.
 // var pra ser mutavel — BX24 resolve assincrono e atualiza depois.
 var PORTAL = (function() {
-  try { return new URLSearchParams(window.location.search).get('portal') || ''; } catch(e) { return ''; }
+  // Aceita 'portal' OU 'domain'. O Bitrix abre o painel com ?portal=; o
+  // "Preview do app" do admin monta a URL com &domain= (o mesmo construtor
+  // serve a aba do CRM, que le 'domain'). Lendo so' 'portal', o preview
+  // nunca enxergava o cliente: PORTAL ficava vazio, apiUrl() nao anexava
+  // parametro nenhum e todo /ui/* respondia "tenant nao identificado".
+  try {
+    var q = new URLSearchParams(window.location.search);
+    return q.get('portal') || q.get('domain') || '';
+  } catch(e) { return ''; }
 })();
 
 // USER_ID — id Bitrix do user logado no Bitrix, passado pelo /bitrix-app
@@ -1563,8 +1571,16 @@ function closeSidebar() {
 // ─── Visão geral (painel) ─────────────────────────────────────────────────────
 function carregarVisaoGeral() {
   fetch(apiUrl('/ui/overview'))
-  .then(function(r) { return r.json(); })
+  .then(function(r) {
+    // SEM checar r.ok, um 403 caia direto no render: d.active_sessions vinha
+    // undefined e a tela escrevia "undefined ativas" e "undefined sessao(oes)
+    // ativa(s)" — foi o que o Preview do app mostrou por muito tempo.
+    if (!r.ok) { return r.json().catch(function(){ return {}; })
+                  .then(function(e){ throw new Error(e.error || ('HTTP ' + r.status)); }); }
+    return r.json();
+  })
   .then(function(d) {
+    if (!d || typeof d.active_sessions !== 'number') { throw new Error('resposta sem dados de sessao'); }
     setText('m-sessoes', d.active_sessions);
     setText('m-recebidas', d.messages_inbound || 0);
     setText('m-enviadas', d.messages_outbound || 0);
@@ -1603,7 +1619,18 @@ function carregarVisaoGeral() {
     // Gráfico atividade
     atualizarGraficoAtividade(d.messages_inbound || 0, d.messages_outbound || 0);
   })
-  .catch(function() {});
+  .catch(function(e) {
+    // O catch aqui era vazio: qualquer falha sumia e a tela ficava mostrando
+    // numero velho como se fosse atual. Estado desconhecido tem que PARECER
+    // desconhecido.
+    ['m-sessoes','m-recebidas','m-enviadas','m-falhas','q-entrada','q-saida','q-mortas']
+      .forEach(function(id) { setText(id, '--'); });
+    var bs = document.getElementById('m-sess-badge');
+    if (bs) { bs.textContent = 'sem dados'; bs.className = 'badge badge-red'; }
+    setText('sb-status', 'Sem dados');
+    setText('sb-sessoes', (e && e.message) ? e.message : 'nao foi possivel carregar');
+    setText('cfg-sess-count', '--');
+  });
 }
 
 function atualizarStatus(online) {
@@ -1622,7 +1649,7 @@ function atualizarStatus(online) {
 // se o plano for Basico/trial. Chamada a cada poll de /ui/overview.
 function atualizarLicenca() {
   fetch(apiUrl('/ui/license'))
-    .then(function(r){ return r.json(); })
+    .then(function(r){ if (!r.ok) { throw new Error('HTTP ' + r.status); } return r.json(); })
     .then(function(p){
       if (!p || p.error) return;
       var card = document.getElementById('plan-card');

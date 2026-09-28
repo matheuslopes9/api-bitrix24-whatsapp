@@ -26,6 +26,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -65,6 +66,26 @@ func numeroBase(jid string) string {
 		jid = jid[:i]
 	}
 	return strings.TrimPrefix(jid, "+")
+}
+
+// ErrTenantNaoIdentificado: nao da' pra saber de quem e' o pedido.
+//
+// Existe para separar "nao sei quem e' voce" de "o banco falhou". Os dois
+// caiam no mesmo 500, e o efeito era duplo: o monitoramento acusava erro de
+// servidor no que era so' falta de contexto, e a mesma condicao respondia 403
+// numa rota, 400 noutra e 500 numa terceira.
+var ErrTenantNaoIdentificado = errors.New("tenant nao identificado — abra o app pelo Bitrix24")
+
+// respostaDeTenant traduz o erro em status HTTP: 401 quando nao sabemos quem
+// e' (o cliente pode resolver reabrindo o app), 500 so' quando quebrou de fato.
+func respostaDeTenant(c *fiber.Ctx, err error) error {
+	if errors.Is(err, ErrTenantNaoIdentificado) || strings.Contains(err.Error(), "tenant nao identificado") {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error":  ErrTenantNaoIdentificado.Error(),
+			"codigo": "sem_identidade",
+		})
+	}
+	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 }
 
 // tenantDoPedido devolve o dominio do cliente que fez a chamada.
@@ -329,6 +350,7 @@ func (h *handlers) eventoPodeUsarSessao(c *fiber.Ctx, sessionJID string) bool {
 // Regras, pra quem entrou com cookie de tenant:
 //   - domain/portal diferente do cookie -> 403; ausente -> preenchido;
 //   - session_jid/jid tem que ser numero do portal (ou em pareamento).
+//
 // Super-admin passa direto: o painel dele opera qualquer cliente.
 func (h *handlers) escoparAoTenant(c *fiber.Ctx) error {
 	if src, _ := c.Locals("auth_source").(string); src != "tenant" {
