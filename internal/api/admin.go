@@ -1449,7 +1449,10 @@ func (h *handlers) adminTenantListPlacements(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
 	}
 	creds := h.portalToCreds(portal)
-	placements, err := h.bitrixClient.ListPlacements(ctx, creds)
+	// placement.get (o que esta' VINCULADO), nao placement.list (o catalogo do
+	// que o app poderia usar). Com a segunda, a tela mostrava 0 num portal com
+	// 4 abas registradas e funcionando.
+	placements, err := h.bitrixClient.ListBoundPlacements(ctx, creds)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{
 			"error": err.Error(),

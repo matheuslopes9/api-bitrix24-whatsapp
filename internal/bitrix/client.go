@@ -1377,6 +1377,34 @@ func (c *Client) BindPlacement(ctx context.Context, creds TenantCreds, placement
 // app). Nesse caso, devolvemos array vazio — sem info de handler, o
 // dedup nao tem como funcionar; melhor pular e deixar o Bitrix lidar
 // com duplicatas (que so' acontecem em LEFT_MENU, que ja' removemos).
+// ListBoundPlacements devolve os placements REALMENTE VINCULADOS pelo app.
+//
+// placement.list e placement.get respondem perguntas DIFERENTES:
+//
+//	placement.list -> o catalogo do que o app PODE usar (so' os codigos)
+//	placement.get  -> o que o app DE FATO vinculou, com handler
+//
+// A tela de Ferramentas usava a primeira e mostrava "0 abas registradas" num
+// portal com QUATRO vinculadas — inclusive a aba do contato, funcionando.
+// Medido no homolog em 28/09: placement.list devolvia ~40 codigos, o
+// placement.bind respondia "Handler already binded", e a tela dizia zero.
+//
+// Diagnostico errado custa mais que diagnostico ausente: manda o suporte
+// registrar o que ja' esta' registrado.
+func (c *Client) ListBoundPlacements(ctx context.Context, creds TenantCreds) ([]map[string]interface{}, error) {
+	raw, err := c.call(ctx, creds, "placement.get", map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	var vinculados []map[string]interface{}
+	if err := json.Unmarshal(raw, &vinculados); err != nil {
+		return nil, fmt.Errorf("parse placement.get: %w (raw: %s)", err, string(raw))
+	}
+	return vinculados, nil
+}
+
+// ListPlacements devolve o CATALOGO de placements disponiveis (placement.list).
+// Para saber o que esta' vinculado, use ListBoundPlacements.
 func (c *Client) ListPlacements(ctx context.Context, creds TenantCreds) ([]map[string]interface{}, error) {
 	raw, err := c.call(ctx, creds, "placement.list", map[string]interface{}{})
 	if err != nil {
