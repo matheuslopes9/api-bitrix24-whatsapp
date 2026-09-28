@@ -30,11 +30,32 @@ func New(
 	log *zap.Logger,
 ) *fiber.App {
 
+	// BodyLimit precisa acompanhar MEDIA_MAX_MB, senao o limite de midia e'
+	// FICCAO: o Fiber usa 4 MB por padrao e recusa no nivel HTTP, antes de
+	// qualquer codigo nosso rodar.
+	//
+	// Medido no homolog em 28/09, com MEDIA_MAX_MB=64 e maxEmbed=64<<20 no
+	// upload da aba do CRM:
+	//
+	//	mp4  788 KB -> 200
+	//	wav  4,2 MB -> 413 {"error":"Request Entity Too Large"}
+	//	tar   27 MB -> 413
+	//
+	// O operador recebia "Request Entity Too Large" — mensagem do framework,
+	// sem dizer qual e' o limite nem que ele e' configuravel. A folga de 2 MB
+	// cobre o overhead do multipart (fronteiras, cabecalhos, o nome do arquivo)
+	// pra um arquivo exatamente no teto nao ser recusado por causa do envelope.
+	limiteCorpo := cfg.WhatsApp.MediaMaxMB
+	if limiteCorpo <= 0 {
+		limiteCorpo = 64
+	}
+	limiteDeEnvioMB = limiteCorpo
 	app := fiber.New(fiber.Config{
 		AppName:      "WhatsApp-Bitrix24 Connector",
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
+		BodyLimit:    (limiteCorpo + 2) << 20,
 		ErrorHandler: jsonErrorHandler,
 	})
 
@@ -394,8 +415,23 @@ func jsonErrorHandler(ctx *fiber.Ctx, err error) error {
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code
 	}
+	// 413 e' o unico erro do framework que o OPERADOR ve com frequencia, e a
+	// mensagem crua ("Request Entity Too Large") nao diz qual e' o limite nem
+	// que ele e' configuravel. Quem manda um arquivo grande merece saber por
+	// que nao foi, e o que fazer.
+	if code == fiber.StatusRequestEntityTooLarge {
+		return ctx.Status(code).JSON(fiber.Map{
+			"error":  "arquivo maior que o limite de envio do servidor",
+			"limite": limiteDeEnvioMB,
+			"dica":   "envie um arquivo menor, ou aumente MEDIA_MAX_MB e reinicie o app",
+		})
+	}
 	return ctx.Status(code).JSON(fiber.Map{"error": err.Error()})
 }
+
+// limiteDeEnvioMB guarda o teto efetivo pra mensagem de erro poder cita-lo.
+// Preenchido no New(); o valor zero so' aparece em teste que nao sobe o servidor.
+var limiteDeEnvioMB int
 
 func authMiddleware(secret string) fiber.Handler {
 	return func(ctx *fiber.Ctx) error {
