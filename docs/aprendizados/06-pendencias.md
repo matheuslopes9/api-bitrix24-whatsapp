@@ -78,14 +78,31 @@ Corrigido em 25/09:
 Ou seja: o registro está certo, o código do placement é suportado pelo portal, e
 a aba mesmo assim não renderiza. **Causa ainda não determinada.**
 
-Hipóteses a testar (nenhuma verificada):
+### Já ELIMINADO (medido em 28/09)
 
-- [ ] cache de placements do Bitrix por usuário/sessão — testar com logout/login
-      ou outro usuário;
-- [ ] permissão do usuário sobre o app (o app foi instalado por não-admin);
-- [ ] o portal está em `crmMode: CLASSIC` — conferir se a versão do card em uso
-      renderiza abas de aplicativo;
-- [ ] o Bitrix pode exigir que o handler responda a uma checagem antes de exibir.
+- [x] **Cache/sessão por usuário** — testado com **dois usuários diferentes**
+      (id 38 e id 356), sessões separadas, logout e login limpos. Mesma ausência
+      nos dois, em Contato **e** Negócio.
+- [x] **Handler inacessível** — `GET` e `POST` em `/bitrix/crm/tab` respondem
+      **200 com 54KB de HTML**.
+- [x] **Código de placement não suportado** — `CRM_CONTACT_DETAIL_TAB` está no
+      `placement.list` deste portal.
+- [x] **Vínculo incompleto** — o `placement.get` traz o registro inteiro e
+      correto: `title: "UC Talk"`, `langAll` com TITLE no idioma do portal
+      (gerado pelo próprio Bitrix a partir do `TITLE` que enviamos),
+      `userId: 0` (vale para todos os usuários).
+
+### O que sobra
+
+O problema não está no que o app registra — isso está correto em todos os
+campos inspecionáveis. Sobra o lado Bitrix:
+
+- [ ] a versão **on-premise** deste portal pode não renderizar aba de aplicativo
+      no card do CRM em uso;
+- [ ] configuração ou cache de nível de portal (não de usuário).
+
+Próximo passo exige o lado Bitrix: log de eventos do portal, ou o painel
+administrativo — fora do alcance da investigação remota feita até aqui.
 
 > A seção anterior dava isto como **resolvido** em 25/09 (registro com o usuário
 > logado). O registro de fato funciona — o que não funciona é a exibição. São
