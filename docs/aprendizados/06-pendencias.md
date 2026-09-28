@@ -64,7 +64,37 @@ Corrigido em 25/09:
 
 ---
 
-## 🟢 Bitrix — abas do CRM não registradas *(resolvido)*
+## 🔴 Bitrix — a aba do UC Talk NÃO aparece no card, mesmo vinculada
+
+**Medido no homolog em 28/09**, `crm.uctechnology.com.br`, contato 19994:
+
+| evidência | resultado |
+|---|---|
+| `placement.get` | `CRM_CONTACT_DETAIL_TAB` → `.../bitrix/crm/tab` **vinculado** |
+| `placement.bind` | `"Handler already binded"` |
+| `placement.list` | `CRM_CONTACT_DETAIL_TAB` **disponível** neste portal |
+| card do contato | **"UC Talk" não existe no DOM** — nem na barra de abas, nem sob "Mais", nem no iframe do corpo |
+
+Ou seja: o registro está certo, o código do placement é suportado pelo portal, e
+a aba mesmo assim não renderiza. **Causa ainda não determinada.**
+
+Hipóteses a testar (nenhuma verificada):
+
+- [ ] cache de placements do Bitrix por usuário/sessão — testar com logout/login
+      ou outro usuário;
+- [ ] permissão do usuário sobre o app (o app foi instalado por não-admin);
+- [ ] o portal está em `crmMode: CLASSIC` — conferir se a versão do card em uso
+      renderiza abas de aplicativo;
+- [ ] o Bitrix pode exigir que o handler responda a uma checagem antes de exibir.
+
+> A seção anterior dava isto como **resolvido** em 25/09 (registro com o usuário
+> logado). O registro de fato funciona — o que não funciona é a exibição. São
+> problemas diferentes, e o segundo seguia escondido atrás da tela de
+> Ferramentas, que dizia "0 abas registradas" (ver bug #24).
+
+### O que já foi resolvido nesta frente
+
+
 
 O app instalado por usuário **não administrador** não consegue fazer
 `placement.bind`: as abas UC Talk em contato, lead e negócio não apareciam, e a

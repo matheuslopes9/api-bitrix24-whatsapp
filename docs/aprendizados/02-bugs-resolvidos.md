@@ -463,3 +463,28 @@ morta; os três jobs perpétuos (alertas, reprocesso, licença) têm a contenç�
 
 **Lição:** `go func()` sem `recover` é um crash global esperando entrada
 estranha. O raio de alcance não é a goroutine — é o processo.
+
+---
+
+## 24. "0 abas registradas" com quatro registradas
+
+**Sintoma:** a tela de Ferramentas informava que nenhum placement estava
+registrado no portal — reforçando a suspeita de que as abas do CRM não tinham
+subido.
+
+**Causa-raiz:** `placement.list` e `placement.get` respondem perguntas
+diferentes. O primeiro devolve o **catálogo** do que o app *pode* usar (só os
+códigos); o segundo, o que o app **de fato vinculou**, com handler. A tela usava
+o primeiro.
+
+O próprio código já documentava o sintoma — *"versão nova do Bitrix retorna só
+os nomes (catálogo de placements disponíveis) … Devolve vazio"*. Notaram que a
+resposta mudou e trocaram por vazio, em vez de trocar pelo método que responde à
+pergunta certa.
+
+**Fix:** `ListBoundPlacements` usando `placement.get`. `ListPlacements` continua
+para quem quer o catálogo.
+
+**Lição:** diagnóstico errado custa mais que diagnóstico ausente. A tela mandava
+o suporte registrar o que já estava registrado — e escondeu, por dias, o
+problema real (a aba está vinculada e mesmo assim não aparece).
