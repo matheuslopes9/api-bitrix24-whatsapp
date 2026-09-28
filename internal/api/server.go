@@ -50,6 +50,10 @@ func New(
 	h.IniciarAvisosDeLicenca(context.Background())
 	h.IniciarAlertas(context.Background())
 	h.IniciarReprocessoAutomatico(context.Background())
+	// Conector inativo e' a falha mais silenciosa do sistema: token e numero
+	// continuam perfeitos e a mensagem do cliente morre sem erro. Nao escala
+	// depender de alguem perceber — ver conector_reconciliacao.go.
+	h.IniciarReconciliacaoConector(context.Background())
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.
 	// Quando um numero pareia/reconecta, re-registra os robots pra popular o

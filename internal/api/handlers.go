@@ -64,12 +64,33 @@ func newHandlers(
 }
 
 // GET /health
+// GET /health — para monitoramento externo.
+//
+// "active_sessions" contava ListSessions(), que e' quem esta' CARREGADA em
+// memoria, nao quem esta' CONECTADA. Visto em 28/09: respondia 2 com um numero
+// caido ha' horas. Monitor externo plugado nisso diria que esta' tudo bem
+// enquanto um cliente nao recebia mensagem nenhuma.
+//
+// Agora os dois numeros aparecem, e a diferenca entre eles E' o sintoma:
+// carregada mas nao conectada = numero que caiu e nao voltou.
 func (h *handlers) health(c *fiber.Ctx) error {
-	sessions := h.waManager.ListSessions()
+	carregadas := len(h.waManager.ListSessions())
+	conectadas := len(h.waManager.ConnectedSessions())
 	in, out, dead := h.q.Lengths(c.Context())
+
+	// "degraded" e nao "ok": para o monitor, sessao carregada que nao conecta e'
+	// atendimento parado, mesmo com o processo de pe'.
+	status := "ok"
+	if conectadas < carregadas {
+		status = "degraded"
+	}
 	return c.JSON(fiber.Map{
-		"status":          "ok",
-		"active_sessions": len(sessions),
+		"status":             status,
+		"sessions_loaded":    carregadas,
+		"sessions_connected": conectadas,
+		// Mantido pelo nome antigo para nao quebrar quem ja' consome, mas agora
+		// com o numero que importa: conectadas.
+		"active_sessions": conectadas,
 		"queue_inbound":   in,
 		"queue_outbound":  out,
 		"queue_dead":      dead,

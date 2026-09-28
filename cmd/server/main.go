@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/watchdog"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -376,7 +378,7 @@ func main() {
 				zap.String("connector", job.BitrixConnector),
 				zap.String("im_msg_id", job.BitrixImMsgID),
 				zap.String("wa_id", waID))
-			go func() {
+			go semPanico(log, "confirmacao de entrega", func() {
 				bgCtx := context.Background()
 				acct, err := repo.GetBitrixAccountByJID(bgCtx, job.SessionJID)
 				if err != nil {
@@ -401,7 +403,7 @@ func main() {
 				); err != nil {
 					log.Warn("outbound delivery confirmation failed", zap.Error(err))
 				}
-			}()
+			})
 		} else {
 			log.Warn("outbound delivery: skipped (missing connector or msg_id)",
 				zap.String("connector", job.BitrixConnector),
@@ -421,7 +423,11 @@ func main() {
 	go func() {
 		const retentionDays = 365
 		for {
-			n, err := repo.DeleteOldMessages(context.Background(), retentionDays)
+			var n int64
+			var err error
+			semPanico(log, "limpeza de mensagens", func() {
+				n, err = repo.DeleteOldMessages(context.Background(), retentionDays)
+			})
 			if err != nil {
 				log.Warn("cleanup: delete old messages failed", zap.Error(err))
 			} else if n > 0 {
@@ -443,7 +449,12 @@ func main() {
 	if midias != nil {
 		go func() {
 			for {
-				if n, err := midias.ApagarAntigos(cfg.WhatsApp.MediaRetentionDays, time.Now()); err != nil {
+				var n int
+				var err error
+				semPanico(log, "limpeza de arquivos", func() {
+					n, err = midias.ApagarAntigos(cfg.WhatsApp.MediaRetentionDays, time.Now())
+				})
+				if err != nil {
 					log.Warn("cleanup: arquivos antigos", zap.Error(err))
 				} else if n > 0 {
 					log.Info("cleanup: dias de arquivos apagados",
@@ -516,6 +527,29 @@ func buildMessageHandler(
 			zap.String("msg_id", evt.Info.ID),
 		)
 		if evt.Info.IsFromMe {
+			return
+		}
+
+		// Status do WhatsApp e canais NAO sao conversa.
+		//
+		// Nao havia filtro nenhum: cada atualizacao de Status dos contatos da
+		// agenda entrava como mensagem de cliente — criava contato e ia parar no
+		// Contact Center. Nao explodiu ate' agora porque os numeros conectados
+		// tem agenda pequena; um cliente com agenda de verdade viraria enxurrada
+		// no atendimento dele.
+		//
+		// chat "status@broadcast" e' o Status; o servidor "newsletter" sao os
+		// Canais. Lista de transmissao vem com o remetente como chat, entao cai
+		// no fluxo normal (e o que EU transmito ja' morre no IsFromMe acima).
+		if evt.Info.Chat.User == types.StatusBroadcastJID.User &&
+			evt.Info.Chat.Server == types.BroadcastServer {
+			log.Debug("ignorado: atualizacao de Status do WhatsApp",
+				zap.String("de", evt.Info.Sender.String()))
+			return
+		}
+		if evt.Info.Chat.Server == types.NewsletterServer {
+			log.Debug("ignorado: mensagem de Canal do WhatsApp",
+				zap.String("canal", evt.Info.Chat.String()))
 			return
 		}
 
@@ -747,8 +781,8 @@ func buildMessageHandler(
 			ID:          uuid.New(),
 			WAMessageID: evt.Info.ID,
 			SessionID:   &sessionID,
-			FromJID:     fromJID,                          // ex: 5519987717792@s.whatsapp.net
-			ToJID:       stripDeviceSuffix(sessionJID),    // ex: 5519910001772@s.whatsapp.net
+			FromJID:     fromJID,                       // ex: 5519987717792@s.whatsapp.net
+			ToJID:       stripDeviceSuffix(sessionJID), // ex: 5519910001772@s.whatsapp.net
 			AuthorName:  evt.Info.PushName,
 			Direction:   db.DirInbound,
 			MessageType: msgType,
@@ -889,4 +923,27 @@ func downloadURL(url string) ([]byte, error) {
 		return nil, fmt.Errorf("download %s: status %d", url, resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// semPanico contem panico em tarefa de fundo.
+//
+// Em Go, panico dentro de "go func()" nao sobe pro chamador: mata o PROCESSO.
+// O recover do Fiber so' cobre handler HTTP, entao limpeza diaria e confirmacao
+// de entrega ficavam de fora — um nil inesperado ali derrubava o connector de
+// TODOS os clientes por causa de uma tarefa acessoria.
+//
+// Envolve UMA volta do laco, nao o laco inteiro: assim uma iteracao ruim nao
+// mata o job junto. A stack vai no log porque panico contido sem stack e' quase
+// impossivel de diagnosticar depois — nao ha crash, nao ha core.
+func semPanico(log *zap.Logger, tarefa string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panico contido em tarefa de fundo — o app continua de pe",
+				zap.String("tarefa", tarefa),
+				zap.Any("panico", r),
+				zap.ByteString("stack", debug.Stack()),
+			)
+		}
+	}()
+	fn()
 }
