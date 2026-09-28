@@ -30,6 +30,24 @@ mantê-los atualizados mantém o "cérebro" do projeto atualizado.
 Cada bug/decisão segue o padrão **Sintoma → Causa-raiz → Fix → Lição**, para
 que a lição sobreviva mesmo depois que o código mudar.
 
+## O que este projeto ensinou, em quatro frases
+
+Quatro lições se repetiram em bugs de origens completamente diferentes. Elas
+valem mais que o catálogo:
+
+1. **Falha silenciosa é pior que falha barulhenta.** `encoding/json` aceitando a
+   struct errada, `r.json()` sem `r.ok`, `.catch` vazio, `placement.list` no
+   lugar de `placement.get` — nenhum gerou erro, todos mentiram na tela ou no
+   dado. Três custaram dias.
+2. **Diagnóstico errado custa mais que diagnóstico ausente.** Tela dizendo
+   "0 abas registradas" com quatro registradas, e "conector quebrado" com o
+   conector ativo, mandaram procurar no lugar errado.
+3. **Quando o default de uma falha é mostrar demais, inverta o default.** Escopo
+   não preenchido tem que devolver vazio, nunca o banco inteiro.
+4. **Quem decide é o sistema externo, não a nossa coluna.** `expires_at` local
+   dizia que o token valia; o Bitrix dizia que não. A autoridade é de quem
+   emite.
+
 ## Como atualizar o grafo depois de editar estes docs
 
 ```bash
