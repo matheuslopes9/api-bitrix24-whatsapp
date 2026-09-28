@@ -35,7 +35,7 @@ func (h *handlers) IniciarReprocessoAutomatico(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			h.reprocessarPresas(ctx)
+			semPanico(h.log, "reprocesso da fila", func() { h.reprocessarPresas(ctx) })
 			select {
 			case <-ctx.Done():
 				return

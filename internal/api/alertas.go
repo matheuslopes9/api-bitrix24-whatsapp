@@ -81,7 +81,7 @@ func (h *handlers) IniciarAlertas(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				h.verificarAlertas(ctx)
+				semPanico(h.log, "alertas", func() { h.verificarAlertas(ctx) })
 			}
 		}
 	}()

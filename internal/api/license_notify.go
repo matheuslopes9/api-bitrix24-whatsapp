@@ -129,7 +129,7 @@ func (h *handlers) IniciarAvisosDeLicenca(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			h.verificarVencimentos(ctx, escolherCanal(ctx))
+			semPanico(h.log, "aviso de licenca", func() { h.verificarVencimentos(ctx, escolherCanal(ctx)) })
 			time.Sleep(24 * time.Hour)
 		}
 	}()

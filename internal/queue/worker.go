@@ -2,6 +2,8 @@ package queue
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 	"sync"
 
 	"go.uber.org/zap"
@@ -61,6 +63,31 @@ func (wp *WorkerPool) StartOutbound(ctx context.Context, processor OutboundProce
 	wp.log.Info("outbound workers started", zap.Int("count", wp.numWorkers))
 }
 
+// semPanico transforma panico do processador em erro comum.
+//
+// Este e' o caminho mais quente do sistema: TODA mensagem de cliente passa por
+// aqui. O processador faz parse de JSON, mexe em mapas, baixa midia e chama o
+// Bitrix — qualquer nil inesperado vira panico, e panico em goroutine derruba o
+// PROCESSO, nao so' o worker. Uma unica mensagem malformada tirava o connector
+// do ar para todos os clientes.
+//
+// Virando erro, o job segue o caminho normal de retry e, se insistir, vai pra
+// fila morta — onde da' pra inspecionar. O worker continua vivo.
+func (wp *WorkerPool) semPanico(_ context.Context, direcao, jobID string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			wp.log.Error("panico no processamento — contido, o app continua de pe",
+				zap.String("direcao", direcao),
+				zap.String("job_id", jobID),
+				zap.Any("panico", r),
+				zap.ByteString("stack", debug.Stack()),
+			)
+			err = fmt.Errorf("panico no processamento: %v", r)
+		}
+	}()
+	return fn()
+}
+
 func (wp *WorkerPool) inboundLoop(ctx context.Context, id int, processor InboundProcessor) {
 	for {
 		select {
@@ -79,7 +106,7 @@ func (wp *WorkerPool) inboundLoop(ctx context.Context, id int, processor Inbound
 			continue // timeout sem mensagem
 		}
 
-		if err := processor(ctx, job); err != nil {
+		if err := wp.semPanico(ctx, "inbound", job.ID, func() error { return processor(ctx, job) }); err != nil {
 			wp.log.Warn("inbound processing failed, retrying",
 				zap.String("job_id", job.ID),
 				zap.Int("retry", job.RetryCount),
@@ -113,7 +140,7 @@ func (wp *WorkerPool) outboundLoop(ctx context.Context, id int, processor Outbou
 		mu := wp.lockForJID(job.ToJID)
 		mu.Lock()
 
-		if err := processor(ctx, job); err != nil {
+		if err := wp.semPanico(ctx, "outbound", job.ID, func() error { return processor(ctx, job) }); err != nil {
 			wp.log.Warn("outbound processing failed, retrying",
 				zap.String("job_id", job.ID),
 				zap.Int("retry", job.RetryCount),
