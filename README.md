@@ -216,9 +216,25 @@ REDIS_HOST=... REDIS_PORT=6379 REDIS_PASSWORD=...
 BITRIX_REDIRECT_URI=https://<dominio>/bitrix/callback
 ```
 
-`BITRIX_CLIENT_ID` e `BITRIX_CLIENT_SECRET` são **opcionais**: o app é
-instalado por cliente, e cada portal tem o seu. Cadastre em **Saúde do
-cliente → Credenciais do app**. A env global só serve quando há um app único.
+> ⚠️ **`BITRIX_CLIENT_ID` e `BITRIX_CLIENT_SECRET` NÃO são opcionais.**
+>
+> Esta seção dizia o contrário, e seguir isso derrubou um portal por **dois
+> dias** em 26–28/09. Sem elas o token do Bitrix **não renova**: cada abertura do
+> app no Bitrix traz um token novo que vale 1 hora, e depois disso nenhuma
+> mensagem de cliente chega no Contact Center — até alguém abrir o app de novo.
+> Parece intermitência; é um ciclo.
+>
+> **Cadastrar em "Saúde do cliente → Credenciais do app" NÃO substitui a env.**
+> Medido: a credencial da env (`portalToCreds`) é usada por **~40 chamadas** em 7
+> arquivos; a credencial da conta (`localCredsForDomain`), que é o que aquela
+> tela preenche, por **3**. A tela dá a impressão de resolver e alcança quase
+> nada.
+>
+> Como a UC Technology instala o app com **a mesma credencial em todos os
+> clientes**, o lugar certo dela é a env. A tela serve para o caso excepcional de
+> um portal com app próprio.
+>
+> Unificar as duas fontes está em [`docs/aprendizados/06-pendencias.md`](docs/aprendizados/06-pendencias.md).
 
 As de e-mail (`SMTP_HOST`, `EMAIL_SENDER`, `ALERT_RECIPIENTS`) também são
 opcionais — valem como carga inicial da aba **Alertas**.
@@ -271,8 +287,22 @@ go build ./... && go vet ./... && go test ./...
 | `internal/bitrix` | Nome do contato, listagem de usuários, fila da linha. |
 | `internal/db` | Normalização de permissões por número. |
 | `internal/queue` | Direção do job na dead queue, limite de taxa, falha permanente. |
-| `internal/whatsapp` | Variantes do 9º dígito. |
+| `internal/whatsapp` | Variantes do 9º dígito, ritmo de envio por número. |
 | `internal/email` | Limite de linha SMTP, multipart, template e categorias. |
+| `internal/media` | Layout em disco, limite de tamanho, nome do arquivo. |
+| `internal/api` | Isolamento entre clientes, `connector_id` vs migration, parse do `imconnector.status`. |
+| `internal/queue` (pânico) | Pânico no processamento vira erro, erro comum passa intacto. |
+
+Dois testes existem por causa de falha **silenciosa** de parse, que não aparece
+em log nem em erro — só num teste com a carga real:
+
+- `TestLerStatusConectorFormaRealDoBitrix` usa a resposta do `imconnector.status`
+  copiada do homolog, e um teste irmão **recusa** a forma com envelope `result`.
+  O parse errado fazia a tela de Saúde acusar conector quebrado com o conector
+  ativo.
+- `TestConnectorDaSessaoBateComAMigration` trava o formato do `connector_id`
+  contra o que a migration `014` grava a cada boot. Divergir aí faz o banco
+  apontar para um conector que nunca foi registrado.
 
 ### JavaScript dentro do Go
 
@@ -377,6 +407,7 @@ apagada por engano junto de um bloco substituído.
 | Licenças e pagamentos | Funcionando |
 | Alertas por e-mail | Funcionando |
 | Permissões por número | Funcionando — lista pela estrutura da empresa |
+| Aba do UC Talk no card do CRM | **Não aparece** — vínculo correto, causa no lado Bitrix |
 | Testes automatizados | Parcial — ver tabela acima |
 | WhatsApp oficial (Cloud API) | Implementado, pouco exercitado |
 
@@ -391,3 +422,13 @@ apagada por engano junto de um bloco substituído.
   `BX24` do usuário logado; no backend, não.
 - **Alerta de sessão não cobre Cloud API.** Ela é stateless por HTTPS e não
   vive no manager, então ausência ali não significa queda.
+- **A aba do UC Talk não aparece no card do CRM.** O vínculo está correto —
+  `placement.get` traz `CRM_CONTACT_DETAIL_TAB` com handler, título e
+  `userId: 0`; o handler responde 200 — e mesmo assim a aba não renderiza.
+  Testado com dois usuários distintos, em Contato e Negócio. Causa do lado
+  Bitrix, ainda não determinada. Ver
+  [`docs/aprendizados/06-pendencias.md`](docs/aprendizados/06-pendencias.md).
+- **Duas fontes de credencial do Bitrix.** A env vale para ~40 chamadas; a
+  credencial por conta, para 3. Ver o aviso na seção de Deploy.
+- **`status@broadcast` sem filtro.** Status dos contatos entra como mensagem
+  normal no Contact Center.
