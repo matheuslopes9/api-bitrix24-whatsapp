@@ -197,23 +197,14 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
-		appBaseURL := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBaseURL+"/bitrix-connect"); err != nil {
-			// APPLICATION_REGISTRATION_ERROR significa que o conector já está registrado
-			// por este app — pode continuar com activate normalmente.
-			h.log.Warn("partner install: imconnector.register failed (may already exist)", zap.String("domain", domain), zap.Error(err))
-		}
 		lineID := portal.OpenLineID
 		if lineID == 0 {
 			lineID = 1
 		}
-		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
-			h.log.Warn("partner install: connector.data.set failed", zap.String("domain", domain), zap.Error(err))
-		}
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
-			h.log.Warn("partner install: imconnector.activate failed", zap.String("domain", domain), zap.Error(err))
-		}
-		h.log.Info("partner install: connector activated", zap.String("domain", domain))
+		// Na instalacao ainda nao existe sessao WhatsApp vinculada, entao o unico
+		// conector publicavel e' o generico do portal. Os conectores por numero
+		// ("wa_qr_<telefone>") sobem depois, no vinculo com a Linha Aberta.
+		h.publicarConector(ctx, creds, portal.ConnectorID, "UC Talk", lineID, "partner install")
 		h.RegisterPlacementsForPortal(ctx, domain, creds)
 
 		// Best-effort: registra UC Talk como atividade BizProc (CRM >
@@ -524,6 +515,19 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		return resp
 	}
 
+	// O conector e' DESTA sessao, nao o generico do portal.
+	//
+	// Gravar portal.ConnectorID aqui criava uma divergencia silenciosa: a
+	// migration 014_qr_connector_per_session roda a cada boot e reescreve todo
+	// connector_id que nao seja "wa_qr_"/"wa_cloud_". No restart seguinte o banco
+	// passava a apontar pra um conector que nunca tinha sido registrado no Bitrix,
+	// e a confirmacao de entrega ia pro lugar errado.
+	connectorID, connectorName, err := h.connectorDaSessao(c.Context(), sessionJID)
+	if err != nil {
+		h.log.Error("partner link: connector_id", zap.String("jid", sessionJID), zap.Error(err))
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	acct := &db.BitrixAccount{
 		ID:           generateUUID(),
 		SessionJID:   sessionJID,
@@ -531,7 +535,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 		ClientID:     h.cfg.Bitrix.ClientID,
 		ClientSecret: h.cfg.Bitrix.ClientSecret,
 		OpenLineID:   lineID,
-		ConnectorID:  portal.ConnectorID,
+		ConnectorID:  connectorID,
 		RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/callback",
 		Status:       db.BitrixAccountActive,
 	}
@@ -561,18 +565,7 @@ func (h *handlers) bitrixPartnerLink(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
-		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, portal.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
-			h.log.Warn("partner link: register connector failed", zap.Error(err))
-		}
-		if err := h.bitrixClient.SetConnectorData(ctx, creds, portal.ConnectorID, lineID, ""); err != nil {
-			h.log.Warn("partner link: set connector data failed", zap.Error(err))
-		}
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, lineID, true); err != nil {
-			h.log.Warn("partner link: activate connector failed", zap.Error(err))
-		}
-		h.log.Info("partner link: connector activated",
-			zap.String("jid", sessionJID), zap.String("domain", domain))
+		h.publicarConector(ctx, creds, connectorID, connectorName, lineID, "partner link")
 	}()
 
 	h.log.Info("partner link: session linked to portal",

@@ -524,18 +524,48 @@ func (h *handlers) adminTestarConexao(c *fiber.Ctx) error {
 		add("Conector", false, "nenhuma sessao WhatsApp vinculada a uma Linha Aberta")
 	}
 	for _, a := range accts {
-		raw, err := h.bitrixClient.GetConnectorStatus(ctx, creds, a.ConnectorID, a.OpenLineID)
-		if err != nil {
-			add("Conector "+a.ConnectorID, false, err.Error())
+		nome := "Conector " + a.ConnectorID
+		// LINE ausente vira 0 no imconnector.status, e com 0 a resposta e'
+		// CONFIGURED=false SEMPRE, qualquer que seja o conector. Checar assim
+		// so' produz alarme falso.
+		if a.OpenLineID <= 0 {
+			add(nome, false, "sessao sem Linha Aberta vinculada — nao da' pra checar o conector")
 			continue
 		}
-		s := string(raw)
-		ativo := strings.Contains(s, `"STATUS":true`) || strings.Contains(s, `"STATUS":"Y"`)
-		det := "linha " + itoa(a.OpenLineID)
-		if !ativo {
-			det += " — registrado mas NAO ativado (imconnector.activate)"
+		raw, err := h.bitrixClient.GetConnectorStatus(ctx, creds, a.ConnectorID, a.OpenLineID)
+		if err != nil {
+			add(nome, false, err.Error())
+			continue
 		}
-		add("Conector "+a.ConnectorID, ativo, det)
+		// O imconnector.status devolve ERROR, CONFIGURED e STATUS. Antes isto
+		// reportava sempre "registrado mas NAO ativado" — um chute. A falha pode
+		// ser o conector marcado como inoperante (ERROR) ou o data.set que nunca
+		// pegou (CONFIGURED), e dizer o errado manda o suporte procurar no lugar
+		// errado.
+		var st struct {
+			Result struct {
+				Error      bool `json:"ERROR"`
+				Configured bool `json:"CONFIGURED"`
+				Status     bool `json:"STATUS"`
+			} `json:"result"`
+		}
+		if jerr := json.Unmarshal(raw, &st); jerr != nil {
+			add(nome, false, "resposta inesperada do imconnector.status: "+string(raw))
+			continue
+		}
+		r := st.Result
+		det := "linha " + itoa(a.OpenLineID)
+		switch {
+		case r.Status:
+			det += " — ativo e recebendo"
+		case r.Error:
+			det += " — o Bitrix marcou o conector como inoperante; reativar limpa o erro"
+		case !r.Configured:
+			det += " — registrado, mas nao ativo+configurado nesta linha (activate e depois connector.data.set)"
+		default:
+			det += " — configurado porem indisponivel: " + string(raw)
+		}
+		add(nome, r.Status, det)
 	}
 
 	// 4. Sessao WhatsApp viva em memoria, nao o status do banco.

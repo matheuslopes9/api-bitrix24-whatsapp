@@ -1175,17 +1175,8 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 	toJID := phone + "@s.whatsapp.net"
 
-	connectorID := portal.ConnectorID
-	if connectorID == "" {
-		connectorID = "whatsapp_uc_v2"
-	}
-	lineID := body.LineID
-	if lineID == 0 {
-		lineID = portal.OpenLineID
-	}
-	if lineID == 0 {
-		lineID = 1
-	}
+	connectorID, lineID := h.conectorDeEnvio(c.Context(), body.SessionJID,
+		portal.ConnectorID, portal.OpenLineID, body.LineID)
 
 	// Nome do cadastro do Bitrix (confirmado no handshake), nao o que a tela
 	// manda: operator_name vinha do corpo e qualquer um assinava a mensagem
@@ -1307,16 +1298,21 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 	}
 
 	phone = normalizeWAPhone(phone)
+	phoneCRM := phone // a forma que o CRM guarda, antes de corrigir
+	// MESMA canonicalizacao do envio de texto (ver bitrixCRMSend).
+	//
+	// Faltava so' aqui, e o efeito era uma assimetria que ninguem adivinharia:
+	// para um contato cujo WhatsApp so' existe SEM o 9, mandar texto funcionava
+	// e mandar arquivo falhava.
+	if real := h.waManager.ResolverNumeroReal(c.Context(), sessionJID, phone); real != "" && real != phone {
+		h.log.Info("crm upload: numero canonicalizado pelo WhatsApp",
+			zap.String("crm", phone), zap.String("real", real))
+		phone = real
+	}
 	toJID := phone + "@s.whatsapp.net"
 
-	connectorID := portal.ConnectorID
-	if connectorID == "" {
-		connectorID = "whatsapp_uc_v2"
-	}
-	lineID := portal.OpenLineID
-	if lineID == 0 {
-		lineID = 1
-	}
+	connectorID, lineID := h.conectorDeEnvio(c.Context(), sessionJID,
+		portal.ConnectorID, portal.OpenLineID, 0)
 
 	// Lê bytes do arquivo
 	f, err := fileHeader.Open()
@@ -1352,6 +1348,47 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 
 	if err := h.q.PushOutbound(c.Context(), job); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// ESPELHA no Open Channel, igual ao envio de texto.
+	//
+	// Sem isto, o arquivo saia pro cliente e NAO aparecia no Contact Center:
+	// o proprio atendente nao via o que tinha acabado de mandar, e nenhum
+	// colega sabia que o arquivo fora enviado. O envio de texto ja' espelhava
+	// desde sempre — so' o de arquivo ficou de fora.
+	//
+	// Limitacao do imconnector (so' existe cliente->openline): a msg espelhada
+	// aparece do lado do cliente; o rotulo deixa claro que foi envio externo.
+	if sessID, realJID, ok := h.waManager.ResolveSessionInfo(sessionJID); ok {
+		operador := nomeDoOperadorCRM(c)
+		if operador == "" {
+			operador = "UC Talk"
+		}
+		rotulo := "📎 " + fileHeader.Filename
+		if caption != "" {
+			rotulo += "\n" + caption
+		}
+		mirrorID := "crmupl-" + uuid.New().String()
+		mirror := &queue.InboundJob{
+			ID:         mirrorID,
+			SessionJID: realJID,
+			SessionID:  sessID,
+			FromJID:    toJID,
+			FromPhone:  phone,
+			// O Bitrix casa o contato pelo telefone: manda a forma que o CRM
+			// guarda, senao ele cria um contato novo em vez de achar o que existe.
+			CRMPhone:    phoneCRM,
+			MessageID:   mirrorID,
+			MessageType: "text",
+			Text:        fmt.Sprintf("📤 *Mensagem enviada externamente (%s):*\n%s", operador, rotulo),
+		}
+		if perr := h.q.PushInbound(c.Context(), mirror); perr != nil {
+			h.log.Warn("crm upload: espelho no open channel falhou",
+				zap.String("to_jid", toJID), zap.Error(perr))
+		}
+	} else {
+		h.log.Warn("crm upload: sessao nao resolvida pra espelhar no open channel",
+			zap.String("session", sessionJID))
 	}
 
 	h.log.Info("crm upload queued",

@@ -418,35 +418,94 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 				}
 			}
 		}
-		connectorID := "whatsapp_uc"
-		lineID := h.cfg.Bitrix.OpenLineID
-		if lineID <= 0 {
-			lineID = 218
+		// Quais conectores publicar neste portal.
+		//
+		// Antes isto era fixo: connectorID="whatsapp_uc" e, sem linha na config,
+		// lineID=218 — o numero da Linha Aberta de UM portal especifico, chumbado
+		// no codigo. Toda instalacao nova ganhava um canal "UC Talk" fantasma, num
+		// ID que nenhum outro ponto do sistema usa (os reais sao "whatsapp_uc_v2"
+		// e "wa_qr_<telefone>"), apontado pra uma linha que provavelmente nem
+		// existe no portal do cliente.
+		//
+		// O certo e' publicar os conectores que este portal de fato tem. Numa
+		// reinstalacao ja' existem vinculos, cada um com seu numero e sua linha;
+		// numa instalacao limpa nao ha' nenhum, e o generico do portal segura o
+		// lugar ate' o cliente parear o primeiro WhatsApp.
+		type alvoConector struct {
+			id, nome string
+			line     int
 		}
-		// register, activate, event.bind — tudo com o token fresco do ONAPPINSTALL
-		for _, apiMethod := range []struct {
+		var alvos []alvoConector
+		// installDomain vem com "https://" e a consulta compara com o dominio nu:
+		// sem normalizar, ela nunca casa e todo portal cairia no generico.
+		if accts, err := h.repo.ListBitrixAccountsByDomain(ctx, normalizePortalDomain(installDomain)); err == nil {
+			for _, a := range accts {
+				if a.ConnectorID == "" || a.OpenLineID <= 0 {
+					continue
+				}
+				_, nome, _ := h.connectorDaSessao(ctx, a.SessionJID)
+				if nome == "" {
+					nome = "UC Talk"
+				}
+				alvos = append(alvos, alvoConector{a.ConnectorID, nome, a.OpenLineID})
+			}
+		}
+		if len(alvos) == 0 {
+			generico, line := "whatsapp_uc_v2", h.cfg.Bitrix.OpenLineID
+			if portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(installDomain)); err == nil && portal != nil {
+				if portal.ConnectorID != "" {
+					generico = portal.ConnectorID
+				}
+				if portal.OpenLineID > 0 {
+					line = portal.OpenLineID
+				}
+			}
+			if line <= 0 {
+				line = 1
+			}
+			alvos = append(alvos, alvoConector{generico, "UC Talk", line})
+		}
+
+		// Tudo com o token fresco do ONAPPINSTALL, sem passar pelo banco: o
+		// Partner App pode sobrescrever o token antes de o event.bind rodar.
+		//
+		// Ordem: register -> activate -> connector.data.set. O activate APAGA os
+		// dados do conector ("the connector settings ... are deleted along with
+		// the status record"), entao configurar antes dele e' jogar fora.
+		type chamada struct {
 			method string
 			params map[string]interface{}
-		}{
-			{"imconnector.register", map[string]interface{}{
-				"ID":                connectorID,
-				"NAME":              "UC Talk",
-				"ICON":              map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
-				"PLACEMENT_HANDLER": appBase + "/bitrix-connect",
-			}},
-			{"imconnector.activate", map[string]interface{}{
-				"CONNECTOR": connectorID, "LINE": lineID, "ACTIVE": "1",
-			}},
-			{"event.bind", map[string]interface{}{
-				"event":   "ONIMCONNECTORMESSAGEADD",
-				"handler": eventURL,
-			}},
-		} {
+		}
+		var chamadas []chamada
+		for _, alvo := range alvos {
+			chamadas = append(chamadas,
+				chamada{"imconnector.register", map[string]interface{}{
+					"ID":                alvo.id,
+					"NAME":              alvo.nome,
+					"ICON":              map[string]string{"DATA_IMAGE": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMyNUQzNjYiLz48L3N2Zz4="},
+					"PLACEMENT_HANDLER": appBase + "/bitrix-connect",
+				}},
+				chamada{"imconnector.activate", map[string]interface{}{
+					"CONNECTOR": alvo.id, "LINE": alvo.line, "ACTIVE": "1",
+				}},
+				chamada{"imconnector.connector.data.set", map[string]interface{}{
+					"CONNECTOR": alvo.id, "LINE": alvo.line,
+					"DATA": map[string]interface{}{"ID": alvo.id, "NAME": alvo.nome},
+				}},
+			)
+		}
+		chamadas = append(chamadas, chamada{"event.bind", map[string]interface{}{
+			"event":   "ONIMCONNECTORMESSAGEADD",
+			"handler": eventURL,
+		}})
+
+		for _, apiMethod := range chamadas {
 			apiURL := fmt.Sprintf("%s/rest/%s.json?auth=%s", installDomain, apiMethod.method, installToken)
 			raw, err := h.bitrixClient.RawHTTPPost(ctx, apiURL, apiMethod.params)
 			h.log.Info("callback install step", zap.String("method", apiMethod.method), zap.String("raw", string(raw)), zap.Error(err))
 		}
-		h.log.Info("callback: install complete", zap.String("domain", installDomain))
+		h.log.Info("callback: install complete",
+			zap.String("domain", installDomain), zap.Int("conectores", len(alvos)))
 	}()
 
 	return c.SendStatus(fiber.StatusOK)
@@ -456,15 +515,8 @@ func (h *handlers) bitrixOAuthCallback(c *fiber.Ctx) error {
 // Chamado no ONAPPINSTALL do app local (INSTALLED:true) — o event.bind aqui é válido.
 func (h *handlers) activateConnectorForAccount(acct *db.BitrixAccount, creds bitrix.TenantCreds, appBase, eventURL string) {
 	ctx := context.Background()
-	if err := h.bitrixClient.RegisterConnector(ctx, creds, acct.ConnectorID, "UC Talk", appBase+"/bitrix-connect"); err != nil {
-		h.log.Warn("activateConnectorForAccount: register failed", zap.Error(err))
-	}
-	if err := h.bitrixClient.SetConnectorData(ctx, creds, acct.ConnectorID, acct.OpenLineID, ""); err != nil {
-		h.log.Warn("activateConnectorForAccount: set connector data failed", zap.Error(err))
-	}
-	if err := h.bitrixClient.ActivateConnector(ctx, creds, acct.ConnectorID, acct.OpenLineID, true); err != nil {
-		h.log.Warn("activateConnectorForAccount: activate failed", zap.Error(err))
-	}
+	_, nome, _ := h.connectorDaSessao(ctx, acct.SessionJID)
+	h.publicarConector(ctx, creds, acct.ConnectorID, nome, acct.OpenLineID, "activateConnectorForAccount")
 	if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", eventURL); err != nil {
 		h.log.Warn("activateConnectorForAccount: event.bind failed", zap.Error(err))
 	}
@@ -759,11 +811,11 @@ func (h *handlers) uiUpdateBitrixQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		creds := h.portalToCreds(portal)
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, portal.ConnectorID, body.OpenLineID, true); err != nil {
-			h.log.Warn("uiUpdateBitrixQueue: activate connector failed", zap.String("domain", domain), zap.Error(err))
-		} else {
-			h.log.Info("uiUpdateBitrixQueue: connector reactivated", zap.String("domain", domain), zap.Int("open_line_id", body.OpenLineID))
-		}
+		// Aqui havia um activate SOLTO, sem o data.set depois. Como o activate
+		// apaga os dados do conector junto com o registro de status, trocar a
+		// Linha Aberta pelo painel DESATIVAVA o conector: a acao de configurar
+		// era exatamente a que parava de receber mensagem.
+		h.publicarConector(ctx, creds, portal.ConnectorID, "UC Talk", body.OpenLineID, "uiUpdateBitrixQueue")
 	}()
 	return c.JSON(fiber.Map{"status": "updated", "domain": domain, "open_line_id": body.OpenLineID})
 }
@@ -800,28 +852,12 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	// linha errada.
 	//   - Cloud API: "wa_cloud_<phone_number_id>"
 	//   - QR Code:   "wa_qr_<telefone>"   (ex: wa_qr_5519910001772)
-	var connectorID, connectorName string
-	if strings.HasPrefix(body.SessionJID, "cloud:") {
-		sess, err := h.repo.GetSessionByJID(c.Context(), body.SessionJID)
-		if err != nil || sess == nil || sess.CloudPhoneNumberID == "" {
-			return c.Status(404).JSON(fiber.Map{"error": "sessão Cloud API não encontrada para gerar connector_id"})
-		}
-		connectorID = "wa_cloud_" + sess.CloudPhoneNumberID
-		connectorName = "UC Talk Oficial +" + sess.CloudDisplayPhone
-	} else {
-		// QR Code: extrai o número antes do ":" / "@" do JID
-		phone := body.SessionJID
-		if at := strings.Index(phone, "@"); at != -1 {
-			phone = phone[:at]
-		}
-		if colon := strings.Index(phone, ":"); colon != -1 {
-			phone = phone[:colon]
-		}
-		if phone == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "session_jid inválido para gerar connector_id"})
-		}
-		connectorID = "wa_qr_" + phone
-		connectorName = "UC Talk +" + phone
+	// A regra mora em connectorDaSessao (connector_setup.go) — a MESMA que o
+	// partner link usa. Enquanto estavam duplicadas, os dois caminhos gravavam
+	// connector_id diferente pro mesmo vinculo.
+	connectorID, connectorName, err := h.connectorDaSessao(c.Context(), body.SessionJID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Cria/atualiza o bitrix_account que o ProcessInbound usa para rotear
@@ -856,19 +892,7 @@ func (h *handlers) uiLinkQueue(c *fiber.Ctx) error {
 	go func() {
 		ctx := context.Background()
 		appBase := h.cfg.App.BaseURL()
-		if err := h.bitrixClient.RegisterConnector(ctx, creds, connectorID, connectorName, appBase+"/bitrix-connect"); err != nil {
-			h.log.Warn("uiLinkQueue: register connector failed",
-				zap.String("domain", domain), zap.String("connector_id", connectorID), zap.Error(err))
-		}
-		if err := h.bitrixClient.SetConnectorData(ctx, creds, connectorID, body.OpenLineID, ""); err != nil {
-			h.log.Warn("uiLinkQueue: set connector data failed",
-				zap.String("domain", domain), zap.String("connector_id", connectorID), zap.Error(err))
-		}
-		if err := h.bitrixClient.ActivateConnector(ctx, creds, connectorID, body.OpenLineID, true); err != nil {
-			h.log.Warn("uiLinkQueue: activate connector failed",
-				zap.String("domain", domain), zap.String("connector_id", connectorID),
-				zap.Int("line", body.OpenLineID), zap.Error(err))
-		}
+		h.publicarConector(ctx, creds, connectorID, connectorName, body.OpenLineID, "uiLinkQueue")
 		if err := h.bitrixClient.BindEvent(ctx, creds, "ONIMCONNECTORMESSAGEADD", appBase+"/bitrix/connector/event"); err != nil {
 			h.log.Warn("uiLinkQueue: event.bind failed", zap.String("domain", domain), zap.Error(err))
 		}
@@ -1009,17 +1033,21 @@ func (h *handlers) uiActivateConnector(c *fiber.Ctx) error {
 		}
 		lines := h.discoverOpenLines(c.Context(), creds, connID, targetLine)
 		for _, lid := range lines {
+			// activate ANTES de data.set: o activate apaga os dados do conector
+			// junto com o registro de status. Na ordem antiga, esta tela
+			// reportava "ok" nos dois passos e deixava o conector inutilizavel.
+			if err := h.bitrixClient.ActivateConnector(c.Context(), creds, connID, lid, true); err != nil {
+				steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "erro: " + err.Error()
+				continue // sem activate, o data.set abaixo nao tem onde pousar
+			}
+			steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "ok"
+			activatedLines = append(activatedLines, lid)
+			allActivateOk = true
+
 			if err := h.bitrixClient.SetConnectorData(c.Context(), creds, connID, lid, ""); err != nil {
 				steps[fmt.Sprintf("set_data_%s_line_%d", connID, lid)] = "erro: " + err.Error()
 			} else {
 				steps[fmt.Sprintf("set_data_%s_line_%d", connID, lid)] = "ok"
-			}
-			if err := h.bitrixClient.ActivateConnector(c.Context(), creds, connID, lid, true); err != nil {
-				steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "erro: " + err.Error()
-			} else {
-				steps[fmt.Sprintf("activate_%s_line_%d", connID, lid)] = "ok"
-				activatedLines = append(activatedLines, lid)
-				allActivateOk = true
 			}
 		}
 	}
