@@ -112,16 +112,19 @@ func New(
 	// ─── Filas Bitrix (Partner App portals) ──────────────────────────────────
 	ui.Get("/bitrix/queues", h.escoparAoTenant, h.uiListBitrixQueues)
 	ui.Put("/bitrix/queues", h.escoparAoTenant, h.uiUpdateBitrixQueue)
-	ui.Get("/bitrix/lines", h.escoparAoTenant, h.uiListOpenLines)          // Lista open lines disponíveis no portal
-	ui.Post("/bitrix/queues/link", h.escoparAoTenant, h.uiLinkQueue)       // Cria vínculo portal+sessão+fila
-	ui.Delete("/bitrix/queues/link", h.escoparAoTenant, h.uiUnlinkQueue)   // Remove vínculo
+	ui.Get("/bitrix/lines", h.escoparAoTenant, h.uiListOpenLines)                // Lista open lines disponíveis no portal
+	ui.Post("/bitrix/queues/link", h.escoparAoTenant, h.uiLinkQueue)             // Cria vínculo portal+sessão+fila
+	ui.Delete("/bitrix/queues/link", h.escoparAoTenant, h.uiUnlinkQueue)         // Remove vínculo
 	ui.Post("/bitrix/queues/activate", h.escoparAoTenant, h.uiActivateConnector) // Força register+activate
 	// ─── Permissões CRM (sem auth admin — uso interno do dashboard) ──────
 	ui.Get("/permissions/list", h.uiPermissionsList)
 	ui.Get("/permissions/user-info", h.uiPermissionsUserInfo)
 	ui.Get("/permissions/all-users", h.uiPermissionsAllUsers)
 	ui.Post("/permissions/grant", h.escoparAoTenant, h.uiPermissionsGrant)
-	ui.Post("/permissions/revoke", h.uiPermissionsRevoke)
+	// revoke tinha ficado sem escoparAoTenant enquanto grant tinha. As duas
+	// mexem na MESMA tabela — assimetria de middleware entre operacoes irmas e'
+	// o tipo de coisa que passa despercebida ate' virar buraco.
+	ui.Post("/permissions/revoke", h.escoparAoTenant, h.uiPermissionsRevoke)
 	// ─── Templates de mensagem — feature contratada ─────────────────────
 	// /list e /debug seguem abertos: a UI so' fica vazia pra quem nao tem
 	// Templates no contrato. O que escreve exige a feature.
@@ -166,7 +169,7 @@ func New(
 	bx := app.Group("/bitrix")
 	bx.Get("/oauth/start", h.bitrixOAuthStart)
 	bx.Get("/callback", h.bitrixOAuthCallback)
-	bx.Post("/callback", h.bitrixOAuthCallback)   // Bitrix local app envia POST no install
+	bx.Post("/callback", h.bitrixOAuthCallback) // Bitrix local app envia POST no install
 	// Legado, sem nenhum evento do Bitrix apontando pra ca'. Era publico e
 	// virou relay aberto: qualquer POST enfileirava texto livre saindo do
 	// numero de WhatsApp de QUALQUER cliente. Fica so' pro super-admin.
@@ -191,13 +194,13 @@ func New(
 
 	// ─── Partner App (Bitrix24 Marketplace) ──────────────────────────────
 	// Endpoints EXCLUSIVOS do fluxo de Partner App — não interferem nos admin acima.
-	bx.Get("/install", h.bitrixInstall)               // Bitrix valida a URL com GET antes de salvar
-	bx.Post("/install", h.bitrixInstall)              // Application Installer URL (ONAPPINSTALL)
-	bx.Post("/auth", h.bitrixPartnerAuth)             // Token do BX24.js enviado pela página /bitrix-connect
-	bx.Post("/partner/link", h.bitrixPartnerLink)     // Vincula sessão WA ao portal após QR scan
-	app.Get("/bitrix-connect", h.bitrixConnectPage)   // Application URL (abre em iframe no Bitrix24)
-	app.Post("/bitrix-connect", h.bitrixConnectPage)  // BX24.installFinish() pode fazer POST aqui
-	app.Get("/bitrix-app", h.bitrixAppMenu)           // LEFT_MENU placement — usuarios liberados
+	bx.Get("/install", h.bitrixInstall)              // Bitrix valida a URL com GET antes de salvar
+	bx.Post("/install", h.bitrixInstall)             // Application Installer URL (ONAPPINSTALL)
+	bx.Post("/auth", h.bitrixPartnerAuth)            // Token do BX24.js enviado pela página /bitrix-connect
+	bx.Post("/partner/link", h.bitrixPartnerLink)    // Vincula sessão WA ao portal após QR scan
+	app.Get("/bitrix-connect", h.bitrixConnectPage)  // Application URL (abre em iframe no Bitrix24)
+	app.Post("/bitrix-connect", h.bitrixConnectPage) // BX24.installFinish() pode fazer POST aqui
+	app.Get("/bitrix-app", h.bitrixAppMenu)          // LEFT_MENU placement — usuarios liberados
 	app.Post("/bitrix-app", h.bitrixAppMenu)
 
 	// ─── CRM Tab (aba WhatsApp no detalhe de Contato/Lead/Deal) ──────────
@@ -221,7 +224,6 @@ func New(
 	crm.Get("/allowed-sessions", h.bitrixCRMAllowedSessions)
 	crm.Get("/master/status", h.bitrixCRMMasterStatus)
 	crm.Post("/master/set", h.bitrixCRMMasterSet)
-
 
 	// ─── BizProc Robot (CRM > Automacoes) ─────────────────────────────────
 	// Modulo isolado em bp_robot.go. Bitrix bate em /bitrix/bp/send quando
@@ -287,13 +289,13 @@ func New(
 	admin.Get("/", h.adminHome)
 	admin.Get("", h.adminHome) // alias sem barra final
 	admin.Get("/api/tenants", h.adminListTenants)
-	admin.Get("/api/metrics", h.adminMetrics)              // KPIs globais
+	admin.Get("/api/metrics", h.adminMetrics) // KPIs globais
 	admin.Get("/api/debug", h.adminDebug)
 	// ─── Licencas: beneficios contratados e pagamentos ──────────────────
 	admin.Get("/api/licenses", h.adminListLicenses)
-	admin.Get("/api/license", h.adminGetLicense)                 // ?domain=...
-	admin.Post("/api/license", h.adminSaveLicense)               // beneficios + vigencia
-	admin.Post("/api/license/payment", h.adminRecordPayment)     // lanca pagamento
+	admin.Get("/api/license", h.adminGetLicense)             // ?domain=...
+	admin.Post("/api/license", h.adminSaveLicense)           // beneficios + vigencia
+	admin.Post("/api/license/payment", h.adminRecordPayment) // lanca pagamento
 	// ── Plataforma: usuarios admin, auditoria, sistema, consumo, IPs ──
 	//
 	// Criar/desativar/remover usuario e' SO' do Administrador. Sem isso a
@@ -305,8 +307,8 @@ func New(
 	admin.Post("/api/users/toggle", soAdmin, h.adminToggleUser)
 	admin.Post("/api/users/delete", soAdmin, h.adminDeleteUser)
 	admin.Get("/api/audit", h.adminAuditLog)
-	admin.Get("/api/system", h.adminSystem)          // monitoramento processo
-	admin.Get("/api/usage", h.adminUsage)            // consumo por tenant
+	admin.Get("/api/system", h.adminSystem) // monitoramento processo
+	admin.Get("/api/usage", h.adminUsage)   // consumo por tenant
 	admin.Get("/api/mensagens-recentes", h.adminMensagensRecentes)
 	// Conta do proprio admin: qualquer papel pode trocar a PROPRIA senha.
 	admin.Get("/api/me", h.adminEu)

@@ -283,9 +283,24 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 	if req.SessionJID == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "session_jid obrigatorio"})
 	}
-	if req.CallerUserID == "" {
-		return c.Status(403).JSON(fiber.Map{"error": "caller_user_id obrigatorio — apenas o master pode alterar permissoes"})
+	// QUEM esta' pedindo vem do cookie assinado, nunca do corpo.
+	//
+	// O corpo trazia "caller_user_id", que a tela preenchia com o ?user_id= da
+	// URL — ou com o que o usuario digitasse no campo "Atuar como master". A
+	// conferencia era so' no navegador (permCanEdit). Na pratica: qualquer
+	// usuario do portal digitava o id do master (que a propria tela exibe) e
+	// liberava pra si QUALQUER numero do portal — anulando por completo a
+	// permissao por numero, que existe justamente pra isso.
+	//
+	// Mesma correcao ja' aplicada no master/set. Aqui faltou.
+	udom, uid, _, temIdentidade := verifyUserCookie(h.cfg.App.Secret, c.Cookies(userCookieName))
+	if !temIdentidade || uid == "" || !strings.EqualFold(udom, normalizePortalDomain(domain)) {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error":  "nao da' pra confirmar quem esta' pedindo — reabra o UC Talk pelo menu do Bitrix",
+			"codigo": "sem_identidade",
+		})
 	}
+	req.CallerUserID = uid
 	key := strings.ToLower(domain)
 
 	// Guard: so o master atual do tenant pode mexer em permissoes.
@@ -3101,11 +3116,41 @@ func (h *handlers) maybeSetTenantCookieFromBitrixPost(c *fiber.Ctx) {
 		return
 	}
 	tenantExpires := time.Now().Add(tenantCookieTTL)
+	seguro := strings.HasPrefix(h.cfg.App.PublicURL, "https://")
+	dominio := normalizePortalDomain(domainRaw)
 	// CHIPS partitioned cookie pra funcionar em iframe cross-site (Bitrix).
 	setPartitionedCookie(c, tenantCookieName,
-		signTenantCookie(h.cfg.App.Secret, normalizePortalDomain(domainRaw), tenantExpires),
-		tenantExpires,
-		strings.HasPrefix(h.cfg.App.PublicURL, "https://"))
+		signTenantCookie(h.cfg.App.Secret, dominio, tenantExpires),
+		tenantExpires, seguro)
+
+	// Tambem o cookie de USUARIO, quando o POST traz o access_token.
+	//
+	// Antes so' o cookie de tenant saia por aqui, e o painel ficava sabendo
+	// QUAL portal mas nao QUEM. Sem isso, a tela de permissoes nao tinha como
+	// conferir quem esta' pedindo — ela lia o "caller_user_id" que a propria
+	// tela mandava, tirado da query string (?user_id=). Qualquer usuario do
+	// portal digitava o id do master e liberava pra si qualquer numero.
+	//
+	// Best-effort de proposito: e' uma chamada de rede no carregamento da
+	// pagina. Falhando, o painel abre igual — quem recusa a acao sensivel e'
+	// o handler de permissoes, nao esta pagina.
+	if accessTok == "" {
+		return
+	}
+	// Teto de 3s: o VerificarToken tem timeout proprio de 10s, e isto roda
+	// SINCRONO no carregamento da pagina. Melhor abrir o app sem o cookie de
+	// usuario do que segurar o iframe do cliente por dez segundos.
+	ctxIdent, cancelar := context.WithTimeout(c.Context(), 3*time.Second)
+	defer cancelar()
+	ident, err := bitrix.VerificarToken(ctxIdent, dominio, accessTok)
+	if err != nil || ident == nil || ident.UserID == "" {
+		h.log.Warn("placement: sem identidade de usuario — a tela de permissoes vai pedir pra reabrir a aba",
+			zap.String("domain", dominio), zap.Error(err))
+		return
+	}
+	setPartitionedCookie(c, userCookieName,
+		signUserCookie(h.cfg.App.Secret, dominio, ident.UserID, ident.Nome, tenantExpires),
+		tenantExpires, seguro)
 }
 
 // HTML simples que carrega BX24, valida o user_id contra check-access e
