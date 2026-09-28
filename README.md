@@ -230,7 +230,8 @@ opcionais — valem como carga inicial da aba **Alertas**.
 | `/app/sessions` | Pareamento do WhatsApp. Sem volume, todo deploy pede QR de novo. |
 | `/app/media` | Arquivos das conversas, exibidos na aba do CRM. Sem volume, somem a cada deploy. |
 
-Arquivos: `MEDIA_MAX_MB` (padrão 64 — acima disso o arquivo vai só pro Bitrix)
+Arquivos: `WA_MEDIA_DIR` (padrão `/app/media` — **tem que ser o volume**),
+`MEDIA_MAX_MB` (padrão 64 — acima disso o arquivo vai só pro Bitrix)
 e `MEDIA_RETENTION_DAYS` (padrão 90 — depois disso a mensagem fica, o arquivo não).
 
 Segurança dos eventos do Bitrix:

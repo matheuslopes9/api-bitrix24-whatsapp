@@ -18,6 +18,8 @@ mantê-los atualizados mantém o "cérebro" do projeto atualizado.
 | [05-integracao-whatsapp.md](05-integracao-whatsapp.md) | whatsmeow, device suffix, persistência de sessão, Cloud API Meta |
 | [06-pendencias.md](06-pendencias.md) | O que falta, próximos passos, riscos de segurança pra produção |
 | [07-alertas-email.md](07-alertas-email.md) | Alertas por e-mail: proxy OAuth2, categorias, janelas, template |
+| [08-isolamento-e-identidade.md](08-isolamento-e-identidade.md) | Como sabemos quem está pedindo e o que essa pessoa pode ver |
+| [09-midia.md](09-midia.md) | Arquivos das conversas: store em disco, entrega e retenção |
 
 > Os documentos de MaxiPago e PIX Itaú foram **removidos** junto do módulo de
 > cobrança. O porquê da remoção está em

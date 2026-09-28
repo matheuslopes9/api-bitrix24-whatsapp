@@ -26,6 +26,17 @@ seguram o sistema:
 | `handlers` | Handlers HTTP (Fiber) | 47 |
 | `Manager` (whatsapp) | Gerencia sessões whatsmeow | 46 |
 
+### Pacotes que nasceram depois da medição
+
+| Pacote / arquivo | Papel |
+|---|---|
+| [internal/media](../../internal/media/store.go) | cópia em disco dos arquivos da conversa — [09-midia.md](09-midia.md) |
+| [internal/bitrix/verificar.go](../../internal/bitrix/verificar.go) | prova de identidade no portal + defesa de SSRF |
+| [internal/db/escopo.go](../../internal/db/escopo.go) | escopo de relatório por número |
+| [internal/whatsapp/ritmo.go](../../internal/whatsapp/ritmo.go) | ritmo de envio por número |
+| [internal/db/pareamentos.go](../../internal/db/pareamentos.go) | dono do número em pareamento |
+| [internal/bitrix/nome_arquivo.go](../../internal/bitrix/nome_arquivo.go) | nome de arquivo que sobrevive ao Open Lines |
+
 ## Decisão: `Repository` é um God Object (dívida técnica conhecida)
 
 **O que é:** o `Repository` conecta praticamente todos os domínios do sistema
@@ -69,12 +80,41 @@ schema se garante sozinho. O custo é a disciplina de idempotência.
 ## Decisão: multi-tenant por domínio Bitrix
 
 Cada portal Bitrix (ex: `crm.uctechnology.com.br`) é um tenant. A identidade do
-tenant é o **domínio**, propagado em cookie HMAC-assinado. Sessões WhatsApp,
-planos, cobranças e permissões são todos escopados por domínio.
+tenant é o **domínio**, propagado em cookie HMAC-assinado — e o token que emite
+esse cookie é conferido no próprio portal antes de valer. Sessões WhatsApp,
+licença, relatórios e permissões são todos escopados por domínio.
 
 **Detalhe sensível:** o casamento de sessões WhatsApp por domínio tolera o
 **device suffix** do whatsmeow (`:66` → `:67`), que muda a cada re-pareamento —
 ver [05-integracao-whatsapp.md](05-integracao-whatsapp.md).
+
+## Decisão: o valor zero de um escopo não enxerga nada
+
+`EscopoNumeros` ([internal/db/escopo.go](../../internal/db/escopo.go)) decide de
+quais números um relatório pode contar mensagens. A escolha que vale registrar
+não é o filtro em si, e sim o **default**:
+
+> Escopo não preenchido → resultado **vazio**. Nunca o banco inteiro.
+
+Antes, esquecer o filtro devolvia tudo — e foi assim que um portal sem número
+próprio passou a exibir o número e os 65 contatos de outro cliente. Com o valor
+zero fechado, o mesmo esquecimento produz uma tela vazia: um bug visível e
+inofensivo, em vez de um vazamento silencioso. Visão global exige pedir
+(`Todos=true`), e só o `/stats` autenticado por `X-API-Key` pede.
+
+Vale como regra geral do projeto: **quando o default de uma falha é mostrar
+demais, inverta o default.**
+
+## Decisão: limite de taxa pertence ao recurso, não ao caminho
+
+Havia dois controles de ritmo de envio — um na fila, por destinatário, e outro
+no robô de automação. Eles não se somavam: somavam as **taxas** no mesmo
+aparelho de WhatsApp. Hoje existe um só
+([internal/whatsapp/ritmo.go](../../internal/whatsapp/ritmo.go)), por **número**,
+compartilhado por todos os caminhos de envio.
+
+A espera devolve o job ao fim da fila em vez de dormir dentro do worker — senão
+uma rajada num número ocupa os 20 workers e trava o envio de todos os outros.
 
 ## Decisão: filas Redis para inbound/outbound
 
@@ -95,10 +135,17 @@ Os dois rodam no mesmo host EasyPanel (`omva7z`), portanto compartilham o mesmo
 
 ## Segurança (mecanismos usados)
 
+> O **modelo** de identidade e isolamento entre clientes está em
+> [08-isolamento-e-identidade.md](08-isolamento-e-identidade.md). Abaixo só os
+> mecanismos.
+
 - **bcrypt** para senhas de admin
-- **HMAC-SHA256** para cookies de sessão (tenant e admin)
+- **HMAC-SHA256** para os três cookies de sessão (tenant, usuário e admin),
+  assinados com `APP_SECRET` — vazio, o app não sobe
 - **`subtle.ConstantTimeCompare`** para comparação de segredos (evita timing attack)
 - **IP real atrás do proxy** EasyPanel/Traefik via header, com fallback pro RemoteIP
+- **Defesa de SSRF** ao verificar um portal informado por quem chama: recusa IP
+  literal e `localhost`, e também IP interno **já resolvido** (anti DNS rebinding)
 - Página de **IPs bloqueados** no admin (liberar/manter bloqueio)
 - Headers de segurança (`X-Frame-Options: DENY`) **só no `/admin`** — o resto roda
   em iframe do Bitrix e headers restritivos quebrariam o embed.

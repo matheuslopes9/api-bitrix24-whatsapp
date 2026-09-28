@@ -44,26 +44,93 @@ Corrigido em 25/09:
 - [x] `/bitrix/partner/link` transferia número por prefixo; `bp/send`
       disparava por número de outro portal.
 
-Ainda aberto:
-
 - [x] **Resposta de operador forjada.** Em `observar`, bastava omitir
       `auth[domain]` (ou saber o domínio do cliente) para enviar pelo número
       dele — **confirmado no homolog**: um POST anônimo saiu pelo WhatsApp.
       Agora sem domínio é recusado sempre, e a origem precisa de prova
       (`application_token` ou `access_token` conferido no portal).
-- [ ] Nome do operador (`operator_name`) ainda vem da tela.
-- [ ] `/webhook/cloud/:id` pula a assinatura se `CloudAppSecret` estiver vazio.
-- [ ] `APP_SECRET` vazio libera `/wa/*` e `/stats/*` — falhar no boot.
+- [x] Nome do operador (`operator_name`) vinha da tela — qualquer um assinava
+      como outra pessoa. Agora vem do `/rest/profile` e viaja no cookie de
+      usuário assinado.
+- [x] `/webhook/cloud/:id` pulava a assinatura sem `CloudAppSecret` — bastava o
+      UUID da sessão para injetar "mensagem de cliente". Agora recusa, e o App
+      Secret é obrigatório ao criar a sessão Cloud.
+- [x] `APP_SECRET` vazio liberava `/wa/*` e `/stats/*` e assinava cookies com
+      chave vazia. Vazio agora é fatal no boot; curto (<16) apenas avisa —
+      travar por tamanho derrubaria um ambiente que hoje funciona.
+
+**Nada em aberto nesta frente.** O desenho resultante está em
+[08-isolamento-e-identidade.md](08-isolamento-e-identidade.md).
 
 ---
 
-## 🟡 Bitrix — abas do CRM não registradas
+## 🟢 Bitrix — abas do CRM não registradas *(resolvido)*
 
 O app instalado por usuário **não administrador** não consegue fazer
-`placement.bind`: as abas UC Talk em contato, lead e negócio simplesmente não
-aparecem, e a falha só vai para o log. Visto em crm.uctechnology.com.br em
-25/09 — registrado à mão com um usuário admin via BX24. Precisa virar aviso na
-Saúde do cliente e ação de "registrar abas" que use o usuário logado.
+`placement.bind`: as abas UC Talk em contato, lead e negócio não apareciam, e a
+falha só ia para o log. Visto em crm.uctechnology.com.br em 25/09.
+
+- [x] `/bitrix-connect` e o menu do app registram as abas faltantes com o
+      **usuário logado** quando ele é admin (até 3s, nunca segura o painel).
+- [ ] Falta o **aviso na Saúde do cliente** quando as abas não estão
+      registradas e o usuário logado também não é admin — hoje isso ainda passa
+      despercebido até alguém reclamar que a aba sumiu.
+
+---
+
+## 🟢 Conector não ficava ativo na Linha Aberta *(resolvido 28/09)*
+
+**Sintoma medido:** a tela de Saúde mostrava `Conector wa_qr_558196807479 — falhou`.
+As três chamadas retornavam sucesso e o conector ficava inútil — sem
+`STATUS: true` a linha não aceita mensagem, e **mensagem de cliente sumia**.
+
+- [x] **Ordem invertida em SETE pontos** (eram seis no levantamento inicial). O
+      `activate` apaga os dados do conector, então `data.set` antes dele era
+      jogar a configuração fora. A sequência correta vive num lugar só:
+      `publicarConector` em
+      [internal/api/connector_setup.go](../../internal/api/connector_setup.go).
+- [x] **O sétimo ponto era o pior:** `uiUpdateBitrixQueue` chamava `activate`
+      **sozinho**, sem `data.set` depois. Trocar a Linha Aberta pelo painel
+      *desativava* o conector — a ação de configurar era a que parava de receber.
+- [x] **`connector_id` divergente.** `partner link` gravava o genérico
+      `whatsapp_uc_v2`; a migration `014` reescrevia no boot seguinte e o banco
+      passava a apontar pra um conector nunca registrado. Regra única em
+      `connectorDaSessao`, com teste travando o formato contra o da migration.
+- [x] **Confirmação de entrega no conector errado** em `crm.go` — agora
+      `conectorDeEnvio` resolve pelo vínculo da sessão.
+- [x] `connectorID := "whatsapp_uc"` e `lineID = 218` **chumbados** no callback
+      de install — toda instalação nova ganhava um canal fantasma.
+- [x] A tela de Saúde lia `ERROR`/`CONFIGURED` de verdade e não checa mais com
+      `LINE=0` (que faz o Bitrix responder `CONFIGURED: false` sempre).
+
+---
+
+## 🟢 Aba do CRM — envio de arquivo era mais fraco que o de texto *(resolvido 28/09)*
+
+- [x] **Não resolvia o 9º dígito.** Para contato cujo WhatsApp só existe *sem* o
+      9, mandar texto funcionava e mandar arquivo falhava — assimetria que
+      ninguém adivinharia.
+- [x] **Não espelhava no Open Channel.** O arquivo saa para o cliente e não
+      aparecia no Contact Center: nem o próprio atendente via o que mandou.
+
+---
+
+## 🟢 Permissões — qualquer usuário virava master *(resolvido 28/09)*
+
+`/ui/permissions/grant` e `/revoke` liam `caller_user_id` **do corpo**. A tela
+preenchia com o `?user_id=` da URL, e havia um campo **"Atuar como master"**
+onde dá pra digitar qualquer id — com a conferência só no navegador.
+
+Na prática: qualquer usuário do portal digitava o id do master (que a própria
+tela exibe) e liberava pra si **qualquer número do portal**, anulando a
+permissão por número inteira. Não atravessa clientes — o cookie de tenant segura.
+
+- [x] O caller agora vem do cookie de usuário assinado, nunca do corpo. Mesma
+      correção que o `master/set` recebeu em 25/09; estas duas ficaram de fora.
+- [x] O caminho do menu do app passou a emitir o cookie de usuário também
+      (antes só o de tenant: sabíamos *qual portal*, não *quem*), com teto de 3s
+      pra não segurar o iframe.
+- [x] `revoke` ganhou o `escoparAoTenant` que só o `grant` tinha.
 
 ---
 
@@ -99,6 +166,26 @@ issue com o log correspondente.
 - [ ] Operador envia pela aba do CRM a partir de um **negócio** — o telefone
       vem do contato vinculado.
 - [ ] Mídia nos dois sentidos: imagem, áudio, documento.
+- [ ] O arquivo **aparece na aba do CRM**: imagem inline, áudio/vídeo com
+      player, documento com nome, tamanho e download (não só o rótulo).
+- [ ] Arquivo com nome longo chega no Contact Center com o **começo e a
+      extensão** preservados.
+
+### Isolamento entre clientes
+
+- [ ] Com dois portais instalados, o painel e os relatórios de cada um mostram
+      **só os próprios** números, contatos e volumes.
+- [ ] `/ui/media/:id` de arquivo de outro portal → recusado.
+- [ ] `POST /bitrix/connector/event` sem prova de origem → recusado (não sai
+      nada pelo WhatsApp).
+- [ ] `/debug/*` e `/sim/*` sem login → recusados.
+- [ ] Pedir pareamento de número de outro portal → 403.
+
+### Ritmo de envio
+
+- [ ] Disparar várias mensagens seguidas pelo mesmo número → saem espaçadas,
+      no ritmo de digitação, e **não** travam o envio dos outros números.
+- [ ] Uma mensagem isolada sai **sem espera**.
 
 ### 9º dígito
 
@@ -153,10 +240,9 @@ issue com o log correspondente.
 - [ ] Avaliar conceder o escopo **`user`** ao app. Sem ele, `user.get` é
       recusado. A listagem atual pela estrutura da empresa é rápida e completa,
       então isso deixou de ser urgente.
-- [ ] **Conector duplicado:** `bitrix_accounts.connector_id` é
-      `wa_qr_<numero>` e `bitrix_portals.connector_id` é `whatsapp_uc_v2`. Os
-      dois estão registrados e ativos, então não quebra — mas são duas fontes
-      para a mesma coisa e vão divergir de novo.
+- [ ] **Conector duplicado.** A suposição de que "os dois estão ativos, então
+      não quebra" **estava errada** — medido na tela de Saúde. Ver a seção
+      *Conector não fica ativo na Linha Aberta*, acima.
 - [ ] Há outros conectores de WhatsApp ativos no portal do teclife (`WhatCrm`).
       Dois sistemas pareando o mesmo número brigam entre si.
 

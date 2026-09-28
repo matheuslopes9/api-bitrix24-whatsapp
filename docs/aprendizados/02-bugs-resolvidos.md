@@ -194,3 +194,138 @@ recebeu.
 
 **Lição:** em CI/build sem login no Docker Hub, use um mirror para evitar o rate
 limit de pulls anônimos.
+
+---
+
+## 10. Histórico da aba do CRM vinha incompleto ou vazio
+
+**Sintoma:** abrir a aba UC Talk num contato mostrava poucas mensagens, ou
+nenhuma, mesmo com conversa longa no WhatsApp.
+
+**Causa-raiz:** a consulta trazia as últimas 200 mensagens **daquele telefone** e
+só depois, em Go, descartava as que não eram do portal. Um contato que também
+conversa com outro cliente UC Talk enchia as 200 linhas com mensagens alheias —
+que eram então descartadas, deixando o histórico deste portal curto ou vazio. O
+filtro rodava **depois** do `LIMIT`.
+
+**Fix:** `GetMessagesByPhoneNoEscopo` filtra dentro da consulta, antes do
+`LIMIT`.
+
+**Lição:** filtro de autorização aplicado depois do `LIMIT` não é só lento — ele
+**muda o resultado**. Quando o filtro define o que o usuário pode ver, ele
+pertence ao `WHERE`, nunca ao laço que lê o retorno.
+
+---
+
+## 11. Cloud API de todos os clientes somada como se fosse uma só
+
+**Sintoma:** cliente com WhatsApp Oficial via números, falhas e volumes que não
+eram dele.
+
+**Causa-raiz:** `CountFailedMessagesByDomain` e `GetTenantUsage` reduziam o JID
+cortando no primeiro `:`. Para QR isso remove o device suffix e funciona; para
+Cloud API o JID **é** `cloud:<phone_id>`, então toda sessão Cloud do sistema
+virava a mesma chave: `"cloud"`.
+
+**Fix:** as duas passaram a usar `sqlNumeroBase`
+([internal/db/escopo.go](../../internal/db/escopo.go)), que preserva o prefixo
+`cloud:`. As outras ~15 consultas com o mesmo corte já tinham a guarda
+`NOT LIKE 'cloud:%'` — conferidas uma a uma.
+
+**Lição:** a mesma normalização escrita duas vezes vira duas regras. `numeroBase`
+(Go) e `sqlNumeroBase` (SQL) são a mesma decisão em duas linguagens, e cada cópia
+solta é um vazamento esperando acontecer.
+
+---
+
+## 12. Rajada de envio pelo mesmo número
+
+**Sintoma:** risco de banimento — vinte mensagens saindo pelo mesmo WhatsApp no
+mesmo segundo.
+
+**Causa-raiz:** a fila de saída tem 20 workers e serializava apenas por
+**destinatário**. Pelo mesmo número, 20 mensagens para 20 contatos saíam juntas.
+Pior: o robô de automação tinha um controle de ritmo próprio
+(`wa_send_gate`) que não conversava com a fila, então automação e atendimento
+somavam as taxas no mesmo aparelho.
+
+**Fix:** [internal/whatsapp/ritmo.go](../../internal/whatsapp/ritmo.go) — um
+controle **por número** (sem device suffix), usado por todos os caminhos de
+envio. Entre um envio e o próximo passa ao menos o tempo de escrever a próxima
+mensagem: `2s + 100ms por caractere`, teto de `12s`. Quem responde um cliente de
+vez em quando não espera nada. Cloud API fica de fora — é oficial, a Meta
+controla a taxa.
+
+**Lição:** dois controles de taxa para o mesmo recurso não se somam, se anulam.
+O limite pertence ao recurso escasso (o número), não a cada caminho que o usa.
+
+---
+
+## 13. Fila presa quando uma rajada chegava
+
+**Sintoma:** uma sequência grande de mensagens para um número travava o envio de
+**todos** os outros.
+
+**Causa-raiz:** a espera do ritmo acontecia dentro do worker. Uma rajada num
+número só ocupava os 20 workers, todos dormindo.
+
+**Fix:** número ocupado devolve o job para o fim da fila (`RPush`/`BLPop`, FIFO)
+**sem contar como tentativa** — o worker fica livre imediatamente.
+
+**Lição:** esperar dentro do worker transforma limite de taxa em indisponibilidade.
+Devolver para a fila custa uma volta a mais e mantém o resto andando.
+
+---
+
+## 14. Nome de arquivo chegava cortado no começo no Open Lines
+
+**Sintoma:** `PSE-SystemLog-83.21.0.117-beta1-download-relatorio.tar` aparecia no
+Contact Center como `beta1-download-relatorio.tar` — sem o começo, que é o que
+identifica o arquivo.
+
+**Causa-raiz:** o Bitrix guarda apenas os **últimos 50 caracteres** do nome, e
+ainda troca `&` por uma letra qualquer.
+
+**Fix:** [internal/bitrix/nome_arquivo.go](../../internal/bitrix/nome_arquivo.go)
+— `NomeParaBitrix` corta **no fim**, preservando o começo e a extensão, e troca
+`&` por `e`. O arquivo em si não muda; só o rótulo enviado.
+
+**Lição:** quando um sistema externo trunca, ele trunca do lado errado. Cortar
+antes, do lado certo, é a única forma de escolher o que sobrevive.
+
+---
+
+## 15. Dono do número em pareamento se perdia no restart
+
+**Sintoma:** depois de um deploy, um número que estava sendo pareado ficava sem
+dono e o QR não voltava para quem tinha pedido.
+
+**Causa-raiz:** entre "Conectar WhatsApp" e a leitura do QR ainda não existe
+vínculo em `bitrix_accounts`, então a intenção vivia num `sync.Map` em memória —
+que morre no restart.
+
+**Fix:** tabela `pareamentos` (migration `052`), retenção de 30 dias
+([internal/db/pareamentos.go](../../internal/db/pareamentos.go)). No caminho,
+fechou-se um furo que já existia: pedir o pareamento de um número de **outro
+portal** registrava quem pediu como dono. Agora é `403` (`DonoDoNumero`).
+
+**Lição:** estado que decide permissão não pode viver só em memória. Um deploy
+não deveria ser capaz de transferir a posse de um recurso.
+
+---
+
+## 16. Abas do CRM não apareciam quando o app era instalado por não-admin
+
+**Sintoma:** as abas UC Talk em contato, lead e negócio simplesmente não
+apareciam. A falha só ia para o log.
+
+**Causa-raiz:** `placement.bind` feito pelo servidor usa o token do app, que
+carrega as permissões de **quem instalou**. Instalado por usuário não
+administrador, o Bitrix recusa o registro.
+
+**Fix:** `/bitrix-connect` e o menu do app registram as abas faltantes usando o
+**usuário logado** quando ele é admin (até 3s, nunca segura o painel).
+
+**Lição:** no Bitrix, o que o app pode fazer é o que **quem instalou** podia. Um
+app instalado por usuário comum é permanentemente limitado — vale conferir isso
+antes de culpar o código.

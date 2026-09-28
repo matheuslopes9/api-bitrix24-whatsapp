@@ -34,6 +34,29 @@ Boa parte dos bugs deste sistema sai de confundir três coisas parecidas:
 | **Número base** | `558196807479` | ✅ é a identidade real da sessão |
 | **`phone` digitado** | `5581996807479` | ❌ é texto de formulário, pode estar errado |
 
-**Regra:** casamento de sessão é sempre por **número base**. Em SQL:
-`SPLIT_PART(SPLIT_PART(jid,'@',1),':',1)` — o **duplo** split. Só por `':'`
-não funciona em JID sem suffix (devolve a string inteira com o domínio junto).
+**Regra:** casamento de sessão é sempre por **número base**. Em SQL, o
+**duplo** split — só por `':'` não funciona em JID sem suffix (devolve a string
+inteira com o domínio junto):
+
+```sql
+SPLIT_PART(SPLIT_PART(jid,'@',1),':',1)
+```
+
+### ⚠ ...menos para Cloud API
+
+O JID da Cloud API **é** `cloud:<phone_number_id>`. O duplo split corta no `:` e
+devolve `cloud` para **todas** elas — e aí toda sessão Cloud casa com toda
+sessão Cloud. Foi assim que as falhas, sessões e mensagens Cloud de clientes
+diferentes viraram um número só (bug #11 em
+[../aprendizados/02-bugs-resolvidos.md](../aprendizados/02-bugs-resolvidos.md)).
+
+Consulta nova **não escreve o split na mão**. Use a função que já trata os dois
+casos:
+
+| Onde | O que usar |
+|---|---|
+| SQL | `sqlNumeroBase` ([internal/db/escopo.go](../../internal/db/escopo.go)) |
+| Go | `numeroBase` ([internal/api/tenant_isolation.go](../../internal/api/tenant_isolation.go)) |
+
+As duas são a **mesma** decisão em duas linguagens. Se uma mudar, a outra muda
+junto — cada cópia solta do split é um vazamento esperando acontecer.

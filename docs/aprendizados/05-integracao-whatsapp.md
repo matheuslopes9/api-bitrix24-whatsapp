@@ -65,17 +65,36 @@ Sessões cloud usam prefixo `cloud:` no JID (por isso o casamento por número ex
 (`fetchMetaTemplates`, contagem de variáveis, escaping). É uma feature de plano
 (gate por `Templates` nas features do tenant).
 
-## Features por plano
+## Ritmo de envio (limite por número)
+
+Todo envio pelo mesmo número passa por
+[internal/whatsapp/ritmo.go](../../internal/whatsapp/ritmo.go): entre um envio e
+o próximo passa ao menos o tempo de **escrever** a próxima mensagem
+(`2s + 100ms por caractere`, teto de `12s`).
+
+O controle é **por número, sem device suffix** — com o suffix, o mesmo aparelho
+teria dois controles depois de cada re-pareamento. Vale para a fila do operador,
+a aba do CRM e o robô de automação, pelo mesmo motivo de sempre: o recurso
+escasso é o número, não o caminho que o usa.
+
+**Cloud API fica de fora** — é oficial e a Meta controla a taxa.
+
+Ver bugs #12 e #13 em [02-bugs-resolvidos.md](02-bugs-resolvidos.md).
+
+## Features por licença
 
 O acesso a templates/automação/relatórios é resolvido por
 `resolveTenantFeatures(ctx, domain)`
-([internal/api/plan_features.go](../../internal/api/plan_features.go)) a partir da
-definição do plano — inclusive no trial (o Trial é um plano separado, code
-`trial`, com features próprias configuráveis). Fallback legado quando não há
-definição no banco.
+([internal/api/license_features.go](../../internal/api/license_features.go)), que
+lê os benefícios direto de `tenant_licenses` — sem catálogo intermediário para
+dessincronizar. Ver [`docs/fluxos/05-licenca.md`](../fluxos/05-licenca.md).
 
 ## Mídia
 
 Download de mídia (`DownloadMedia`), limpeza de arquivos órfãos de sessão
 (`cleanupOrphanSessionFiles`), e limites de QR
 ([internal/whatsapp/qr_limits.go](../../internal/whatsapp/qr_limits.go)).
+
+A cópia que a aba do CRM exibe é guardada por
+[internal/media/store.go](../../internal/media/store.go) — ver
+[09-midia.md](09-midia.md).
