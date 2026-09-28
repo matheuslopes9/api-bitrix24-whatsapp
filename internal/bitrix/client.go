@@ -421,6 +421,7 @@ func (c *Client) call(ctx context.Context, creds TenantCreds, method string, par
 	// integracoes no mesmo portal). Backoff exponencial 200ms -> 400ms -> 800ms.
 	const maxRetries = 3
 	var lastErr error
+	jaRenovou := false // uma renovacao forcada por chamada, no maximo
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(200*(1<<(attempt-1))) * time.Millisecond
@@ -439,11 +440,65 @@ func (c *Client) call(ctx context.Context, creds TenantCreds, method string, par
 			return raw, nil
 		}
 		lastErr = err
+
+		// expired_token: quem manda e' o Bitrix, nao o nosso expires_at.
+		//
+		// O token() so' renova quando a validade GRAVADA ja' passou. Mas o
+		// Bitrix invalida o access_token por conta propria — basta uma nova
+		// autorizacao ou um refresh feito noutro lugar. Quando isso acontece o
+		// banco segue dizendo "valido por mais 30min", nenhuma renovacao e'
+		// tentada, e TODA chamada do portal falha ate' alguem reabrir o app.
+		//
+		// Visto no homolog em 28/09: a tela de Saude mostrava o token valido
+		// ate' 14:04 enquanto as chamadas reais respondiam expired_token.
+		//
+		// Uma renovacao forcada, uma vez. Se o refresh_token tambem morreu, o
+		// erro que sobe ja' diz o que fazer (reautorizar o app) em vez de
+		// repetir "expired_token" pra sempre.
+		if !jaRenovou && ehTokenExpirado(err) {
+			jaRenovou = true
+			if t, terr := c.tokenGravado(ctx, creds); terr == nil && t != nil {
+				if rerr := c.refreshToken(ctx, creds, t); rerr != nil {
+					c.log.Warn("bitrix call: renovacao forcada apos expired_token falhou",
+						zap.String("method", method), zap.Error(rerr))
+					return nil, rerr
+				}
+				c.log.Info("bitrix call: token renovado apos expired_token, repetindo",
+					zap.String("method", method))
+				attempt-- // esta volta nao conta como tentativa de rate limit
+				continue
+			}
+		}
+
 		if !isRateLimitError(err) {
 			return nil, err // erro nao retryable
 		}
 	}
 	return nil, lastErr
+}
+
+// ehTokenExpirado reconhece a recusa do Bitrix por token invalido. O texto vem
+// formatado por callOnce ("bitrix error: <codigo> — <descricao>"), entao a
+// checagem e' por substring mesmo.
+func ehTokenExpirado(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "expired_token") || strings.Contains(m, "invalid_token")
+}
+
+// tokenGravado le o token do banco SEM a renovacao automatica do token().
+// Precisamos da linha crua pra forcar o refresh: o token() olharia o
+// expires_at, concluiria que ainda vale e devolveria o mesmo token morto.
+func (c *Client) tokenGravado(ctx context.Context, creds TenantCreds) (*db.BitrixToken, error) {
+	domain := normalizeDomain(creds.Domain)
+	if creds.ClientID != "" {
+		if t, err := c.repo.GetBitrixTokenByClientID(ctx, domain, creds.ClientID); err == nil && t != nil {
+			return t, nil
+		}
+	}
+	return c.repo.GetBitrixToken(ctx, domain)
 }
 
 // callOnce executa UMA chamada REST ao Bitrix24, respeitando o rate limiter
