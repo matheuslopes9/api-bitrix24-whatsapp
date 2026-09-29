@@ -30,6 +30,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func main() {
@@ -806,6 +807,15 @@ func buildMessageHandler(
 			if strings.TrimSpace(text) != "" {
 				text = "[Editada] " + text
 			} else {
+				// Ja' errei DUAS vezes o palpite de onde o texto novo mora
+				// (GetEditedMessage, depois ProtocolMessage.EditedMessage) e
+				// nas duas o atendente ficou sem saber PARA QUE a mensagem
+				// mudou. Em vez de um terceiro palpite, o log passa a dizer
+				// quais campos vieram de fato preenchidos.
+				log.Warn("edicao sem texto novo — campos presentes na mensagem",
+					zap.String("msg_id", evt.Info.ID),
+					zap.Strings("campos", camposPreenchidos(waMsg)),
+					zap.Strings("campos_raw", camposPreenchidos(evt.RawMessage)))
 				text = "[Mensagem editada pelo cliente]"
 			}
 			if msgType == db.MsgTypeText || msgType == "" {
@@ -1177,4 +1187,27 @@ func textoDaEdicao(m *waE2E.Message) string {
 		return vid.GetCaption()
 	}
 	return ""
+}
+
+// camposPreenchidos lista os campos que de fato vieram numa mensagem do
+// WhatsApp, usando a reflexao do protobuf.
+//
+// Existe porque errar o palpite da forma ja' custou tres correcoes seguidas
+// nesta base: o envelope "result" do imconnector.status, o wrapper
+// EditedMessage que o whatsmeow consome antes de entregar, e o
+// ProtocolMessage.EditedMessage que nao era onde o texto morava. Em todas, o
+// codigo estava escrito contra a forma SUPOSTA da API.
+//
+// Perguntar ao protobuf o que chegou custa uma linha de log e encerra a
+// discussao.
+func camposPreenchidos(m *waE2E.Message) []string {
+	if m == nil {
+		return nil
+	}
+	var nomes []string
+	m.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		nomes = append(nomes, string(fd.Name()))
+		return true
+	})
+	return nomes
 }
