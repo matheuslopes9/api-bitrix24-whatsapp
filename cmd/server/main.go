@@ -25,6 +25,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/watchdog"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/whatsapp"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"go.uber.org/zap"
@@ -703,6 +704,79 @@ func buildMessageHandler(
 					zap.Bool("animated", sticker.GetIsAnimated()))
 				text = "[Figurinha]"
 			}
+		} else if ptv := waMsg.GetPtvMessage(); ptv != nil {
+			// "Video em circulo" (video note). E' um video comum com flag —
+			// tratar como video e' suficiente e preserva o conteudo.
+			msgType = db.MsgTypeVideo
+			mediaMime = ptv.GetMimetype()
+			mediaName = media.TrocarExtensao("video.mp4", mediaMime)
+			if data, err := waManager.DownloadMedia(sessionJID, ptv); err == nil {
+				mediaData = data
+			} else {
+				log.Warn("download ptv failed", zap.Error(err))
+				text = "[Video em circulo]"
+			}
+		} else if loc := waMsg.GetLocationMessage(); loc != nil {
+			// O Open Channel nao tem mapa. Coordenadas + link cobrem o que o
+			// atendente precisa: ver onde e' e abrir num mapa de verdade.
+			msgType = db.MsgTypeText
+			text = textoDeLocalizacao(loc.GetDegreesLatitude(), loc.GetDegreesLongitude(),
+				loc.GetName(), loc.GetAddress())
+		} else if live := waMsg.GetLiveLocationMessage(); live != nil {
+			// Localizacao em tempo real: so' a primeira posicao chega assim; as
+			// atualizacoes vem por outro canal que nao consumimos. O rotulo
+			// avisa o atendente de que a posicao vai mudar.
+			msgType = db.MsgTypeText
+			text = "[Localizacao em tempo real] " + textoDeLocalizacao(
+				live.GetDegreesLatitude(), live.GetDegreesLongitude(), "", live.GetCaption())
+		} else if enq := waMsg.GetPollCreationMessage(); enq != nil {
+			msgType = db.MsgTypeText
+			var b strings.Builder
+			b.WriteString("[Enquete] ")
+			b.WriteString(enq.GetName())
+			for _, op := range enq.GetOptions() {
+				b.WriteString("\n  - ")
+				b.WriteString(op.GetOptionName())
+			}
+			text = b.String()
+		} else if waMsg.GetPollUpdateMessage() != nil {
+			// O voto vem CIFRADO: o conteudo so' abre com a chave da enquete
+			// original, que nao guardamos. Registrar que houve voto e' melhor
+			// que sumir com ele — o atendente ve a enquete na conversa.
+			msgType = db.MsgTypeText
+			text = "[Voto em enquete]"
+		} else if cs := waMsg.GetContactsArrayMessage(); cs != nil {
+			// Varios contatos num envio so'. Vai como texto com a lista: mandar
+			// N arquivos .vcf separados poluiria a conversa.
+			msgType = db.MsgTypeText
+			var b strings.Builder
+			b.WriteString("[Contatos]")
+			for _, c := range cs.GetContacts() {
+				b.WriteString("\n  - ")
+				b.WriteString(c.GetDisplayName())
+			}
+			text = b.String()
+		} else if ed := waMsg.GetEditedMessage(); ed != nil && ed.GetMessage() != nil {
+			// Mensagem editada. O texto novo vem aninhado; sem isto o
+			// atendente continuaria vendo so' a versao antiga.
+			msgType = db.MsgTypeText
+			novoTexto := ed.GetMessage().GetConversation()
+			if novoTexto == "" {
+				if e2 := ed.GetMessage().GetExtendedTextMessage(); e2 != nil {
+					novoTexto = e2.GetText()
+				}
+			}
+			if novoTexto == "" {
+				novoTexto = "(sem texto)"
+			}
+			text = "[Editada] " + novoTexto
+		} else if proto := waMsg.GetProtocolMessage(); proto != nil &&
+			proto.GetType() == waE2E.ProtocolMessage_REVOKE {
+			// "Apagar para todos". Sem isto, a mensagem simplesmente some da
+			// conversa do atendente sem explicacao — e ele fica respondendo
+			// algo que o cliente nao ve mais.
+			msgType = db.MsgTypeText
+			text = "[Mensagem apagada pelo cliente]"
 		} else if reaction := waMsg.GetReactionMessage(); reaction != nil {
 			// Reaction WhatsApp (curtidas/emojis em msg anterior). Bitrix
 			// Open Channel nao tem conceito nativo de reaction — mandamos
@@ -728,6 +802,22 @@ func buildMessageHandler(
 		// evento COMPLETO (que vem logo depois com a midia) passa normal.
 		hasContent := strings.TrimSpace(text) != "" || len(mediaData) > 0
 		if !hasContent {
+			// Duas coisas DIFERENTES caiam aqui com a mesma mensagem de log:
+			// o evento fantasma do multi-device (so' metadado, normal) e o tipo
+			// que a gente nao sabe ler (enquete, botao, catalogo...). O segundo
+			// e' mensagem REAL do cliente sumindo, e no log parecia ruido.
+			//
+			// tipoNaoTratado devolve "" pro fantasma e o nome do campo pro
+			// resto, entao o suporte consegue ver que existe conteudo que o
+			// atendente nunca recebeu — e a gente sabe qual tipo implementar.
+			if tipo := tipoNaoTratado(waMsg); tipo != "" {
+				log.Warn("onMsg: tipo de mensagem NAO TRATADO — o cliente enviou algo que o atendente nao vai ver",
+					zap.String("tipo", tipo),
+					zap.String("msg_id", evt.Info.ID),
+					zap.String("de", evt.Info.Sender.String()),
+					zap.String("session_jid", sessionJID))
+				return
+			}
 			log.Info("onMsg: evento vazio (sem texto/midia) — ignorado",
 				zap.String("msg_id", evt.Info.ID),
 				zap.String("session_jid", sessionJID))
@@ -946,4 +1036,69 @@ func semPanico(log *zap.Logger, tarefa string, fn func()) {
 		}
 	}()
 	fn()
+}
+
+// textoDeLocalizacao monta o que o atendente ve quando o cliente manda o lugar.
+//
+// O Open Channel do Bitrix nao renderiza mapa, entao a alternativa a isto seria
+// descartar — foi o que acontecia ate' 29/09: LocationMessage nao estava na
+// cadeia de tipos e caia no filtro de "evento vazio". O cliente mandava o
+// endereco e o atendente nao via NADA.
+//
+// Coordenadas cruas nao ajudam ninguem, entao vai junto um link que abre no
+// mapa. Nome e endereco, quando o WhatsApp manda, vem antes: e' o que a pessoa
+// realmente quis dizer.
+func textoDeLocalizacao(lat, lon float64, nome, endereco string) string {
+	var b strings.Builder
+	b.WriteString("[Localizacao]")
+	if nome = strings.TrimSpace(nome); nome != "" {
+		b.WriteString(" ")
+		b.WriteString(nome)
+	}
+	if endereco = strings.TrimSpace(endereco); endereco != "" && endereco != nome {
+		b.WriteString("\n")
+		b.WriteString(endereco)
+	}
+	b.WriteString(fmt.Sprintf("\n%.6f, %.6f", lat, lon))
+	b.WriteString(fmt.Sprintf("\nhttps://maps.google.com/?q=%.6f,%.6f", lat, lon))
+	return b.String()
+}
+
+// tipoNaoTratado nomeia o payload de uma mensagem que nao produziu conteudo.
+//
+// Serve pra separar duas coisas que antes eram indistinguiveis no log:
+//
+//	""              evento fantasma do multi-device — so' metadado, normal
+//	"<nome>"        tipo real que nao sabemos ler — mensagem do cliente sumindo
+//
+// A lista cobre o que um usuario de WhatsApp consegue mandar e ainda nao esta'
+// na cadeia de tipos. Quando um deles aparecer no log com frequencia, e' sinal
+// de que vale implementar — em vez de descobrir por reclamacao de cliente.
+func tipoNaoTratado(m *waE2E.Message) string {
+	if m == nil {
+		return ""
+	}
+	switch {
+	case m.GetButtonsResponseMessage() != nil:
+		return "resposta de botao"
+	case m.GetListResponseMessage() != nil:
+		return "resposta de lista"
+	case m.GetTemplateButtonReplyMessage() != nil:
+		return "resposta de template"
+	case m.GetGroupInviteMessage() != nil:
+		return "convite de grupo"
+	case m.GetOrderMessage() != nil:
+		return "pedido do catalogo"
+	case m.GetProductMessage() != nil:
+		return "produto do catalogo"
+	case m.GetButtonsMessage() != nil:
+		return "mensagem com botoes"
+	case m.GetListMessage() != nil:
+		return "mensagem com lista"
+	case m.GetInteractiveMessage() != nil:
+		return "mensagem interativa"
+	case m.GetProtocolMessage() != nil:
+		return "mensagem de protocolo"
+	}
+	return ""
 }
