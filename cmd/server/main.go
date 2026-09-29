@@ -729,7 +729,7 @@ func buildMessageHandler(
 			msgType = db.MsgTypeText
 			text = "[Localizacao em tempo real] " + textoDeLocalizacao(
 				live.GetDegreesLatitude(), live.GetDegreesLongitude(), "", live.GetCaption())
-		} else if enq := waMsg.GetPollCreationMessage(); enq != nil {
+		} else if enq := enqueteDaMensagem(waMsg); enq != nil {
 			msgType = db.MsgTypeText
 			var b strings.Builder
 			b.WriteString("[Enquete] ")
@@ -796,6 +796,13 @@ func buildMessageHandler(
 		// faltava era RECONHECER que e' edicao e avisar o atendente, que senao
 		// segue lendo a versao antiga sem saber que mudou.
 		if evt.IsEdit || evt.Info.Edit == types.EditAttributeMessageEdit {
+			// Medido em 29/09: a flag chegou e o texto NAO. O conteudo novo da
+			// edicao ao vivo fica em ProtocolMessage.EditedMessage — o
+			// whatsmeow so' desembrulha isso no caminho de history sync
+			// (ParseWebMessage), nao no ao vivo.
+			if strings.TrimSpace(text) == "" {
+				text = textoDaEdicao(waMsg)
+			}
 			if strings.TrimSpace(text) != "" {
 				text = "[Editada] " + text
 			} else {
@@ -1109,6 +1116,65 @@ func tipoNaoTratado(m *waE2E.Message) string {
 		return "mensagem interativa"
 	case m.GetProtocolMessage() != nil:
 		return "mensagem de protocolo"
+	}
+	return ""
+}
+
+// enqueteDaMensagem acha a enquete em qualquer uma das variantes.
+//
+// O WhatsApp versiona esse tipo: waE2E.Message tem PollCreationMessage e as
+// versoes V2 ate' V6, todas com o mesmo formato. O cliente moderno manda V3 ou
+// acima, entao olhar so' o campo base — o que o codigo fazia ate' 29/09 — e'
+// nao ver enquete nenhuma. Medido: a enquete caiu como "evento vazio".
+//
+// V4 fica de fora de proposito: e' FutureProofMessage (outro tipo), sem os
+// campos de pergunta e opcao. Nao vale fingir que tratamos.
+func enqueteDaMensagem(m *waE2E.Message) *waE2E.PollCreationMessage {
+	if m == nil {
+		return nil
+	}
+	for _, e := range []*waE2E.PollCreationMessage{
+		m.GetPollCreationMessageV6(),
+		m.GetPollCreationMessageV5(),
+		m.GetPollCreationMessageV3(),
+		m.GetPollCreationMessageV2(),
+		m.GetPollCreationMessage(),
+	} {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// textoDaEdicao extrai o conteudo NOVO de uma mensagem editada.
+//
+// Numa edicao ao vivo o texto novo vem em ProtocolMessage.EditedMessage. O
+// whatsmeow desembrulha isso apenas em ParseWebMessage (history sync); no
+// caminho ao vivo ele so' marca evt.IsEdit e deixa o conteudo onde estava.
+//
+// Sem isto o atendente recebia "[Mensagem editada pelo cliente]" sem saber PARA
+// QUE mudou — que e' quase tao inutil quanto nao receber nada.
+func textoDaEdicao(m *waE2E.Message) string {
+	if m == nil {
+		return ""
+	}
+	nova := m.GetProtocolMessage().GetEditedMessage()
+	if nova == nil {
+		return ""
+	}
+	if t := nova.GetConversation(); t != "" {
+		return t
+	}
+	if ext := nova.GetExtendedTextMessage(); ext != nil {
+		return ext.GetText()
+	}
+	// Edicao de legenda de midia: a legenda nova vem no proprio tipo.
+	if img := nova.GetImageMessage(); img != nil {
+		return img.GetCaption()
+	}
+	if vid := nova.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
 	}
 	return ""
 }

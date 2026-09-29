@@ -70,3 +70,67 @@ func TestTipoRealNaoTratadoEhNomeado(t *testing.T) {
 		}
 	}
 }
+
+// O WhatsApp versiona a enquete: PollCreationMessage e V2..V6, todas com o
+// mesmo formato. O cliente moderno manda V3 ou acima, entao olhar so' o campo
+// base — o que o codigo fazia — e' nao ver enquete nenhuma. Medido em 29/09: a
+// enquete do teste caiu como "evento vazio".
+func TestEnqueteEhAchadaEmQualquerVariante(t *testing.T) {
+	enq := &waE2E.PollCreationMessage{Name: proto.String("Qual cor?")}
+	casos := map[string]*waE2E.Message{
+		"base": {PollCreationMessage: enq},
+		"V2":   {PollCreationMessageV2: enq},
+		"V3":   {PollCreationMessageV3: enq},
+		"V5":   {PollCreationMessageV5: enq},
+		"V6":   {PollCreationMessageV6: enq},
+	}
+	for nome, msg := range casos {
+		got := enqueteDaMensagem(msg)
+		if got == nil {
+			t.Errorf("%s: enquete nao encontrada", nome)
+		} else if got.GetName() != "Qual cor?" {
+			t.Errorf("%s: pergunta errada %q", nome, got.GetName())
+		}
+	}
+	if enqueteDaMensagem(&waE2E.Message{}) != nil {
+		t.Error("mensagem sem enquete devolveu enquete")
+	}
+	if enqueteDaMensagem(nil) != nil {
+		t.Error("nil devolveu enquete")
+	}
+}
+
+// Numa edicao ao vivo o texto novo fica em ProtocolMessage.EditedMessage — o
+// whatsmeow so' desembrulha isso no history sync. Sem cavar ali, o atendente
+// recebia "[Mensagem editada pelo cliente]" sem saber PARA QUE mudou.
+func TestTextoNovoDaEdicaoEhExtraido(t *testing.T) {
+	msg := &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+		Type:          waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+		EditedMessage: &waE2E.Message{Conversation: proto.String("texto corrigido")},
+	}}
+	if got := textoDaEdicao(msg); got != "texto corrigido" {
+		t.Errorf("esperava o texto novo, veio %q", got)
+	}
+}
+
+// Editar a legenda de uma imagem tambem tem que trazer a legenda nova.
+func TestEdicaoDeLegendaDeMidia(t *testing.T) {
+	msg := &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+		Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+		EditedMessage: &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+			Caption: proto.String("legenda nova"),
+		}},
+	}}
+	if got := textoDaEdicao(msg); got != "legenda nova" {
+		t.Errorf("esperava a legenda nova, veio %q", got)
+	}
+}
+
+// Sem conteudo de edicao, devolve vazio — quem chama decide o fallback.
+func TestEdicaoSemConteudoDevolveVazio(t *testing.T) {
+	for _, m := range []*waE2E.Message{nil, {}, {ProtocolMessage: &waE2E.ProtocolMessage{}}} {
+		if got := textoDaEdicao(m); got != "" {
+			t.Errorf("esperava vazio, veio %q", got)
+		}
+	}
+}
