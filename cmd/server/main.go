@@ -802,6 +802,22 @@ func buildMessageHandler(
 			// whatsmeow so' desembrulha isso no caminho de history sync
 			// (ParseWebMessage), nao no ao vivo.
 			if strings.TrimSpace(text) == "" {
+				// O texto novo vem CIFRADO em secretEncryptedMessage — foi o
+				// que a reflexao do protobuf mostrou em 29/09, depois de dois
+				// palpites errados sobre onde ele estaria. So' abre com o
+				// segredo da mensagem original, e quem tem isso e' o cliente
+				// da sessao.
+				if nova, derr := waManager.AbrirEdicao(ctx, sessionJID, evt); derr == nil {
+					text = textoDaEdicao(nova)
+					if text == "" {
+						text = nova.GetConversation()
+					}
+				} else {
+					log.Warn("nao consegui abrir o conteudo da edicao",
+						zap.String("msg_id", evt.Info.ID), zap.Error(derr))
+				}
+			}
+			if strings.TrimSpace(text) == "" {
 				text = textoDaEdicao(waMsg)
 			}
 			if strings.TrimSpace(text) != "" {
@@ -1169,9 +1185,11 @@ func textoDaEdicao(m *waE2E.Message) string {
 	if m == nil {
 		return ""
 	}
-	nova := m.GetProtocolMessage().GetEditedMessage()
-	if nova == nil {
-		return ""
+	// Aceita os dois formatos: a mensagem ja' descriptografada (vinda do
+	// AbrirEdicao) e a que ainda traz o ProtocolMessage por fora.
+	nova := m
+	if p := m.GetProtocolMessage().GetEditedMessage(); p != nil {
+		nova = p
 	}
 	if t := nova.GetConversation(); t != "" {
 		return t

@@ -134,3 +134,20 @@ func TestEdicaoSemConteudoDevolveVazio(t *testing.T) {
 		}
 	}
 }
+
+// A mensagem JA' descriptografada (a que AbrirEdicao devolve) vem sem o
+// ProtocolMessage por fora — o texto esta' na raiz. textoDaEdicao tem que
+// servir os dois formatos, senao a descriptografia funciona e o texto some
+// mesmo assim.
+func TestTextoDaEdicaoAceitaMensagemJaAberta(t *testing.T) {
+	aberta := &waE2E.Message{Conversation: proto.String("texto ja decifrado")}
+	if got := textoDaEdicao(aberta); got != "texto ja decifrado" {
+		t.Errorf("mensagem aberta: esperava o texto, veio %q", got)
+	}
+	abertaExt := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+		Text: proto.String("texto longo decifrado"),
+	}}
+	if got := textoDaEdicao(abertaExt); got != "texto longo decifrado" {
+		t.Errorf("extendedText aberto: veio %q", got)
+	}
+}

@@ -1524,3 +1524,20 @@ func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 // a regra do device suffix — justamente a que ja' gerou bug quando duas
 // copias divergiram.
 func PhoneFromJID(jid string) string { return extractPhoneFromJID(jid) }
+
+// AbrirEdicao descriptografa o conteudo novo de uma mensagem editada.
+//
+// O WhatsApp NAO manda o texto da edicao em claro: ele chega como
+// "secretEncryptedMessage" e so' abre com o segredo da mensagem original. Isso
+// custou tres tentativas erradas neste projeto — GetEditedMessage(), depois
+// ProtocolMessage.EditedMessage — ate' a reflexao do protobuf mostrar que o
+// unico campo preenchido era secretEncryptedMessage.
+//
+// O whatsmeow ja' resolve a parte criptografica; o que faltava era chamar.
+func (m *Manager) AbrirEdicao(ctx context.Context, sessionJID string, evt *events.Message) (*waProto.Message, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionJID)
+	}
+	return sess.Client.DecryptSecretEncryptedMessage(ctx, evt)
+}
