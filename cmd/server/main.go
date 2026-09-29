@@ -756,20 +756,6 @@ func buildMessageHandler(
 				b.WriteString(c.GetDisplayName())
 			}
 			text = b.String()
-		} else if ed := waMsg.GetEditedMessage(); ed != nil && ed.GetMessage() != nil {
-			// Mensagem editada. O texto novo vem aninhado; sem isto o
-			// atendente continuaria vendo so' a versao antiga.
-			msgType = db.MsgTypeText
-			novoTexto := ed.GetMessage().GetConversation()
-			if novoTexto == "" {
-				if e2 := ed.GetMessage().GetExtendedTextMessage(); e2 != nil {
-					novoTexto = e2.GetText()
-				}
-			}
-			if novoTexto == "" {
-				novoTexto = "(sem texto)"
-			}
-			text = "[Editada] " + novoTexto
 		} else if proto := waMsg.GetProtocolMessage(); proto != nil &&
 			proto.GetType() == waE2E.ProtocolMessage_REVOKE {
 			// "Apagar para todos". Sem isto, a mensagem simplesmente some da
@@ -800,6 +786,26 @@ func buildMessageHandler(
 		//
 		// Importante: esse filtro roda DEPOIS de decodificar, entao o
 		// evento COMPLETO (que vem logo depois com a midia) passa normal.
+		// EDICAO: o whatsmeow chama UnwrapRaw() ANTES de nos entregar e ja'
+		// consome o wrapper EditedMessage, deixando so' a flag. Por isso um
+		// ramo "GetEditedMessage()" na cadeia de tipos nunca dispara — quando a
+		// mensagem chega aqui o wrapper nao existe mais.
+		//
+		// Medido em 29/09: o cliente editou um texto e o evento foi descartado
+		// como "vazio". O conteudo novo esta' em waMsg normalmente; o que
+		// faltava era RECONHECER que e' edicao e avisar o atendente, que senao
+		// segue lendo a versao antiga sem saber que mudou.
+		if evt.IsEdit || evt.Info.Edit == types.EditAttributeMessageEdit {
+			if strings.TrimSpace(text) != "" {
+				text = "[Editada] " + text
+			} else {
+				text = "[Mensagem editada pelo cliente]"
+			}
+			if msgType == db.MsgTypeText || msgType == "" {
+				msgType = db.MsgTypeText
+			}
+		}
+
 		hasContent := strings.TrimSpace(text) != "" || len(mediaData) > 0
 		if !hasContent {
 			// Duas coisas DIFERENTES caiam aqui com a mesma mensagem de log:
@@ -820,6 +826,10 @@ func buildMessageHandler(
 			}
 			log.Info("onMsg: evento vazio (sem texto/midia) — ignorado",
 				zap.String("msg_id", evt.Info.ID),
+				// as flags de edicao entram aqui porque foi justamente um
+				// evento de edicao que se escondeu como "vazio" em 29/09
+				zap.Bool("is_edit", evt.IsEdit),
+				zap.String("edit_attr", string(evt.Info.Edit)),
 				zap.String("session_jid", sessionJID))
 			return
 		}
