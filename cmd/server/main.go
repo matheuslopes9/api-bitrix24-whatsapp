@@ -735,17 +735,25 @@ func buildMessageHandler(
 			var b strings.Builder
 			b.WriteString("[Enquete] ")
 			b.WriteString(enq.GetName())
+			opcoes := make([]string, 0, len(enq.GetOptions()))
 			for _, op := range enq.GetOptions() {
 				b.WriteString("\n  - ")
 				b.WriteString(op.GetOptionName())
+				opcoes = append(opcoes, op.GetOptionName())
 			}
 			text = b.String()
-		} else if waMsg.GetPollUpdateMessage() != nil {
+			// Guarda as opcoes: o voto so' traz o HASH delas, entao sem isto
+			// nao ha' como dizer em QUE o cliente votou.
+			if err := repo.SalvarEnquete(ctx, evt.Info.ID, enq.GetName(), opcoes); err != nil {
+				log.Warn("nao consegui guardar as opcoes da enquete",
+					zap.String("msg_id", evt.Info.ID), zap.Error(err))
+			}
+		} else if voto := waMsg.GetPollUpdateMessage(); voto != nil {
 			// O voto vem CIFRADO: o conteudo so' abre com a chave da enquete
 			// original, que nao guardamos. Registrar que houve voto e' melhor
 			// que sumir com ele — o atendente ve a enquete na conversa.
 			msgType = db.MsgTypeText
-			text = "[Voto em enquete]"
+			text = textoDoVoto(ctx, waManager, repo, log, sessionJID, evt, voto)
 		} else if cs := waMsg.GetContactsArrayMessage(); cs != nil {
 			// Varios contatos num envio so'. Vai como texto com a lista: mandar
 			// N arquivos .vcf separados poluiria a conversa.

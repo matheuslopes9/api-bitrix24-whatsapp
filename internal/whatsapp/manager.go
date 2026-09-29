@@ -1541,3 +1541,16 @@ func (m *Manager) AbrirEdicao(ctx context.Context, sessionJID string, evt *event
 	}
 	return sess.Client.DecryptSecretEncryptedMessage(ctx, evt)
 }
+
+// AbrirVoto descriptografa um voto de enquete.
+//
+// O voto chega cifrado com o segredo da enquete original. Mesmo aberto ele NAO
+// traz o texto da opcao: so' o SHA-256 dela. Casar hash com texto e' trabalho
+// de quem guardou as opcoes — ver db/enquetes.go.
+func (m *Manager) AbrirVoto(ctx context.Context, sessionJID string, evt *events.Message) (*waProto.PollVoteMessage, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionJID)
+	}
+	return sess.Client.DecryptPollVote(ctx, evt)
+}

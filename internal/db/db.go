@@ -843,6 +843,27 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 			);
 		`},
+		{"053_enquetes", `
+			-- Opcoes da enquete, pra conseguir NOMEAR o voto.
+			--
+			-- O voto do WhatsApp chega cifrado e, mesmo aberto, so' traz
+			-- SHA-256 das opcoes escolhidas — nunca o texto. Sem guardar as
+			-- opcoes originais nao ha' como dizer em QUE o cliente votou; o
+			-- atendente via "[Voto em enquete]" e nada mais.
+			--
+			-- Chaveado pelo id da mensagem do WhatsApp, que e' como o voto
+			-- referencia a enquete (PollUpdateMessage.PollCreationMessageKey).
+			CREATE TABLE IF NOT EXISTS enquetes (
+				wa_message_id TEXT PRIMARY KEY,
+				pergunta      TEXT NOT NULL DEFAULT '',
+				opcoes        TEXT[] NOT NULL DEFAULT '{}',
+				criado_em     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+
+			-- Enquete velha nao serve pra nada: o voto chega junto ou logo
+			-- depois. O indice sustenta a limpeza por idade.
+			CREATE INDEX IF NOT EXISTS idx_enquetes_criado_em ON enquetes (criado_em);
+		`},
 	}
 
 	for _, m := range migrations {
