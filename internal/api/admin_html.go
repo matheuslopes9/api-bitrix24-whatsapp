@@ -1144,7 +1144,7 @@ function carregarHealth(){
       // Abas do UC Talk no card do CRM. Falham em silencio quando quem
       // instalou o app nao e' admin do portal: nada quebra, a aba so' nao
       // existe — e ninguem sabe que deveria existir.
-      var ab=d.abas_crm||{};
+      var ab=b.abas_crm||{};
       if(ab.indeterminado){
         c+='<div class="meta" style="margin-top:8px">Abas do CRM: '+_esc(ab.detalhe||'nao consegui conferir')+'</div>';
       } else if(ab.abas){

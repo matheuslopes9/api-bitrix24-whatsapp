@@ -112,3 +112,34 @@ func TestRecarregarSubstituiEmVezDeAcumular(t *testing.T) {
 		t.Error("credencial removida continuou no cache — nao havia como desfazer sem restart")
 	}
 }
+
+// Medido no homolog em 30/09: os dois portais tinham gravado na conta
+// exatamente o client_id da env. Tratar isso como "app proprio" poria um aviso
+// amarelo em TODO cliente para dizer que nada esta' diferente — e aviso que
+// aparece sempre e' aviso que ninguem le. So' e' excecao o que de fato difere.
+func TestCredencialIgualAAmbienteNaoContaComoExcecao(t *testing.T) {
+	h := handlersComCreds(
+		db.AppCreds{ClientID: "app.uc", ClientSecret: "s3gr3d0"},
+		map[string]db.AppCreds{"teclife.bitrix24.com.br": {ClientID: "app.uc", ClientSecret: "s3gr3d0"}},
+	)
+	id, _, origem := h.credenciaisDoPortal("teclife.bitrix24.com.br")
+	if id != "app.uc" {
+		t.Errorf("credencial = %q, esperado app.uc", id)
+	}
+	if origem != "ambiente" {
+		t.Errorf("origem = %q: o valor e' identico ao do ambiente, nao e' app proprio", origem)
+	}
+}
+
+// Mas um secret diferente COM o mesmo client_id e' excecao de verdade: e' outro
+// app, e confundir os dois e' o que faz o Bitrix responder wrong_client.
+func TestSecretDiferenteAindaContaComoExcecao(t *testing.T) {
+	h := handlersComCreds(
+		db.AppCreds{ClientID: "app.uc", ClientSecret: "s3gr3d0"},
+		map[string]db.AppCreds{"teclife.bitrix24.com.br": {ClientID: "app.uc", ClientSecret: "OUTRO"}},
+	)
+	_, secret, origem := h.credenciaisDoPortal("teclife.bitrix24.com.br")
+	if secret != "OUTRO" || origem != "portal" {
+		t.Errorf("secret=%q origem=%q — a excecao real foi perdida", secret, origem)
+	}
+}

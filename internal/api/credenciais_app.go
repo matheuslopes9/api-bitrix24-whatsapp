@@ -125,12 +125,22 @@ func (h *handlers) IniciarRevisaoCredenciais(ctx context.Context) {
 // "credencial cadastrada" enquanto o sistema usa a do ambiente foi exatamente
 // o que fez a tela mentir por semanas.
 func (h *handlers) credenciaisDoPortal(dominio string) (id, secret, origem string) {
+	envID, envSecret := h.cfg.Bitrix.ClientID, h.cfg.Bitrix.ClientSecret
 	if h.credsApp != nil {
 		if c, ok := h.credsApp.get(dominio); ok {
+			// Gravado igual ao ambiente nao e' excecao nenhuma — e' o mesmo app
+			// Partner, copiado para a conta em algum momento. Medido no homolog
+			// em 30/09: os DOIS portais tinham o client_id da env gravado, e
+			// chamar isso de "app proprio" poria um aviso amarelo em todo
+			// cliente para avisar que nada e' diferente. Aviso que aparece
+			// sempre e' aviso que ninguem le.
+			if c.ClientID == envID && c.ClientSecret == envSecret {
+				return envID, envSecret, "ambiente"
+			}
 			return c.ClientID, c.ClientSecret, "portal"
 		}
 	}
-	return h.cfg.Bitrix.ClientID, h.cfg.Bitrix.ClientSecret, "ambiente"
+	return envID, envSecret, "ambiente"
 }
 
 // portalToCreds monta as credenciais para uma chamada ao Bitrix deste portal.
