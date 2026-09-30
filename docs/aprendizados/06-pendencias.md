@@ -64,21 +64,43 @@ Corrigido em 25/09:
 
 ---
 
-## 🔴 Bitrix — a aba do UC Talk NÃO aparece no card, mesmo vinculada
+## 🟢 A aba do UC Talk no card — NUNCA houve bug *(encerrado 30/09)*
 
-**Medido no homolog em 28/09**, `crm.uctechnology.com.br`, contato 19994:
+Investiguei isto por dois dias e reportei como defeito aberto. **Estava errado.**
 
-| evidência | resultado |
-|---|---|
-| `placement.get` | `CRM_CONTACT_DETAIL_TAB` → `.../bitrix/crm/tab` **vinculado** |
-| `placement.bind` | `"Handler already binded"` |
-| `placement.list` | `CRM_CONTACT_DETAIL_TAB` **disponível** neste portal |
-| card do contato | **"UC Talk" não existe no DOM** — nem na barra de abas, nem sob "Mais", nem no iframe do corpo |
+A aba sempre esteve lá, no menu **"Mais"** do card — junto com o Whatcrm e o
+Wazzup, que são os outros apps de WhatsApp do portal. O card do contato tem
+**onze** abas antes dela (Geral, Negócios, Orçamentos, Fluxos de trabalho,
+Dependências, Histórico, Faturas, Admissão, Banco de Talentos, Renovação
+Conectores, Adendo), e o Bitrix recolhe o excedente no overflow.
 
-Ou seja: o registro está certo, o código do placement é suportado pelo portal, e
-a aba mesmo assim não renderiza. **Causa ainda não determinada.**
+Clicada, ela abre completa: cabeçalho com o nome do operador e o status verde,
+lista de conversas com o telefone do contato resolvido, e a caixa de envio.
 
-### Já ELIMINADO (medido em 28/09)
+### Por que demorei tanto para ver
+
+Todas as quatro hipóteses que eliminei estavam corretas — e **nenhuma era a
+pergunta certa**. Eu perguntava "por que o vínculo não funciona?", quando o
+vínculo funcionava. A pergunta certa era "onde o Bitrix põe uma aba quando não
+cabe na barra?".
+
+O erro concreto: minhas buscas no DOM procuravam o texto "UC Talk" na página, e
+o conteúdo do menu "Mais" **só e renderizado quando o menu e' aberto**. Ausente
+do DOM não significava ausente do produto. Conclui "não existe" a partir de
+"não encontrei", que são coisas diferentes.
+
+O que resolveu foi trocar a heurística de DOM pelo snapshot de acessibilidade,
+que lista os botões por referência estável. Com ele, abrir o menu foi um clique.
+
+### A lição
+
+Antes de declarar que algo não existe, vale conferir se a ferramenta de busca
+alcança o lugar onde a coisa estaria. Um `grep` que não entra no menu fechado
+responde sobre o `grep`, não sobre o produto.
+
+---
+
+## Já ELIMINADO (medido em 28/09)
 
 - [x] **Cache/sessão por usuário** — testado com **dois usuários diferentes**
       (id 38 e id 356), sessões separadas, logout e login limpos. Mesma ausência

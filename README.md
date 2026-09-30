@@ -407,7 +407,7 @@ apagada por engano junto de um bloco substituído.
 | Licenças e pagamentos | Funcionando |
 | Alertas por e-mail | Funcionando |
 | Permissões por número | Funcionando — lista pela estrutura da empresa |
-| Aba do UC Talk no card do CRM | **Não aparece** — vínculo correto, causa no lado Bitrix |
+| Aba do UC Talk no card do CRM | Funcionando — fica no menu "Mais" do card |
 | Testes automatizados | Parcial — ver tabela acima |
 | WhatsApp oficial (Cloud API) | Implementado, pouco exercitado |
 
@@ -422,12 +422,10 @@ apagada por engano junto de um bloco substituído.
   `BX24` do usuário logado; no backend, não.
 - **Alerta de sessão não cobre Cloud API.** Ela é stateless por HTTPS e não
   vive no manager, então ausência ali não significa queda.
-- **A aba do UC Talk não aparece no card do CRM.** O vínculo está correto —
-  `placement.get` traz `CRM_CONTACT_DETAIL_TAB` com handler, título e
-  `userId: 0`; o handler responde 200 — e mesmo assim a aba não renderiza.
-  Testado com dois usuários distintos, em Contato e Negócio. Causa do lado
-  Bitrix, ainda não determinada. Ver
-  [`docs/aprendizados/06-pendencias.md`](docs/aprendizados/06-pendencias.md).
+- **A aba do UC Talk fica no menu "Mais" do card**, não na barra principal. O
+  card do contato tem onze abas antes dela e o Bitrix recolhe o excedente —
+  mesmo tratamento que o Whatcrm e o Wazzup recebem. Para tirá-la de lá, use
+  "Configurar menu" no próprio card.
 - **Duas fontes de credencial do Bitrix.** A env vale para ~40 chamadas; a
   credencial por conta, para 3. Ver o aviso na seção de Deploy.
 - **`status@broadcast` sem filtro.** Status dos contatos entra como mensagem
