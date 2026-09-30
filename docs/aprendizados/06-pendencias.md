@@ -228,14 +228,11 @@ funciona porque a env está preenchida, mas a armadilha continua armada.
 
 ---
 
-## 🟡 WhatsApp — Status (`status@broadcast`) sem filtro
+## 🟢 WhatsApp — Status (`status@broadcast`) sem filtro *(resolvido)*
 
-Não há nenhum filtro para `status@broadcast` no caminho de entrada. Atualizações
-de Status dos contatos entram como mensagem normal: criam contato e vão para o
-Contact Center.
-
-- [ ] Filtrar na entrada. Não houve enxurrada até agora, mas é questão de o
-      número conectado ter uma agenda ativa.
+- [x] Filtrado na entrada: `status@broadcast` (Status) e `NewsletterServer`
+      (Canais) são descartados antes de virar mensagem. Lista de transmissão
+      segue no fluxo normal, porque ali o remetente é uma pessoa.
 
 ---
 
@@ -248,8 +245,9 @@ Contact Center.
       Era o pior ponto — passa **toda** mensagem de cliente por ali.
 - [x] Os três jobs perpétuos (alertas, reprocesso, licença): contenção por
       iteração, para que uma volta ruim não mate o laço.
-- [ ] Sobram 4 goroutines em `cmd/server/main.go` (limpeza, boot) sem proteção.
-      Risco menor — fazem pouco — mas o mesmo raio de alcance.
+- [x] As goroutines de `cmd/server/main.go` (limpeza de mensagens e de
+      arquivos) ganharam `semPanico` por iteração. A do `app.Listen` fica de
+      fora de propósito: ela não tem laço e já trata o próprio erro.
 
 ---
 
@@ -404,3 +402,47 @@ issue com o log correspondente.
 Depois de resolver qualquer item aqui, ou aprender algo que custou tempo,
 edite o doc do tema. A convenção é **Sintoma → Causa-raiz → Fix → Lição**, para
 que a lição sobreviva mesmo depois que o código mudar.
+
+
+---
+
+## 🟢 "Conectado" sem estar conectado *(resolvido 30/09)*
+
+O teclife aparecia **conectado** em toda tela do sistema com o número fora do
+ar há dias. Nenhum alerta disparou, porque, pelo critério do código, não havia
+nada errado.
+
+O projeto perguntava `IsConnected()` em seis lugares e `IsLoggedIn()` em lugar
+nenhum. A própria whatsmeow avisa que o primeiro só olha o WebSocket, não a
+autenticação. Quando o aparelho é removido em *Aparelhos conectados* no
+celular, o socket **continua aberto** — e o sistema inteiro acreditava nele.
+
+- [x] `ConnectedSessions()` exige socket **e** login.
+- [x] `Vinculada(jid)` para quem pergunta "esse número está atendendo?".
+      `Ping` continua só no socket, de propósito: é o que o watchdog precisa, e
+      exigir login ali criaria reconexão eterna num aparelho desvinculado.
+- [x] A tela do cliente era a **origem** da mentira: usava `Ping` e gravava
+      `status='active'` no banco. As outras telas só repetiam.
+- [x] Saúde, badge, coluna Conexões e e-mail de alerta separam "caiu" (o
+      watchdog reconecta) de "desvinculado" (só lendo o QR de novo) — são ações
+      opostas, e mandar esperar reconexão era conselho errado.
+
+Detalhe em [02-bugs-resolvidos.md](02-bugs-resolvidos.md), bug #25.
+
+---
+
+## 🟢 Licença: duas serializações, um renderizador *(resolvido 30/09)*
+
+A tela de Licenças dizia **"Sem licença"** para todos os clientes, com
+benefícios e vigência preenchidos ao lado; a de Clientes mostrava **"até
+Invalid Date"** na mesma licença.
+
+Não eram dois bugs. O mesmo JS (`licBadge`, `fmtDia`) renderiza as duas telas,
+e cada endpoint serializava a licença do seu jeito: `configurada` contra
+`licenca_configurada`, `YYYY-MM-DD` contra RFC3339. Cada tela leu o campo que
+não existia e **degradou em silêncio** — afirmando algo falso com confiança
+total.
+
+- [x] O card de tenant passa a usar os nomes e o formato do `licenseSummary`.
+- [x] Quatro testes travam o contrato, incluindo um que lê os `t.<campo>` de
+      dentro do `licBadge` e exige que a serialização os emita.

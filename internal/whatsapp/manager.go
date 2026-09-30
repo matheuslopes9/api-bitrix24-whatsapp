@@ -1141,6 +1141,24 @@ func (m *Manager) Ping(jid string) bool {
 	return ok && sess.Client != nil && sess.Client.IsConnected()
 }
 
+// Vinculada diz se a sessao serve pra trocar mensagem — socket vivo E
+// autenticado.
+//
+// Diferente de Ping DE PROPOSITO. Ping responde a pergunta do watchdog ("o
+// socket morreu? entao reconecta"), e por isso NAO pode exigir login: um
+// aparelho desvinculado tem socket vivo, e reconectar nao devolve o vinculo.
+// O watchdog ficaria num ciclo de reconexao eterno, que foi justamente o
+// stream:conflict a cada 30s que ja' custou caro aqui.
+//
+// Quem pergunta "esse numero esta' atendendo?" — a tela do cliente, a Saude,
+// o status gravado no banco — precisa da resposta forte. Usar Ping para isso
+// fazia a tela mostrar verde e o banco gravar 'active' num numero que nao
+// recebia nada.
+func (m *Manager) Vinculada(jid string) bool {
+	sess, ok := m.resolveSession(jid)
+	return ok && sess.Client != nil && sess.Client.IsConnected() && sess.Client.IsLoggedIn()
+}
+
 // Reconnect tenta reconectar uma sessão que estava desconectada.
 //
 // BUG HISTORICO (deploy deixava sessao "Desconectada" pra sempre): a versao

@@ -256,13 +256,23 @@ func (h *handlers) uiRefreshSessionsStatus(c *fiber.Ctx) error {
 		hp.Phone = ph
 		hp.Label = "+" + ph
 
-		hp.Healthy = h.waManager.Ping(jid)
+		// Vinculada, nao Ping: Ping so' olha o socket, e este endpoint decide
+		// o que o CLIENTE ve e o que vai para whatsapp_sessions.status. Com
+		// Ping, um aparelho desvinculado no celular aparecia verde aqui e
+		// gravava 'active' no banco — a origem da mentira que a lista de
+		// clientes e a Saude depois repetiam.
+		hp.Healthy = h.waManager.Vinculada(jid)
 		if hp.Healthy {
 			hp.Status = "active"
 			_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionActive)
 		} else {
 			hp.Status = "disconnected"
-			hp.ErrorMsg = "WebSocket não respondeu ao ping"
+			if h.waManager.Ping(jid) {
+				// Socket de pe, sem login: nao adianta esperar reconexao.
+				hp.ErrorMsg = "Aparelho desvinculado no WhatsApp — leia o QR Code de novo"
+			} else {
+				hp.ErrorMsg = "WebSocket não respondeu ao ping"
+			}
 			_ = h.repo.UpdateSessionStatus(c.Context(), jid, db.SessionDisconnected)
 		}
 		// last_seen do banco
