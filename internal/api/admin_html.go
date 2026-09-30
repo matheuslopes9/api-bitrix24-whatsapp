@@ -671,7 +671,7 @@ function fecharSidebar(){document.getElementById('sidebar').classList.remove('op
 function fmtBRL(cents){return 'R$ '+((cents||0)/100).toFixed(2).replace('.',',');}
 function fmtDate(s){if(!s)return '—';try{return new Date(s).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}catch(e){return s;}}
 function licBadge(t){
-  if(!t.licenca_configurada) return '<span class="badge b-none">Sem licença</span>';
+  if(!t.configurada) return '<span class="badge b-none">Sem licença</span>';
   if(t.expirada) return '<span class="badge b-expired">Vencida</span>';
   if(typeof t.dias_restantes==='number'&&t.dias_restantes<=7) return '<span class="badge b-trial">Vence em '+t.dias_restantes+'d</span>';
   if(!t.valid_until) return '<span class="badge b-active">Sem prazo</span>';
@@ -684,6 +684,21 @@ function featTags(t){
   if(t.feat_reports)     f.push('Relatórios');
   if(!f.length) return '<span class="meta">básico</span>';
   return f.map(function(x){return '<span class="badge b-pro">'+x+'</span>';}).join(' ');
+}
+// connCel: a coluna Conexoes. Mostrava so' a contagem do BANCO, entao um
+// numero fora do ar ha' dias aparecia como "1 QR" — sem nenhum sinal.
+// Agora mostra vivos/total e nomeia o que esta' errado, porque "caiu" e
+// "desvinculado" pedem acoes diferentes de quem le a tela.
+function connCel(t){
+  var tot=t.connections_qr||0, viv=t.connections_qr_vivas||0, desv=t.connections_qr_desvinculadas||0;
+  var txt;
+  if(!tot) txt='<span class="meta">nenhum</span>';
+  else if(viv===tot) txt=tot+' QR';
+  else txt='<span style="color:var(--red)">'+viv+' / '+tot+' QR</span>';
+  if(t.connections_cloud) txt+=' · '+t.connections_cloud+' Cloud';
+  if(desv) txt+='<div class="meta" style="color:var(--red)">'+desv+' desvinculado(s) — precisa ler o QR</div>';
+  else if(tot&&viv<tot) txt+='<div class="meta" style="color:var(--red)">'+(tot-viv)+' fora do ar</div>';
+  return txt;
 }
 function fmtDia(s){if(!s)return '—';try{return new Date(s+'T12:00:00').toLocaleDateString('pt-BR');}catch(e){return s;}}
 
@@ -721,14 +736,14 @@ function renderTenants(){
     if(q&&t.domain.toLowerCase().indexOf(q)<0)return false;
     if(fs==='vencida'&&!t.expirada)return false;
     if(fs==='vencendo'&&!(typeof t.dias_restantes==='number'&&t.dias_restantes>=0&&t.dias_restantes<=7))return false;
-    if(fs==='sem_licenca'&&t.licenca_configurada)return false;
+    if(fs==='sem_licenca'&&t.configurada)return false;
     return true;
   });
   var cnt=document.getElementById('tenant-count');
   if(cnt){cnt.textContent=(q||fs)?(list.length+' de '+TENANTS.length):(TENANTS.length+' clientes');}
   if(!list.length){body.innerHTML='<tr><td colspan="7" class="empty">Nenhum cliente encontrado.</td></tr>';return;}
   body.innerHTML=list.map(function(t){
-    var conn=(t.connections_qr||0)+' QR';if(t.connections_cloud)conn+=' · '+t.connections_cloud+' Cloud';
+    var conn=connCel(t);
     var tokCls={valid:'tok-valid',expiring:'tok-expiring',expired:'tok-expired'}[t.token_status]||'tok-expired';
     var tokLbl={valid:'válido',expiring:'expirando',expired:'expirado'}[t.token_status]||t.token_status;
     var vig=t.valid_until?'<div class="meta">até '+fmtDia(t.valid_until)+'</div>':'';

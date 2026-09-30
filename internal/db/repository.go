@@ -1678,6 +1678,10 @@ type DomainSessionCounts struct {
 	Domain string
 	QR     int
 	Cloud  int
+	// QRJIDs: os JIDs por tras da contagem QR. A contagem sozinha diz o que o
+	// BANCO acha; com os JIDs da' pra cruzar com o manager e descobrir quantos
+	// desses numeros estao mesmo de pe agora.
+	QRJIDs []string
 }
 
 // AllDomainSessionCounts agrupa sessoes WA por bitrix_account.domain
@@ -1705,7 +1709,8 @@ func (r *Repository) AllDomainSessionCounts(ctx context.Context) (map[string]Dom
 		)
 		SELECT LOWER(REGEXP_REPLACE(ba.domain, '^https?://(www\.)?', '')) AS d,
 			COUNT(*) FILTER (WHERE s.norm_jid NOT LIKE 'cloud:%') AS qr_count,
-			COUNT(*) FILTER (WHERE s.norm_jid LIKE 'cloud:%') AS cloud_count
+			COUNT(*) FILTER (WHERE s.norm_jid LIKE 'cloud:%') AS cloud_count,
+			COALESCE(ARRAY_AGG(s.norm_jid) FILTER (WHERE s.norm_jid NOT LIKE 'cloud:%'), '{}') AS qr_jids
 		FROM bitrix_accounts ba
 		JOIN active_sessions s
 		  ON s.norm_jid = REGEXP_REPLACE(ba.session_jid, ':[0-9]+@', '@')
@@ -1717,7 +1722,7 @@ func (r *Repository) AllDomainSessionCounts(ctx context.Context) (map[string]Dom
 	out := map[string]DomainSessionCounts{}
 	for rows.Next() {
 		var d DomainSessionCounts
-		if err := rows.Scan(&d.Domain, &d.QR, &d.Cloud); err != nil {
+		if err := rows.Scan(&d.Domain, &d.QR, &d.Cloud, &d.QRJIDs); err != nil {
 			return nil, err
 		}
 		out[d.Domain] = d

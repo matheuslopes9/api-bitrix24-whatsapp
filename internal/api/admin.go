@@ -26,8 +26,8 @@ import (
 // (1 instancia do app) — suficiente pro painel admin de baixa cardinalidade.
 // Reset da contagem em login bem-sucedido.
 const (
-	loginMaxFails    = 5
-	loginLockWindow  = 15 * time.Minute
+	loginMaxFails   = 5
+	loginLockWindow = 15 * time.Minute
 )
 
 type loginAttempt struct {
@@ -318,6 +318,7 @@ func (h *handlers) requireAdminRole(papel string) fiber.Handler {
 //  1. Cookie tenant valido (setado apos /bitrix/auth ok) — domain do cookie
 //  2. Cookie admin valido (super-admin acessa de qualquer tenant) — domain
 //     extraido de ?domain= ou ?portal= da query (so admin pode confiar nessa query)
+//
 // Em ambos, salva o domain validado em c.Locals("tenant_domain") para os
 // handlers usarem via resolveDashboardDomain.
 func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
@@ -501,6 +502,21 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		h.log.Error("admin: AllDomainTokenExpiry failed", zap.Error(err))
 		return c.Status(500).JSON(fiber.Map{"error": "token expiry: " + err.Error()})
 	}
+	// Estado REAL das sessoes, lido do manager. O banco marca 'active' e so'
+	// muda quando alguem atualiza — um numero que caiu (ou foi desvinculado no
+	// celular) continua 'active' ali. A lista de clientes e' onde o suporte
+	// olha primeiro; mentir aqui e' o pior lugar pra mentir.
+	vivos := map[string]bool{}
+	semVinculo := map[string]bool{}
+	if h.waManager != nil {
+		for _, cs := range h.waManager.ConnectedSessions() {
+			vivos[cs.Phone] = true
+		}
+		for _, sv := range h.waManager.SessoesComSocketSemLogin() {
+			semVinculo[sv.Phone] = true
+		}
+	}
+
 	// Licencas por dominio: 1 query agregada pra evitar N+1 no loop.
 	allLics, _ := h.repo.ListLicenses(ctx)
 	licsByDomain := map[string]*db.TenantLicense{}
@@ -509,30 +525,42 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 	}
 
 	type tenantCard struct {
-		ID           string    `json:"id"`
-		Domain       string    `json:"domain"`
-		MemberID     string    `json:"member_id"`
-		InstalledAt  time.Time `json:"installed_at"`
-		UpdatedAt    time.Time `json:"updated_at"`
-		TokenExpAt   time.Time `json:"token_expires_at"`
-		TokenStatus  string    `json:"token_status"` // valid | expiring | expired
-		OpenLineID   int       `json:"open_line_id"`
-		ConnQR       int       `json:"connections_qr"`
-		ConnCloud    int       `json:"connections_cloud"`
-		Msgs24h      int       `json:"msgs_24h"`
-		Msgs1h       int       `json:"msgs_1h"`
-		MsgsInbound  int       `json:"msgs_inbound_24h"`
-		MsgsOutbound int       `json:"msgs_outbound_24h"`
+		ID          string    `json:"id"`
+		Domain      string    `json:"domain"`
+		MemberID    string    `json:"member_id"`
+		InstalledAt time.Time `json:"installed_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+		TokenExpAt  time.Time `json:"token_expires_at"`
+		TokenStatus string    `json:"token_status"` // valid | expiring | expired
+		OpenLineID  int       `json:"open_line_id"`
+		ConnQR      int       `json:"connections_qr"`
+		ConnCloud   int       `json:"connections_cloud"`
+		// ConnQRVivas e ConnQRSemVinculo separam o que o BANCO acha do que
+		// esta' mesmo de pe. Sem isso a coluna Conexoes mostrava "1 QR" para
+		// um numero fora do ar ha' dias — foi o caso do teclife em 30/09.
+		ConnQRVivas      int `json:"connections_qr_vivas"`
+		ConnQRSemVinculo int `json:"connections_qr_desvinculadas"`
+		Msgs24h          int `json:"msgs_24h"`
+		Msgs1h           int `json:"msgs_1h"`
+		MsgsInbound      int `json:"msgs_inbound_24h"`
+		MsgsOutbound     int `json:"msgs_outbound_24h"`
 		// Licenca: o que o contrato do cliente libera e ate quando vale.
-		LicencaConfigurada bool       `json:"licenca_configurada"`
-		MaxSessions        int        `json:"max_sessions"`
-		FeatCloudAPI       bool       `json:"feat_cloud_api"`
-		FeatAutomations    bool       `json:"feat_automations"`
-		FeatReports        bool       `json:"feat_reports"`
-		ValidUntil         *time.Time `json:"valid_until,omitempty"`
-		DiasRestantes      *int       `json:"dias_restantes,omitempty"`
-		Expirada           bool       `json:"expirada"`
-		LicencaNotes       string     `json:"licenca_notes,omitempty"`
+		//
+		// Os nomes e formatos aqui tem que bater com licenseSummary
+		// (license_features.go), porque a MESMA funcao de JS (licBadge, fmtDia)
+		// renderiza os dois. Quando divergiram, cada tela quebrou de um jeito:
+		// a de Licencas dizia "Sem licenca" para todo mundo (procurava
+		// licenca_configurada, recebia configurada) e a de Clientes mostrava
+		// "ate Invalid Date" (fmtDia espera YYYY-MM-DD, recebia RFC3339).
+		LicencaConfigurada bool   `json:"configurada"`
+		MaxSessions        int    `json:"max_sessions"`
+		FeatCloudAPI       bool   `json:"feat_cloud_api"`
+		FeatAutomations    bool   `json:"feat_automations"`
+		FeatReports        bool   `json:"feat_reports"`
+		ValidUntil         string `json:"valid_until,omitempty"`
+		DiasRestantes      *int   `json:"dias_restantes,omitempty"`
+		Expirada           bool   `json:"expirada"`
+		LicencaNotes       string `json:"notes,omitempty"`
 	}
 
 	cards := make([]tenantCard, 0, len(portals))
@@ -582,6 +610,15 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		if s, ok := sessionsByDomain[key]; ok {
 			card.ConnQR = s.QR
 			card.ConnCloud = s.Cloud
+			for _, jid := range s.QRJIDs {
+				numero := somenteNumero(jid)
+				switch {
+				case vivos[numero]:
+					card.ConnQRVivas++
+				case semVinculo[numero]:
+					card.ConnQRSemVinculo++
+				}
+			}
 		}
 		if m, ok := msgs24hByDomain[key]; ok {
 			card.MsgsInbound = m.Inbound
@@ -598,7 +635,9 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 			card.FeatCloudAPI = lic.FeatCloudAPI
 			card.FeatAutomations = lic.FeatAutomations
 			card.FeatReports = lic.FeatReports
-			card.ValidUntil = lic.ValidUntil
+			if lic.ValidUntil != nil {
+				card.ValidUntil = lic.ValidUntil.Format("2006-01-02")
+			}
 			card.Expirada = lic.Expired()
 			card.LicencaNotes = lic.Notes
 			if d, temPrazo := lic.DaysUntilExpiry(); temPrazo {
@@ -993,13 +1032,13 @@ func (h *handlers) adminTenantUserInfo(c *fiber.Ctx) error {
 		fullName = "User #" + u.ID
 	}
 	return c.JSON(fiber.Map{
-		"id":        u.ID,
-		"name":      fullName,
-		"first":     u.Name,
-		"last":      u.LastName,
-		"email":     u.Email,
-		"position":  u.Position,
-		"active":    u.Active,
+		"id":       u.ID,
+		"name":     fullName,
+		"first":    u.Name,
+		"last":     u.LastName,
+		"email":    u.Email,
+		"position": u.Position,
+		"active":   u.Active,
 	})
 }
 
@@ -1176,7 +1215,6 @@ func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
 }
-
 
 // POST /admin/api/tenant/bp-register?domain=... — forca registro do robot
 // no portal. Util quando auto-register do install falhou (scope `bizproc`
@@ -1523,11 +1561,11 @@ func (h *handlers) adminTenantPlacementsCleanup(c *fiber.Ctx) error {
 		zap.Int("unbound", len(unbindResults)))
 
 	return c.JSON(fiber.Map{
-		"ok":              true,
-		"domain":          portal.Domain,
-		"unbound":         unbindResults,
-		"reregistered":    []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB"},
-		"hint":            "Reabra o app no Bitrix em 5s. Se ainda 'Application was not found', desinstale e reinstale pelo Marketplace.",
+		"ok":           true,
+		"domain":       portal.Domain,
+		"unbound":      unbindResults,
+		"reregistered": []string{"CRM_CONTACT_DETAIL_TAB", "CRM_LEAD_DETAIL_TAB", "CRM_DEAL_DETAIL_TAB"},
+		"hint":         "Reabra o app no Bitrix em 5s. Se ainda 'Application was not found', desinstale e reinstale pelo Marketplace.",
 	})
 }
 
@@ -1557,17 +1595,17 @@ func (h *handlers) adminTenantPortalDebug(c *fiber.Ctx) error {
 		return s[:8] + "..." + s[len(s)-4:]
 	}
 	return c.JSON(fiber.Map{
-		"domain":              portal.Domain,
-		"member_id":           portal.MemberID,
-		"access_token_prefix": mask(portal.AccessToken),
+		"domain":               portal.Domain,
+		"member_id":            portal.MemberID,
+		"access_token_prefix":  mask(portal.AccessToken),
 		"refresh_token_prefix": mask(portal.RefreshToken),
-		"app_token_prefix":    mask(portal.ApplicationToken),
-		"expires_at":          portal.ExpiresAt,
-		"connector_id":        portal.ConnectorID,
-		"installed_at":        portal.InstalledAt,
-		"updated_at":          portal.UpdatedAt,
-		"current_client_id":   h.cfg.Bitrix.ClientID,
-		"hint":                "Se updated_at e' antigo, o cliente nunca refez handshake. Pede pra ele abrir o app no Bitrix.",
+		"app_token_prefix":     mask(portal.ApplicationToken),
+		"expires_at":           portal.ExpiresAt,
+		"connector_id":         portal.ConnectorID,
+		"installed_at":         portal.InstalledAt,
+		"updated_at":           portal.UpdatedAt,
+		"current_client_id":    h.cfg.Bitrix.ClientID,
+		"hint":                 "Se updated_at e' antigo, o cliente nunca refez handshake. Pede pra ele abrir o app no Bitrix.",
 	})
 }
 
