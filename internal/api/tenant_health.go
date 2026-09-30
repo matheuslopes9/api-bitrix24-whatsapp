@@ -159,22 +159,14 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		// Divergencia aqui e' a causa do "wrong_client": o Bitrix recusa
 		// renovar um token com o client_id/secret de outro app. client_id nao
 		// e' segredo — o segredo e' o client_secret, que nao aparece aqui.
-		// Qual app renova este token. Quando a env global esta' vazia, quem
-		// renova e' a credencial cadastrada na conta do cliente — mostrar o
-		// campo vazio daria a entender que nao ha credencial nenhuma.
-		emUso := creds.ClientID
-		if emUso == "" {
-			if accts, aerr := h.repo.ListBitrixAccountsByDomain(ctx, domain); aerr == nil {
-				for _, a := range accts {
-					if a.ClientID != "" && a.ClientSecret != "" {
-						emUso = a.ClientID
-						break
-					}
-				}
-			}
-		}
+		// Qual app renova este token, e DE ONDE ele veio. A origem importa
+		// tanto quanto o valor: a tela dizia "credenciais gravadas" enquanto o
+		// sistema seguia usando a do ambiente, e quem cadastrou para consertar
+		// um wrong_client saia achando que tinha consertado.
+		emUso, _, origem := h.credenciaisDoPortal(domain)
 		tok["client_id_do_token"] = t.ClientID
 		tok["client_id_em_uso"] = emUso
+		tok["origem_credencial"] = origem // "portal" (app proprio) | "ambiente"
 		if t.ClientID != "" && emUso != "" && t.ClientID != emUso {
 			tok["problema_app"] = "o token foi emitido por um app e a renovacao usa outro — " +
 				"e' isso que faz o Bitrix responder wrong_client"
@@ -215,6 +207,10 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		res["problema_conector"] = "nenhuma sessao WhatsApp vinculada a uma Linha Aberta — " +
 			"mensagem recebida nao chega no Contact Center"
 	}
+	// Abas do UC Talk no card do CRM. Falha silenciosa por desenho do Bitrix:
+	// sem permissao de admin o bind nao acontece e ninguem fica sabendo.
+	res["abas_crm"] = h.healthAbasCRM(ctx, creds)
+
 	// Linhas Abertas do portal — o suporte precisa saber POR QUAL linha o
 	// cliente esta atendendo, e quais existem pra escolher.
 	if raw, lerr := h.bitrixClient.ListOpenLines(ctx, creds); lerr == nil {
@@ -468,8 +464,31 @@ func (h *handlers) adminSalvarCredenciais(c *fiber.Ctx) error {
 	domain := normalizePortalDomain(strings.TrimSpace(body.Domain))
 	clientID := strings.TrimSpace(body.ClientID)
 	clientSecret := strings.TrimSpace(body.ClientSecret)
-	if domain == "" || clientID == "" || clientSecret == "" {
-		return c.Status(400).JSON(fiber.Map{"error": "domain, client_id e client_secret sao obrigatorios"})
+	if domain == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "domain obrigatorio"})
+	}
+
+	// Os dois vazios = "voltar a usar o app do ambiente". Sem esta saida, uma
+	// credencial digitada errado ficava presa: o formulario exigia os dois
+	// campos, entao desfazer so' com SQL na mao. Agora a excecao e' reversivel
+	// pela mesma tela que a criou.
+	if clientID == "" && clientSecret == "" {
+		linhas, err := h.repo.LimparCredenciaisDoDominio(c.Context(), domain)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		h.recarregarCredenciais(c.Context())
+		h.log.Info("credenciais OAuth do portal removidas — volta ao app do ambiente",
+			zap.String("domain", domain), zap.Int64("conexoes", linhas),
+			zap.String("por", h.adminActor(c)))
+		return c.JSON(fiber.Map{
+			"ok": true, "conexoes": linhas, "origem": "ambiente",
+			"mensagem": "credenciais removidas — este portal volta a usar o app do ambiente",
+		})
+	}
+	if clientID == "" || clientSecret == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "informe client_id e client_secret juntos, ou deixe os dois vazios para voltar ao app do ambiente"})
 	}
 
 	linhas, err := h.repo.SetBitrixAccountCredentials(c.Context(), domain, clientID, clientSecret)
@@ -489,10 +508,17 @@ func (h *handlers) adminSalvarCredenciais(c *fiber.Ctx) error {
 		zap.Int64("conexoes", linhas),
 		zap.String("por", h.adminActor(c)))
 
+	// O cache tem que virar AGORA. Antes disto a tela respondia que a
+	// renovacao passaria a usar este app, e nao passava: 38 dos 41 caminhos
+	// liam a env e ignoravam o que acabara de ser gravado.
+	h.recarregarCredenciais(c.Context())
+	_, _, origem := h.credenciaisDoPortal(domain)
+
 	return c.JSON(fiber.Map{
 		"ok":        true,
 		"conexoes":  linhas,
-		"mensagem":  "credenciais gravadas — a renovacao do token passa a usar este app",
+		"origem":    origem,
+		"mensagem":  "credenciais gravadas — a renovacao do token deste portal passa a usar este app",
 		"client_id": clientID,
 	})
 }

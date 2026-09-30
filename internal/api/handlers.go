@@ -47,6 +47,10 @@ type handlers struct {
 	// no meio, o pareamento e' refeito — melhor que persistir intencao que
 	// pode nunca se concretizar.
 	pareamentos sync.Map // numero base -> dominio
+
+	// credsApp: os portais que tem app OAuth proprio, em cache.
+	// Ver credenciais_app.go — quase sempre vazio, e' excecao por desenho.
+	credsApp *credsApp
 }
 
 func newHandlers(
@@ -60,7 +64,7 @@ func newHandlers(
 	midias *media.Store,
 	log *zap.Logger,
 ) *handlers {
-	return &handlers{cfg: cfg, repo: repo, waManager: waManager, cloudMgr: cloudMgr, bitrixClient: bitrixClient, q: q, metrics: metrics, midias: midias, log: log}
+	return &handlers{cfg: cfg, repo: repo, waManager: waManager, cloudMgr: cloudMgr, bitrixClient: bitrixClient, q: q, metrics: metrics, midias: midias, log: log, credsApp: novoCredsApp()}
 }
 
 // GET /health
@@ -1668,25 +1672,19 @@ func (h *handlers) debugConnectorList(c *fiber.Ctx) error {
 
 // ─── Helpers de credenciais e descoberta de linhas ───────────────────────────
 
-// localCredsForDomain retorna as credenciais do app LOCAL para um domínio.
-// O app local tem INSTALLED:true no Bitrix, o que é obrigatório para receber eventos.
-// Se não encontrar app local, cai de volta para as credenciais do portal (Partner App).
-func (h *handlers) localCredsForDomain(ctx context.Context, domain string, portal *db.BitrixPortal) bitrix.TenantCreds {
-	for _, jid := range h.waManager.ListSessions() {
-		acct, err := h.repo.GetBitrixAccountByJID(ctx, jid)
-		if err != nil {
-			continue
-		}
-		acctDomain := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(acct.Domain, "https://"), "http://"))
-		if acctDomain == domain && acct.ClientID != "" && acct.ClientSecret != "" {
-			return bitrix.TenantCreds{
-				Domain:       acct.Domain,
-				ClientID:     acct.ClientID,
-				ClientSecret: acct.ClientSecret,
-				RedirectURI:  acct.RedirectURI,
-			}
-		}
-	}
+// localCredsForDomain existia porque portalToCreds so' sabia do ambiente: era
+// o unico jeito de alcancar a credencial cadastrada na conta do cliente. Como
+// portalToCreds agora ja' prefere a credencial do portal quando ela existe
+// (credenciais_app.go), as duas responderiam a mesma coisa.
+//
+// Mantida como nome, nao como logica: tres chamadas a usam, e ter duas funcoes
+// com regras proprias foi justamente o que criou a divergencia. Uma regra, um
+// lugar.
+//
+// A versao antiga era ainda mais estreita — varria as sessoes CARREGADAS em
+// memoria, entao um portal com credencial propria e o numero fora do ar caia
+// para o ambiente sem avisar.
+func (h *handlers) localCredsForDomain(_ context.Context, _ string, portal *db.BitrixPortal) bitrix.TenantCreds {
 	return h.portalToCreds(portal)
 }
 

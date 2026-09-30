@@ -171,10 +171,10 @@ func (h *handlers) exportXML(c *fiber.Ctx, headers []string, rows [][]string, ti
 		Fields []Field
 	}
 	type Report struct {
-		XMLName   xml.Name `xml:"relatorio"`
-		Title     string   `xml:"titulo"`
-		GeneratedAt string `xml:"gerado_em"`
-		Rows      []interface{}
+		XMLName     xml.Name `xml:"relatorio"`
+		Title       string   `xml:"titulo"`
+		GeneratedAt string   `xml:"gerado_em"`
+		Rows        []interface{}
 	}
 
 	// Monta XML dinamicamente

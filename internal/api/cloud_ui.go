@@ -16,12 +16,13 @@ import (
 )
 
 // POST /ui/sessions/cloud
-// Body: {
-//   "phone_number_id":"...", "waba_id":"...", "access_token":"...",
-//   "app_secret":"...", "display_phone":"5511999999999",
-//   "display_label":"Suporte UCT (Oficial)" (opcional),
-//   "verify_token":"..." (opcional — gerado se vazio)
-// }
+//
+//	Body: {
+//	  "phone_number_id":"...", "waba_id":"...", "access_token":"...",
+//	  "app_secret":"...", "display_phone":"5511999999999",
+//	  "display_label":"Suporte UCT (Oficial)" (opcional),
+//	  "verify_token":"..." (opcional — gerado se vazio)
+//	}
 func (h *handlers) uiCreateCloudSession(c *fiber.Ctx) error {
 	if h.cloudMgr == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "cloud manager não inicializado"})
@@ -82,12 +83,12 @@ func (h *handlers) uiCreateCloudSession(c *fiber.Ctx) error {
 
 	webhookURL := h.cfg.App.BaseURL() + "/webhook/cloud/" + sess.ID.String()
 	return c.JSON(fiber.Map{
-		"ok":           true,
-		"session_id":   sess.ID.String(),
-		"jid":          sess.JID,
+		"ok":            true,
+		"session_id":    sess.ID.String(),
+		"jid":           sess.JID,
 		"display_phone": sess.CloudDisplayPhone,
-		"webhook_url":  webhookURL,
-		"verify_token": sess.CloudVerifyToken,
+		"webhook_url":   webhookURL,
+		"verify_token":  sess.CloudVerifyToken,
 	})
 }
 
@@ -107,11 +108,11 @@ func (h *handlers) uiCloudWebhookInfo(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "session não é cloud_api"})
 	}
 	return c.JSON(fiber.Map{
-		"session_id":    sess.ID.String(),
-		"jid":           sess.JID,
-		"webhook_url":   h.cfg.App.BaseURL() + "/webhook/cloud/" + sess.ID.String(),
-		"verify_token":  sess.CloudVerifyToken,
-		"display_phone": sess.CloudDisplayPhone,
+		"session_id":      sess.ID.String(),
+		"jid":             sess.JID,
+		"webhook_url":     h.cfg.App.BaseURL() + "/webhook/cloud/" + sess.ID.String(),
+		"verify_token":    sess.CloudVerifyToken,
+		"display_phone":   sess.CloudDisplayPhone,
 		"phone_number_id": sess.CloudPhoneNumberID,
 	})
 }

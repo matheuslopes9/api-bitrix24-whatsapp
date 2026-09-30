@@ -1742,12 +1742,12 @@ func parseSessionHistory(raw json.RawMessage, connectorID string) []crmMessage {
 }
 
 type crmMessage struct {
-	ID         string `json:"id"`
-	Direction  string `json:"direction"` // inbound | outbound
-	Type       string `json:"type"`
-	Content    string `json:"content"`
-	MediaURL   string `json:"media_url,omitempty"`
-	MediaMime  string `json:"media_mime,omitempty"`
+	ID        string `json:"id"`
+	Direction string `json:"direction"` // inbound | outbound
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	MediaURL  string `json:"media_url,omitempty"`
+	MediaMime string `json:"media_mime,omitempty"`
 	// MediaID: id da mensagem pra buscar o arquivo em /ui/media/:id. Vazio
 	// quando nao ha arquivo guardado do nosso lado.
 	MediaID   string `json:"media_id,omitempty"`
@@ -1756,9 +1756,9 @@ type crmMessage struct {
 	// MediaGrande: arquivo acima do limite, que so' existe no Contact Center.
 	MediaGrande bool   `json:"media_grande,omitempty"`
 	AuthorID    string `json:"author_id,omitempty"`
-	AuthorName string `json:"author_name,omitempty"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"created_at"`
+	AuthorName  string `json:"author_name,omitempty"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
 	// Vinculo da conexao usada — permite separar chats por sessao quando o
 	// mesmo contato falou com varios numeros do mesmo portal.
 	SessionJID   string `json:"session_jid,omitempty"`   // ex: "cloud:1160...@s.whatsapp.net" ou "5519910001772@s.whatsapp.net"

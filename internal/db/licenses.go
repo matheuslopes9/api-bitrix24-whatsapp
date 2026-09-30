@@ -351,6 +351,59 @@ func (r *Repository) SetBitrixAccountCredentials(ctx context.Context, domain, cl
 	return tag.RowsAffected(), nil
 }
 
+// AppCreds e' a credencial OAuth de UM portal.
+type AppCreds struct {
+	ClientID     string
+	ClientSecret string
+}
+
+// CredenciaisPorDominio devolve so' os portais que tem app PROPRIO cadastrado.
+//
+// O mapa costuma vir vazio, e isso e' o esperado: quase todo cliente usa o app
+// Partner da UC, cuja credencial vive no ambiente. Quem aparece aqui e' excecao
+// deliberada — alguem digitou na tela "Credenciais do app".
+//
+// Uma consulta agregada, nao uma por portal: ela alimenta um cache consultado
+// no caminho de toda chamada ao Bitrix.
+func (r *Repository) CredenciaisPorDominio(ctx context.Context) (map[string]AppCreds, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (d) LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) AS d,
+		       client_id, client_secret
+		  FROM bitrix_accounts
+		 WHERE COALESCE(client_id, '') <> '' AND COALESCE(client_secret, '') <> ''
+		 ORDER BY d, updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]AppCreds{}
+	for rows.Next() {
+		var d string
+		var c AppCreds
+		if err := rows.Scan(&d, &c.ClientID, &c.ClientSecret); err != nil {
+			return nil, err
+		}
+		out[d] = c
+	}
+	return out, rows.Err()
+}
+
+// LimparCredenciaisDoDominio devolve o portal ao app do ambiente.
+//
+// Sem isto, uma credencial digitada errado na tela ficava presa: o formulario
+// exigia os dois campos preenchidos, entao nao havia como desfazer sem SQL na
+// mao — e a excecao errada sobrevivia a qualquer reinicio.
+func (r *Repository) LimparCredenciaisDoDominio(ctx context.Context, domain string) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE bitrix_accounts
+		   SET client_id = '', client_secret = '', updated_at = NOW()
+		 WHERE LOWER(REGEXP_REPLACE(domain, '^https?://(www\.)?', '')) = LOWER($1)`, domain)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *Repository) ListBitrixAccountsByDomain(ctx context.Context, domain string) ([]*BitrixAccount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, session_jid, domain, client_id, client_secret, open_line_id,

@@ -1125,15 +1125,34 @@ function carregarHealth(){
                    '(o Bitrix responde wrong_client) e as mensagens param de chegar. '+
                    'Cadastre em "Credenciais do app".');
         est='ruim';
-      } else if(semCred){
+      } else if(t.origem_credencial==='ambiente'){
+        // A mensagem antiga mandava cadastrar credencial por cliente "antes de
+        // instalar outro portal". Conselho errado: o app Partner tem UM
+        // client_id que serve todos os portais instalados. Seguir aquilo
+        // criaria uma excecao por cliente sem nenhum motivo.
+        c+='<div class="meta" style="margin-top:8px">Renovando pelo app do ambiente — '+
+           'o mesmo para todos os portais. É o esperado.</div>';
+      } else if(t.origem_credencial==='portal'){
         c+='<div class="meta" style="margin-top:8px;color:#fbbf24">'+
-           'Renovando pela credencial global. Este cliente ainda nao tem a propria — '+
-           'cadastre em "Credenciais do app" antes de instalar outro portal.</div>';
+           'Este portal tem app OAuth <b>próprio</b>, cadastrado em "Credenciais do app" — '+
+           'ele ganha do ambiente. Para voltar ao padrão, salve os dois campos vazios.</div>';
       }
       if(t.problema_app){ c+=_alerta(t.problema_app); est='ruim'; }
       if(t.estado!=='ok'){ c+=_alerta(t.problema||'token com problema'); est='ruim'; }
       if(b.problema){ c+=_alerta(b.problema); est='ruim'; }
       if(b.problema_conector){ c+=_alerta(b.problema_conector); est='ruim'; }
+      // Abas do UC Talk no card do CRM. Falham em silencio quando quem
+      // instalou o app nao e' admin do portal: nada quebra, a aba so' nao
+      // existe — e ninguem sabe que deveria existir.
+      var ab=d.abas_crm||{};
+      if(ab.indeterminado){
+        c+='<div class="meta" style="margin-top:8px">Abas do CRM: '+_esc(ab.detalhe||'nao consegui conferir')+'</div>';
+      } else if(ab.abas){
+        c+=_l('Abas no card',ab.total_vinculadas+' de '+ab.total_esperadas+' — '+
+              ab.abas.map(function(x){return (x.vinculada?'✅ ':'❌ ')+_esc(x.onde);}).join('  '));
+        if(ab.problema){ c+=_alerta(ab.problema+' '+(ab.acao||'')); est='ruim'; }
+        else if(ab.nota){ c+='<div class="meta" style="margin-top:4px">'+ab.nota+'</div>'; }
+      }
       if(est==='bom') c+=_ok('integracao saudavel');
     }
     html+=_card('Conexao Bitrix',c,est);

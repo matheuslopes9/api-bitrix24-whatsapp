@@ -367,13 +367,13 @@ func extFromMime(mime, fallback string) string {
 // ─── Estruturas do payload ─────────────────────────────────────────────────
 
 type cloudWebhookPayload struct {
-	Object string             `json:"object"`
-	Entry  []cloudEntry       `json:"entry"`
+	Object string       `json:"object"`
+	Entry  []cloudEntry `json:"entry"`
 }
 
 type cloudEntry struct {
-	ID      string         `json:"id"`
-	Changes []cloudChange  `json:"changes"`
+	ID      string        `json:"id"`
+	Changes []cloudChange `json:"changes"`
 }
 
 type cloudChange struct {
@@ -403,20 +403,20 @@ type cloudContact struct {
 }
 
 type cloudMessage struct {
-	ID          string                  `json:"id"`
-	From        string                  `json:"from"`
-	Timestamp   string                  `json:"timestamp"`
-	Type        string                  `json:"type"`
-	Text        *cloudText              `json:"text,omitempty"`
-	Image       *cloudMedia             `json:"image,omitempty"`
-	Audio       *cloudMedia             `json:"audio,omitempty"`
-	Video       *cloudMedia             `json:"video,omitempty"`
-	Document    *cloudMedia             `json:"document,omitempty"`
-	Sticker     *cloudMedia             `json:"sticker,omitempty"`
-	Button      *cloudButton            `json:"button,omitempty"`
-	Interactive *cloudInteractive       `json:"interactive,omitempty"`
-	Location    *cloudLocation          `json:"location,omitempty"`
-	Context     *cloudMessageContext    `json:"context,omitempty"`
+	ID          string               `json:"id"`
+	From        string               `json:"from"`
+	Timestamp   string               `json:"timestamp"`
+	Type        string               `json:"type"`
+	Text        *cloudText           `json:"text,omitempty"`
+	Image       *cloudMedia          `json:"image,omitempty"`
+	Audio       *cloudMedia          `json:"audio,omitempty"`
+	Video       *cloudMedia          `json:"video,omitempty"`
+	Document    *cloudMedia          `json:"document,omitempty"`
+	Sticker     *cloudMedia          `json:"sticker,omitempty"`
+	Button      *cloudButton         `json:"button,omitempty"`
+	Interactive *cloudInteractive    `json:"interactive,omitempty"`
+	Location    *cloudLocation       `json:"location,omitempty"`
+	Context     *cloudMessageContext `json:"context,omitempty"`
 }
 
 type cloudText struct {

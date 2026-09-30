@@ -74,6 +74,9 @@ func New(
 	// Conector inativo e' a falha mais silenciosa do sistema: token e numero
 	// continuam perfeitos e a mensagem do cliente morre sem erro. Nao escala
 	// depender de alguem perceber — ver conector_reconciliacao.go.
+	// Antes da reconciliacao de proposito: ela chama o Bitrix, e chamar com a
+	// credencial errada e' o wrong_client que ja' custou 16 horas de Open Line.
+	h.IniciarRevisaoCredenciais(context.Background())
 	h.IniciarReconciliacaoConector(context.Background())
 
 	// Liga o callback de conexao de sessao QR -> refresh dos robots BizProc.

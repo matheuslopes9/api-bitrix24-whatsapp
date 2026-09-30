@@ -122,7 +122,9 @@ func (h *handlers) bitrixInstall(c *fiber.Ctx) error {
 		zap.String("domain", domain),
 		zap.String("member_id", memberID),
 		zap.String("access_token_prefix", func() string {
-			if len(accessToken) > 8 { return accessToken[:8] + "..." }
+			if len(accessToken) > 8 {
+				return accessToken[:8] + "..."
+			}
 			return accessToken
 		}()),
 	)
@@ -654,15 +656,6 @@ func sanitizeExpiresIn(v int) int {
 
 // portalToCreds converte um BitrixPortal em TenantCreds para chamadas ao bitrixClient.
 // Usa o APP_BASE_URL da config como RedirectURI (não usado nas chamadas REST, mas obrigatório no struct).
-func (h *handlers) portalToCreds(p *db.BitrixPortal) bitrix.TenantCreds {
-	return bitrix.TenantCreds{
-		Domain:       "https://" + p.Domain,
-		ClientID:     h.cfg.Bitrix.ClientID,
-		ClientSecret: h.cfg.Bitrix.ClientSecret,
-		RedirectURI:  h.cfg.App.BaseURL() + "/bitrix/install",
-	}
-}
-
 // ─── HTML da página /bitrix-connect ──────────────────────────────────────────
 // Página mínima de transição: captura o token do BX24.js, salva no backend
 // e redireciona para o dashboard completo. O usuário vê apenas um loading breve.

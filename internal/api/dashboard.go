@@ -9,9 +9,9 @@ import (
 // GET /dashboard
 //
 // Pagina nao mais publica. Aceita acesso so' nas 2 situacoes:
-//   1) Cookie admin valido (super-admin UC Technology logado em /admin)
-//   2) Carregada dentro do iframe do APP UC Talk no Bitrix24 — detectado
-//      pelo header Sec-Fetch-Dest=iframe e/ou Referer do dominio bitrix24
+//  1. Cookie admin valido (super-admin UC Technology logado em /admin)
+//  2. Carregada dentro do iframe do APP UC Talk no Bitrix24 — detectado
+//     pelo header Sec-Fetch-Dest=iframe e/ou Referer do dominio bitrix24
 //
 // Acesso direto via browser sem cookie/iframe retorna 404 — modelo agora
 // e' /admin (UC) ou APP no Bitrix (master do tenant). CRM tab (canal
@@ -58,10 +58,10 @@ func stripBitrixSDK(html string) string {
 // /bitrix/auth do iframe Bitrix) OU vem do iframe do Bitrix.
 //
 // Ordem de checagem (do mais seguro pro mais permissivo):
-//   1. Cookie admin (super-admin UC Technology)
-//   2. Cookie tenant assinado HMAC (tenant ja' autenticado via Bitrix)
-//   3. Sec-Fetch-Dest=iframe (iframe Bitrix de primeira abertura)
-//   4. Referer com .bitrix24. (fallback browsers sem Sec-Fetch-*)
+//  1. Cookie admin (super-admin UC Technology)
+//  2. Cookie tenant assinado HMAC (tenant ja' autenticado via Bitrix)
+//  3. Sec-Fetch-Dest=iframe (iframe Bitrix de primeira abertura)
+//  4. Referer com .bitrix24. (fallback browsers sem Sec-Fetch-*)
 func dashboardCallerAllowed(c *fiber.Ctx, secret string) bool {
 	if _, _, ok := verifyAdminCookie(secret, c.Cookies(adminCookieName)); ok {
 		return true

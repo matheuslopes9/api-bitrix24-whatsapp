@@ -141,9 +141,14 @@ falha só ia para o log. Visto em crm.uctechnology.com.br em 25/09.
 
 - [x] `/bitrix-connect` e o menu do app registram as abas faltantes com o
       **usuário logado** quando ele é admin (até 3s, nunca segura o painel).
-- [ ] Falta o **aviso na Saúde do cliente** quando as abas não estão
-      registradas e o usuário logado também não é admin — hoje isso ainda passa
-      despercebido até alguém reclamar que a aba sumiu.
+- [x] A Saúde do cliente agora confere as três abas via `placement.get` e diz
+      quais faltam, com a ação certa: **registrar aba exige admin do portal**, e
+      quem instalou sendo usuário comum nunca soube que falhou
+      ([health_abas_crm.go](../../internal/api/health_abas_crm.go)).
+      Quando as três estão lá, a tela lembra que o Bitrix recolhe as abas
+      excedentes no menu **"Mais"** do card — o que custou dois dias em 30/09.
+      Se a resposta do portal não for reconhecida, diz **"não sei"** em vez de
+      acusar falta: errar para o lado do alarme falso foi o bug #24.
 
 ---
 
@@ -210,7 +215,7 @@ permissão por número inteira. Não atravessa clientes — o cookie de tenant s
 
 ---
 
-## 🟡 Credencial do Bitrix: duas fontes, e a que quase ninguém usa
+## 🟢 Credencial do Bitrix: duas fontes, e a que quase ninguém usa *(resolvido 30/09)*
 
 Descoberto rastreando a queda de dois dias em 28/09.
 
@@ -222,9 +227,23 @@ Descoberto rastreando a queda de dois dias em 28/09.
 Cadastrar pela tela dá a impressão de resolver e alcança quase nada. Hoje
 funciona porque a env está preenchida, mas a armadilha continua armada.
 
-- [ ] `portalToCreds` cair para a credencial da conta quando a env estiver
-      vazia. Enquanto isso, **a env é a fonte que vale** — a mesma para todos os
-      clientes.
+- [x] Regra única, num lugar só
+      ([credenciais_app.go](../../internal/api/credenciais_app.go)): **o ambiente
+      é o padrão** (o app Partner da UC, o mesmo para todos os portais) e a
+      credencial gravada na conta é uma **exceção por portal**, que ganha
+      quando existe. Ninguém digita uma credencial por acidente.
+- [x] `localCredsForDomain` deixou de ter regra própria — passa por
+      `portalToCreds`. A divergência entre as duas *era* o bug, e um teste trava
+      a concordância.
+- [x] Em cache, carregado no boot e trocado **no ato** em que alguém salva pela
+      tela. Sem isso a tela responderia "passa a usar este app" e não passaria.
+- [x] **Reversível:** salvar os dois campos vazios remove a exceção e devolve o
+      portal ao app do ambiente. Antes o formulário exigia os dois preenchidos,
+      então uma credencial errada só saa com SQL na mão.
+- [x] A Saúde mostra `origem_credencial` — qual app está renovando de verdade.
+      O aviso antigo mandava cadastrar credencial por cliente "antes de instalar
+      outro portal", conselho errado: o app Partner tem **um** client_id para
+      todos.
 
 ---
 

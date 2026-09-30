@@ -22,10 +22,10 @@ func (h *handlers) simPage(c *fiber.Ctx) error {
 // Body: { "from_phone": "5519987717792", "session_phone": "5519910001772", "text": "Olá!" }
 func (h *handlers) simInbound(c *fiber.Ctx) error {
 	var body struct {
-		FromPhone   string `json:"from_phone"`
+		FromPhone    string `json:"from_phone"`
 		SessionPhone string `json:"session_phone"`
-		Text        string `json:"text"`
-		MsgType     string `json:"msg_type"`
+		Text         string `json:"text"`
+		MsgType      string `json:"msg_type"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(400).JSON(fiber.Map{"ok": false, "error": err.Error()})
@@ -175,10 +175,10 @@ func (h *handlers) simHistory(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"ok":      true,
-		"phone":   phone,
-		"pattern": fmt.Sprintf("%s@%%", phone),
-		"count":   len(rows),
+		"ok":       true,
+		"phone":    phone,
+		"pattern":  fmt.Sprintf("%s@%%", phone),
+		"count":    len(rows),
 		"messages": rows,
 	})
 }

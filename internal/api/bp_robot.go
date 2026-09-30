@@ -347,6 +347,7 @@ func (h *handlers) metaTemplateOptions(ctx context.Context, domain string) (map[
 // (waManager.ConnectedSessions). Isso torna o dropdown robusto contra:
 //   - status no banco defasado (Disconnected logo apos deploy)
 //   - device suffix divergente entre whatsapp_sessions e bitrix_accounts
+//
 // O envio tolera qualquer JID do numero (Send usa resolveSession por
 // numero base), entao listar o JID conectado atual sempre funciona.
 func (h *handlers) sessionOptionsForDomain(ctx context.Context, domain string, wantCloud bool) (map[string]string, error) {
