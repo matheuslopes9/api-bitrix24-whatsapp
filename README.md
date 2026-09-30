@@ -6,7 +6,8 @@ Escrito em Go, deploy no EasyPanel.
 
 > **Documentação por tema:** [`docs/fluxos/`](docs/fluxos) descreve cada fluxo
 > ponta a ponta; [`docs/aprendizados/`](docs/aprendizados) guarda o porquê das
-> decisões e os bugs que custaram caro. Este README é o mapa geral.
+> decisões e os bugs que custaram caro; [`docs/manuais/`](docs/manuais) é para
+> quem **usa** o sistema — suporte e cliente. Este README é o mapa geral.
 
 ---
 
@@ -355,6 +356,7 @@ apagada por engano junto de um bloco substituído.
 │   ├── bitrix/ · whatsapp/ · queue/ · db/ · watchdog/ · config/
 ├── docs/fluxos/                 # Cada fluxo ponta a ponta
 ├── docs/aprendizados/           # Decisões e bugs que custaram caro
+├── docs/manuais/                # Uso: painel do suporte e guia do cliente
 ├── tools/oauth2-email-service/  # Proxy SMTP OAuth2 (serviço separado)
 └── Dockerfile
 ```

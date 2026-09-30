@@ -21,6 +21,10 @@ mantê-los atualizados mantém o "cérebro" do projeto atualizado.
 | [08-isolamento-e-identidade.md](08-isolamento-e-identidade.md) | Como sabemos quem está pedindo e o que essa pessoa pode ver |
 | [09-midia.md](09-midia.md) | Arquivos das conversas: store em disco, entrega e retenção |
 
+> **Procurando como usar as telas?** Isto aqui explica como o sistema funciona
+> por dentro. O que fazer na tela está em [`docs/manuais/`](../manuais) — o
+> painel do suporte e o guia do cliente.
+
 > Os documentos de MaxiPago e PIX Itaú foram **removidos** junto do módulo de
 > cobrança. O porquê da remoção está em
 > [`docs/fluxos/05-licenca.md`](../fluxos/05-licenca.md).
