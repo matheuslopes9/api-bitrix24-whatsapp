@@ -270,20 +270,40 @@ funciona porque a env está preenchida, mas a armadilha continua armada.
 
 ---
 
-## 🔴 Banco de dados — investigar
+## 🟢 Banco de dados — recovery mode era **disco cheio** *(resolvido 30/09)*
 
-Em 24/09 o Postgres entrou em **recovery mode** e demorou mais de 10 minutos
-sem aceitar conexão, chegando a voltar ao estágio inicial. Isso derruba o
-sistema inteiro: sem banco, mensagem de cliente não é entregue.
+Em 24/09 o Postgres entrou em **recovery mode** e passou de 10 minutos sem
+aceitar conexão. Sem banco, mensagem de cliente não é entregue.
 
-- [ ] Descobrir **por que** houve desligamento sujo (reinício do host, falta de
-      memória, disco cheio). Se foi disco, volta a acontecer.
+- [x] **Causa: falta de espaço em disco.** Não houve corrupção nem
+      desligamento sujo por falha de hardware — o Postgres se comportou como
+      deveria. Disco aumentado para **100 GB**, com folga larga.
 - [x] Política de retenção de `messages`: **já existe e roda** —
       `DeleteOldMessages` é chamada diariamente ([cmd/server/main.go](../../cmd/server/main.go)),
-      365 dias rolling. A pendência anterior estava desatualizada.
-- [ ] Conferir espaço livre em disco no servidor.
-- [ ] Confirmar que existe **backup recente e restaurável** — houve um
-      `pg_dump` antes da migração de licenças, mas não há rotina automática.
+      365 dias rolling.
+- [x] **Backup por snapshot da VM**, não `pg_dump`. Decisão certa para esta
+      arquitetura, e a razão importa: **o estado do app não está todo no
+      Postgres**. Em `/app/sessions` vive um SQLite do whatsmeow **por número
+      conectado**, e em `/app/media` a mídia das conversas
+      ([Dockerfile](../../Dockerfile), volumes `uctalk-sessions` e
+      `uctalk-media`).
+
+      Restaurar só o Postgres deixaria o banco dizendo `status='active'` para
+      sessões cujo `.db` não existe mais — exatamente a divergência
+      banco-vs-realidade que o bug #25 tratou — e **todo cliente teria que ler
+      o QR de novo**. O snapshot pega os três juntos e no mesmo instante.
+
+### O que ainda depende de disciplina, não de código
+
+- [ ] **Frequência do snapshot = janela de perda.** Um snapshot diário significa
+      até 24h de conversas perdidas na pior hora, para todos os clientes de uma
+      vez. Vale decidir esse número de propósito, e não por padrão da
+      ferramenta.
+- [ ] **Testar a restauração uma vez**, antes de precisar dela. Backup nunca
+      testado é backup presumido: o snapshot de um Postgres em execução é
+      *crash-consistent*, então ele sobe replicando o WAL — comportamento
+      normal e previsto, mas que é melhor ver acontecendo num teste do que
+      durante um incidente.
 
 > Nunca reiniciar o Postgres durante recovery: reinicia o processo do zero e é
 > o caminho mais rápido de transformar um susto em perda real.
