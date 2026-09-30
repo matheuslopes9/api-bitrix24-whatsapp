@@ -234,9 +234,16 @@ func (h *handlers) healthSessoes(ctx context.Context, domain string) []fiber.Map
 
 	// Numeros realmente vivos agora, lidos do manager.
 	vivos := map[string]string{} // numero base -> jid corrente
+	// E os que tem socket aberto mas NAO estao autenticados: alguem removeu o
+	// aparelho em "Dispositivos conectados" no WhatsApp. Estado diferente de
+	// "caiu", e com acao diferente — ver SessoesComSocketSemLogin.
+	semVinculo := map[string]bool{}
 	if h.waManager != nil {
 		for _, cs := range h.waManager.ConnectedSessions() {
 			vivos[cs.Phone] = cs.JID
+		}
+		for _, sv := range h.waManager.SessoesComSocketSemLogin() {
+			semVinculo[sv.Phone] = true
 		}
 	}
 
@@ -257,7 +264,15 @@ func (h *handlers) healthSessoes(ctx context.Context, domain string) []fiber.Map
 			item["visto_em"] = s.LastSeen.Format(time.RFC3339)
 		}
 		// Divergencias que costumam explicar "o numero caiu".
+		item["desvinculada"] = semVinculo[numero]
 		switch {
+		case semVinculo[numero]:
+			// O caso que mais engana: socket vivo, mensagem nenhuma. O
+			// watchdog reconecta o socket para sempre e nunca resolve, porque
+			// o que falta e' o vinculo com o aparelho.
+			item["problema"] = "o aparelho foi DESVINCULADO no WhatsApp (Dispositivos conectados). " +
+				"A conexao existe mas nao autentica, entao nao entra nem sai mensagem. " +
+				"Reconectar nao resolve: precisa ler o QR de novo."
 		case !conectada && string(s.Status) == "active":
 			item["problema"] = "banco diz ativa mas nao ha' conexao viva — sessao caiu sem atualizar o status"
 		case conectada && jidVivo != s.JID:

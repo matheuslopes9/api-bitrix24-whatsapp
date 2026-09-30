@@ -488,3 +488,38 @@ para quem quer o catálogo.
 **Lição:** diagnóstico errado custa mais que diagnóstico ausente. A tela mandava
 o suporte registrar o que já estava registrado — e escondeu, por dias, o
 problema real (a aba está vinculada e mesmo assim não aparece).
+
+---
+
+## 25. Conectado sem estar conectado: socket vivo, aparelho desvinculado
+
+**Sintoma:** a Saúde do teclife mostrava `conectada_agora: true`, o `/health`
+contava a sessão em `sessions_connected`, e nenhuma mensagem entrava ou saía
+naquele número. Nenhum alerta disparou, porque, pelo critério do sistema, não
+havia nada errado.
+
+**Causa-raiz:** o projeto perguntava `IsConnected()` em todo lugar e
+`IsLoggedIn()` em lugar nenhum. A própria whatsmeow avisa na docstring:
+
+> IsConnected checks if the client is connected to the WhatsApp web websocket.
+> Note that this doesn't check if the client is authenticated. See the
+> IsLoggedIn field for that.
+
+Quando o cliente remove o aparelho em *Aparelhos conectados* no celular, o
+WebSocket continua de pé — só perde a autorização. `IsConnected()` segue `true`
+para sempre, e o sistema inteiro (Saúde, `/health`, alerta de queda, seleção de
+sessão para envio) acreditava nele.
+
+O agravante é que o watchdog **piorava** o silêncio: ele reconecta o que não
+responde, mas esse socket responde. Então ele não fazia nada, corretamente, e
+por isso ninguém era avisado.
+
+**Fix:** `ConnectedSessions()` exige `IsConnected() && IsLoggedIn()`. Só isso já
+faz a sessão aparecer como fora em todos os seis consumidores. E como "caiu" e
+"foi desvinculado" pedem ações **opostas** — esperar o watchdog contra ler o QR
+de novo —, `SessoesComSocketSemLogin()` separa os dois, e Saúde, badge e e-mail
+de alerta passam a dizer qual é qual.
+
+**Lição:** duas condições parecidas com nomes parecidos, e o código usou a mais
+fraca por seis meses. Antes de confiar num predicado de estado externo, leia o
+que ele promete — não o que o nome sugere.

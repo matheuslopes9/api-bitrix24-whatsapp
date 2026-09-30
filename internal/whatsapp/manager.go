@@ -1298,7 +1298,17 @@ func (m *Manager) ConnectedSessions() []ConnectedSession {
 	out := make([]ConnectedSession, 0, len(m.sessions))
 	seen := map[string]bool{} // dedup por numero base
 	for jid, sess := range m.sessions {
-		if sess.Client == nil || !sess.Client.IsConnected() {
+		// IsConnected NAO basta: ele so' diz que o WebSocket esta' aberto.
+		// A propria documentacao do whatsmeow avisa — "this doesn't check if
+		// the client is authenticated. See IsLoggedIn".
+		//
+		// Um numero DESVINCULADO no aparelho mantem o socket abrindo
+		// normalmente, e o painel dizia "conectado" enquanto nenhuma mensagem
+		// entrava ou saia. Foi o caso do teclife em 30/09.
+		//
+		// Conectado, aqui, tem que significar "da' pra atender": socket vivo E
+		// sessao autenticada.
+		if sess.Client == nil || !sess.Client.IsConnected() || !sess.Client.IsLoggedIn() {
 			continue
 		}
 		phone := sess.Phone
@@ -1553,4 +1563,51 @@ func (m *Manager) AbrirVoto(ctx context.Context, sessionJID string, evt *events.
 		return nil, fmt.Errorf("session not found: %s", sessionJID)
 	}
 	return sess.Client.DecryptPollVote(ctx, evt)
+}
+
+// SessaoSemVinculo descreve um numero cujo socket esta' vivo mas a sessao NAO
+// esta' mais autenticada — tipicamente, alguem removeu o aparelho em
+// "Dispositivos conectados" no WhatsApp.
+type SessaoSemVinculo struct {
+	JID   string
+	Phone string
+}
+
+// SessoesComSocketSemLogin devolve os numeros nesse estado.
+//
+// Existe para o diagnostico NAO virar so' "desconectado". As duas causas pedem
+// acoes diferentes:
+//
+//	sem socket   -> rede/processo; o watchdog reconecta sozinho
+//	socket sem   -> o aparelho foi desvinculado; NINGUEM reconecta isso,
+//	login           precisa ler o QR de novo
+//
+// Dizer "desconectado" nos dois casos manda o suporte esperar por uma
+// reconexao que nunca vem.
+func (m *Manager) SessoesComSocketSemLogin() []SessaoSemVinculo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []SessaoSemVinculo
+	vistos := map[string]bool{}
+	for jid, sess := range m.sessions {
+		if sess.Client == nil || !sess.Client.IsConnected() || sess.Client.IsLoggedIn() {
+			continue
+		}
+		phone := sess.Phone
+		if phone == "" {
+			phone = jid
+			if at := strings.Index(phone, "@"); at > 0 {
+				phone = phone[:at]
+			}
+			if colon := strings.Index(phone, ":"); colon > 0 {
+				phone = phone[:colon]
+			}
+		}
+		if phone == "" || vistos[phone] {
+			continue
+		}
+		vistos[phone] = true
+		out = append(out, SessaoSemVinculo{JID: jid, Phone: phone})
+	}
+	return out
 }

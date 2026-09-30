@@ -153,6 +153,13 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 	for _, s := range h.waManager.ConnectedSessions() {
 		vivos[s.Phone] = true
 	}
+	// Desvinculado nao e' "caiu": o socket esta' aberto e vai continuar
+	// aberto. Esperar reconectar e' esperar o que nao vai acontecer, entao o
+	// aviso precisa dizer outra coisa.
+	semVinculo := map[string]bool{}
+	for _, sv := range h.waManager.SessoesComSocketSemLogin() {
+		semVinculo[sv.Phone] = true
+	}
 	sessoes, err := h.repo.ListActiveSessions(ctx)
 	if err != nil {
 		h.log.Warn("alertas: falha ao listar sessoes", zap.Error(err))
@@ -178,24 +185,40 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 			continue
 		}
 		cliente := naoVazio(dominio, "cliente não identificado")
+		titulo := "Número de WhatsApp desconectado — " + numero
+		explicacao := "<p>O número <b>" + numero + "</b> consta como ativo no sistema, mas não há conexão viva com o WhatsApp.</p>" +
+			"<p><b>Enquanto estiver caído, o cliente não recebe nem envia mensagem por este número.</b></p>"
+		acao := "Abra Saúde do cliente e confira o bloco Sessões WhatsApp. " +
+			"Se não reconectar sozinho, pareie de novo em Conectar WhatsApp."
+		if semVinculo[numero] {
+			titulo = "Número de WhatsApp DESVINCULADO — " + numero
+			explicacao = "<p>O aparelho do número <b>" + numero + "</b> foi removido em " +
+				"<i>Aparelhos conectados</i> no WhatsApp — pelo cliente ou por troca de celular.</p>" +
+				"<p><b>Enquanto não for pareado de novo, o cliente não recebe nem envia mensagem por este número.</b></p>" +
+				"<p>Este caso <b>não se resolve sozinho</b>: a conexão continua de pé, o que falta é a autorização do aparelho.</p>"
+			acao = "Peça ao cliente para abrir Conectar WhatsApp e ler o QR Code de novo. Reiniciar o serviço não resolve."
+		}
 		corpo := h.montarAlerta(
 			email.CatSessaoCaiu,
-			"Número de WhatsApp desconectado — "+numero,
-			"<p>O número <b>"+numero+"</b> consta como ativo no sistema, mas não há conexão viva com o WhatsApp.</p>"+
-				"<p><b>Enquanto estiver caído, o cliente não recebe nem envia mensagem por este número.</b></p>",
-			"Abra Saúde do cliente e confira o bloco Sessões WhatsApp. "+
-				"Se não reconectar sozinho, pareie de novo em Conectar WhatsApp.",
+			titulo,
+			explicacao,
+			acao,
 			[]email.LinhaContexto{
 				{Rotulo: "Cliente", Valor: cliente},
 				{Rotulo: "Número", Valor: numero},
 			})
-		if err := rem.Enviar(ctx, "[UC Talk] Numero desconectado — "+numero, corpo); err != nil {
+		assunto := "[UC Talk] Numero desconectado — " + numero
+		if semVinculo[numero] {
+			assunto = "[UC Talk] Numero DESVINCULADO (precisa ler o QR) — " + numero
+		}
+		if err := rem.Enviar(ctx, assunto, corpo); err != nil {
 			h.log.Error("alertas: falha ao enviar aviso de sessao",
 				zap.String("numero", numero), zap.Error(err))
 			continue
 		}
 		h.log.Info("alerta enviado: sessao caiu",
-			zap.String("numero", numero), zap.String("dominio", dominio))
+			zap.String("numero", numero), zap.String("dominio", dominio),
+			zap.Bool("desvinculada", semVinculo[numero]))
 	}
 }
 

@@ -1130,6 +1130,7 @@ function carregarHealth(){
       cs+='<div style="padding:8px 0;border-bottom:1px solid var(--border)">'+
         _l('Numero','<strong>'+_esc(s.numero||'?')+'</strong> '+
            (s.conectada_agora?'<span class="badge b-active">online</span>'
+            :s.desvinculada?'<span class="badge b-expired">desvinculado</span>'
                              :'<span class="badge b-expired">offline</span>'))+
         _l('Device','<span class="mono">'+_esc(s.jid)+'</span>')+
         _l('Tipo',_esc(s.tipo||'qr'))+
