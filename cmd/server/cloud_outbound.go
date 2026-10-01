@@ -4,8 +4,8 @@ package main
 // Caminho paralelo ao worker whatsmeow — não interfere no fluxo QR.
 
 import (
-	cryptoRand "crypto/rand"
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -101,6 +101,17 @@ func handleCloudOutbound(
 		}
 		// Normaliza variantes legadas que a Meta nao reconhece para o IANA padrao.
 		fileMime = normalizeMimeForMeta(fileMime)
+
+		// Adesivo do Bitrix chega em PNG; a Meta so' aceita figurinha em WebP.
+		// Mesma conversao do caminho QR — sem ela, inferMediaType ate' diria
+		// "sticker", e a Meta recusaria o PNG. Ver cmd/server/figurinha.go.
+		if ehFigurinha(fileMime, fileName, job.FileURL) {
+			if webp, ok := converterParaFigurinha(fileData, fileMime); ok {
+				fileData, fileMime = webp, "image/webp"
+				log.Info("cloud outbound: adesivo convertido para webp",
+					zap.String("file_name", fileName), zap.Int("bytes", len(fileData)))
+			}
+		}
 		log.Info("cloud outbound: sending file",
 			zap.String("session_jid", job.SessionJID),
 			zap.String("file_name", fileName),

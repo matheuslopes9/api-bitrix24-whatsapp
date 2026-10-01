@@ -269,12 +269,23 @@ func main() {
 			// vier primeiro decide. Com o teste de imagem na frente, o adesivo
 			// do operador chegava como foto — com bolha e horario dentro, em
 			// vez do adesivo solto. Ver SendSticker.
-			case ehFigurinha(fileMime, fileName):
-				waID, err = waManager.SendSticker(c, job.SessionJID, job.ToJID, fileData, fileMime)
+			case ehFigurinha(fileMime, fileName, job.FileURL):
+				// O Bitrix manda adesivo em PNG; o WhatsApp so' aceita WebP.
+				// Sem converter, "detectar figurinha" nao serve pra nada — foi
+				// o que a primeira versao desta correcao fez.
+				webp, ok := converterParaFigurinha(fileData, fileMime)
+				if !ok {
+					// Nao convertia (nao e' quadrada, formato estranho): segue
+					// como imagem, que preserva a legenda.
+					log.Info("figurinha nao convertida, enviando como imagem",
+						zap.String("file_name", fileName), zap.String("mime", fileMime))
+					waID, err = waManager.SendImage(c, job.SessionJID, job.ToJID, fileData, fileMime, job.Text)
+					break
+				}
+				waID, err = waManager.SendSticker(c, job.SessionJID, job.ToJID, webp, "image/webp")
 				if err != nil {
-					// Figurinha tem regra de formato (webp, 512x512, limite de
-					// tamanho). Recusada, vale mais chegar como imagem do que
-					// nao chegar: o conteudo e' o mesmo.
+					// Recusada pelo WhatsApp (tem limite de tamanho): vale mais
+					// chegar como imagem do que nao chegar.
 					log.Warn("SendSticker falhou, enviando como imagem", zap.Error(err))
 					waID, err = waManager.SendImage(c, job.SessionJID, job.ToJID, fileData, fileMime, job.Text)
 				}
@@ -1249,18 +1260,4 @@ func camposPreenchidos(m *waE2E.Message) []string {
 		return true
 	})
 	return nomes
-}
-
-// ehFigurinha decide se o arquivo que veio do Bitrix e' um adesivo.
-//
-// O mime e' o sinal bom: o WhatsApp so' aceita image/webp como figurinha. O
-// nome entra como reforco porque nem todo caminho do Bitrix preenche o mime —
-// quando ele vem vazio, o ".webp" e' tudo o que sobra para distinguir adesivo
-// de foto, e errar aqui faz o adesivo chegar como imagem (foi o sintoma
-// original) ou uma foto webp chegar como figurinha.
-func ehFigurinha(mime, nome string) bool {
-	if strings.HasPrefix(strings.ToLower(mime), "image/webp") {
-		return true
-	}
-	return mime == "" && strings.HasSuffix(strings.ToLower(strings.TrimSpace(nome)), ".webp")
 }

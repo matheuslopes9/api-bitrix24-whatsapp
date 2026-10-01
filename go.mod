@@ -3,6 +3,7 @@ module github.com/uctechnology/api-bitrix24-whatsapp
 go 1.26.0
 
 require (
+	github.com/HugoSmits86/nativewebp v1.3.0
 	github.com/gofiber/fiber/v2 v2.52.15
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -16,6 +17,8 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20260928140511-35f522c88ce3
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.57.0
+	golang.org/x/image v0.38.0
+	google.golang.org/protobuf v1.36.12
 	rsc.io/qr v0.2.0
 )
 
@@ -68,5 +71,4 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 )
