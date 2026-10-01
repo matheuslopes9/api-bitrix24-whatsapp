@@ -1,6 +1,7 @@
 package db
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -56,4 +57,51 @@ func TestConsultasDePermissaoEscopamPorDominio(t *testing.T) {
 	if strings.Count(sqlPermissaoDeEnvio, "domain = $1") != 2 {
 		t.Error("as duas subconsultas precisam filtrar por dominio, nao so' uma")
 	}
+}
+
+// DUAS funcoes respondem "esse usuario pode usar esse numero?":
+//
+//	IsSessionAllowed       -> o servidor decide se aceita o envio
+//	ListUserAllowedSessions -> a aba do CRM monta o seletor de numero
+//
+// Em 01/10 elas divergiram. Mudei a regra para "liberado por padrao" so' na
+// primeira, e a segunda continuou exigindo linha em crm_user_permissions. O
+// efeito foi o pior possivel: a aba mostrava "Sem permissao" e escondia TODOS
+// os numeros, enquanto o servidor teria aceitado o envio. A pessoa nem tentava,
+// e a tela de Permissoes mostrava o numero verde ao lado do nome dela.
+//
+// A divergencia e' invisivel em teste de unidade de cada uma. Este teste olha
+// as duas juntas, que e' o unico lugar onde ela aparece.
+func TestAsDuasDecisoesDePermissaoOlhamARestricao(t *testing.T) {
+	fonte := leFonte(t, "permissoes.go") + leFonte(t, "repository.go")
+
+	// A consulta do envio.
+	if !strings.Contains(sqlPermissaoDeEnvio, "crm_numero_restrito") {
+		t.Error("IsSessionAllowed nao consulta a restricao do numero")
+	}
+
+	// A lista que a aba usa. Se ela parar de chamar NumerosRestritos, volta a
+	// exigir permissao explicita num numero aberto — e a aba volta a esconder
+	// numeros que o servidor aceitaria.
+	ini := strings.Index(fonte, "func (r *Repository) ListUserAllowedSessions")
+	if ini < 0 {
+		t.Fatal("ListUserAllowedSessions sumiu — este teste precisa ser reapontado")
+	}
+	corpo := fonte[ini:]
+	if fim := strings.Index(corpo, "\nfunc "); fim > 0 {
+		corpo = corpo[:fim]
+	}
+	if !strings.Contains(corpo, "NumerosRestritos") {
+		t.Error("ListUserAllowedSessions nao olha a restricao — a aba do CRM vai " +
+			"esconder numeros que o envio aceita")
+	}
+}
+
+func leFonte(t *testing.T, nome string) string {
+	t.Helper()
+	b, err := os.ReadFile(nome)
+	if err != nil {
+		t.Fatalf("nao consegui ler %s: %v", nome, err)
+	}
+	return string(b)
 }

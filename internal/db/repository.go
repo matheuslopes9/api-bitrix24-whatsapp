@@ -2029,13 +2029,35 @@ func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID
 	if err != nil {
 		return nil, err
 	}
+	// Numero NAO restrito vale para todo mundo — a mesma regra que
+	// IsSessionAllowed aplica no envio (ver permissoes.go).
+	//
+	// BUG QUE ISTO CORRIGE (medido em 01/10 com crm.uctechnology.com.br):
+	// esta funcao continuou exigindo linha em crm_user_permissions depois que
+	// o modelo passou a liberar por padrao. O resultado foi o pior tipo de
+	// divergencia — a aba do CRM mostrava "Sem permissao" e escondia TODOS os
+	// numeros, enquanto o servidor teria aceitado o envio. A pessoa nao tinha
+	// nem como tentar, e a tela de Permissoes mostrava o numero verde.
+	//
+	// Duas regras para a mesma pergunta e' sempre assim: uma delas vira
+	// mentira em silencio.
+	restritos, err := r.NumerosRestritos(ctx, domain)
+	if err != nil {
+		// Em duvida, NAO abre: preferir mostrar de menos a abrir um numero que
+		// alguem restringiu de proposito.
+		restritos = map[string]bool{}
+		for _, s := range all {
+			restritos[normalizarSessionJID(s.JID)] = true
+		}
+	}
+
 	out := make([]string, 0, len(all))
 	for _, s := range all {
-		if hasWildcard {
+		base := normalizarSessionJID(s.JID)
+		if !restritos[base] || hasWildcard {
 			out = append(out, s.JID)
 			continue
 		}
-		base := normalizarSessionJID(s.JID)
 		for _, p := range specific {
 			if normalizarSessionJID(p) == base {
 				out = append(out, s.JID)
