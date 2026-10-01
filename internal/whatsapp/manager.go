@@ -985,6 +985,59 @@ func (m *Manager) SendImage(ctx context.Context, sessionJID, toJID string, data 
 	return resp.ID, nil
 }
 
+// SendSticker envia figurinha de verdade, nao imagem.
+//
+// POR QUE EXISTE: o operador mandava um adesivo pelo Contact Center e ele
+// chegava no WhatsApp como FOTO — com bolha, sombra e horario dentro, em vez do
+// adesivo solto e transparente. Quem recebe percebe na hora que do outro lado
+// nao tem uma pessoa no WhatsApp, e e' justamente isso que o conector existe
+// pra esconder.
+//
+// A causa era so' o roteamento: image/webp casa com "image/" e caia no
+// SendImage. Tecnicamente funciona — o WhatsApp exibe o webp — mas como foto.
+//
+// StickerMessage NAO aceita legenda: o protocolo nao tem campo. Quem chama
+// manda o texto separado, como ja' faz para documento e audio.
+func (m *Manager) SendSticker(ctx context.Context, sessionJID, toJID string, data []byte, mime string) (string, error) {
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok {
+		return "", fmt.Errorf("session not found: %s", sessionJID)
+	}
+
+	recipient, err := m.resolveRecipient(ctx, sess, toJID)
+	if err != nil {
+		return "", err
+	}
+
+	// MediaImage e nao um tipo proprio: o WhatsApp sobe figurinha pelo mesmo
+	// canal de imagem. O que muda e' a mensagem, nao o upload.
+	uploaded, err := sess.Client.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return "", fmt.Errorf("upload sticker: %w", err)
+	}
+
+	// O mime precisa ser image/webp: e' o unico formato de figurinha que o
+	// WhatsApp aceita. Se chegou outra coisa aqui, quem roteou errou.
+	if mime == "" {
+		mime = "image/webp"
+	}
+	resp, err := sess.Client.SendMessage(ctx, recipient, &waProto.Message{
+		StickerMessage: &waProto.StickerMessage{
+			Mimetype:      &mime,
+			URL:           &uploaded.URL,
+			DirectPath:    &uploaded.DirectPath,
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    &uploaded.FileLength,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 // SendVideo envia video inline com legenda opcional. Espelha SendImage.
 func (m *Manager) SendVideo(ctx context.Context, sessionJID, toJID string, data []byte, mime, caption string) (string, error) {
 	sess, ok := m.resolveSession(sessionJID)

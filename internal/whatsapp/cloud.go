@@ -594,6 +594,12 @@ func normalizeRecipient(toPhone string) string {
 // inferMediaType escolhe "image" | "audio" | "video" | "document" pelo MIME.
 func inferMediaType(mime string) string {
 	switch {
+	// Figurinha ANTES de imagem: image/webp casa com os dois, e quem vier
+	// primeiro decide. Com image/ na frente, o adesivo do operador chegava
+	// como foto — com bolha e horario dentro, em vez do adesivo solto. Mesmo
+	// defeito que o caminho QR tinha (ver ehFigurinha em cmd/server).
+	case strings.HasPrefix(strings.ToLower(mime), "image/webp"):
+		return "sticker"
 	case strings.HasPrefix(mime, "image/"):
 		return "image"
 	case strings.HasPrefix(mime, "audio/"):
