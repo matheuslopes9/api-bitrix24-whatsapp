@@ -349,6 +349,11 @@ func New(
 	admin.Get("/api/alertas/config", h.adminGetConfigAlertas)
 	admin.Post("/api/alertas/config", soAdmin, h.adminSalvarConfigAlertas)
 	admin.Get("/api/alertas/historico", h.adminHistoricoAlertas)
+	// Ligar/desligar alerta por cliente. O GET fica aberto ao suporte (e'
+	// leitura); silenciar exige admin, como salvar a configuracao — deixar de
+	// ser avisado de um cliente e' decisao, nao consulta.
+	admin.Get("/api/alertas/clientes", h.adminAlertasClientes)
+	admin.Post("/api/alertas/cliente", soAdmin, h.adminAlertasSilenciarCliente)
 	admin.Get("/api/logs/stream", h.adminLogsStream) // SSE logs em tempo real
 	admin.Get("/api/blocked-ips", h.adminListBlockedIPs)
 	admin.Post("/api/blocked-ips/block", h.adminBlockIP)

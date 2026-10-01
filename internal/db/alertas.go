@@ -17,6 +17,23 @@ import (
 // vencido pede janela longa (o problema persiste por horas); queda de sessao
 // pede curta (pode voltar e cair de novo).
 func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, janela time.Duration) (bool, error) {
+	// Cliente silenciado nao gera alerta — e tambem nao consome a janela.
+	//
+	// Nao registrar e' deliberado: a tabela de alertas diz o que foi ENVIADO.
+	// Gravar aqui criaria um historico de avisos que ninguem recebeu, e quem
+	// fosse investigar depois concluiria que o time foi avisado e ignorou.
+	if dominio != "" {
+		mudo, err := r.AlertasSilenciados(ctx, dominio)
+		if err != nil {
+			// Falha ao ler o silencio NAO silencia. Em duvida, avisar demais e'
+			// recuperavel; deixar de avisar de um cliente ativo nao e'.
+			mudo = false
+		}
+		if mudo {
+			return false, nil
+		}
+	}
+
 	var ultimo *time.Time
 	err := r.pool.QueryRow(ctx, `
 		SELECT MAX(enviado_em) FROM alertas_operacionais
@@ -107,4 +124,67 @@ func (r *Repository) GetBitrixTokenUtilizavel(ctx context.Context, domain string
 		return nil, err
 	}
 	return &t, nil
+}
+
+// ─── Silenciar alertas por cliente ────────────────────────────────────────
+
+// AlertasSilenciados diz se este portal esta' mudo.
+func (r *Repository) AlertasSilenciados(ctx context.Context, dominio string) (bool, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM alertas_silenciados
+		 WHERE domain = LOWER(REGEXP_REPLACE($1, '^https?://(www\.)?', ''))`,
+		dominio).Scan(&n)
+	return n > 0, err
+}
+
+// ClienteSilenciado e' uma linha da tela de Alertas.
+type ClienteSilenciado struct {
+	Domain        string    `json:"domain"`
+	Motivo        string    `json:"motivo"`
+	SilenciadoEm  time.Time `json:"silenciado_em"`
+	SilenciadoPor string    `json:"silenciado_por"`
+}
+
+func (r *Repository) ListarSilenciados(ctx context.Context) ([]ClienteSilenciado, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT domain, motivo, silenciado_em, silenciado_por
+		  FROM alertas_silenciados ORDER BY domain`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ClienteSilenciado
+	for rows.Next() {
+		var c ClienteSilenciado
+		if err := rows.Scan(&c.Domain, &c.Motivo, &c.SilenciadoEm, &c.SilenciadoPor); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DefinirSilencio liga ou desliga os alertas de um cliente.
+//
+// Religar APAGA a linha em vez de marcar um campo: o estado "silenciado" e'
+// presenca na tabela, e manter linhas desligadas faria a lista crescer com
+// registros que nao significam nada. Quem silenciou e por que fica no log de
+// auditoria, que e' onde essa pergunta pertence.
+func (r *Repository) DefinirSilencio(ctx context.Context, dominio, motivo, por string, silenciar bool) error {
+	if silenciar {
+		_, err := r.pool.Exec(ctx, `
+			INSERT INTO alertas_silenciados (domain, motivo, silenciado_por)
+			VALUES (LOWER(REGEXP_REPLACE($1, '^https?://(www\.)?', '')), $2, $3)
+			ON CONFLICT (domain) DO UPDATE
+			   SET motivo = EXCLUDED.motivo,
+			       silenciado_por = EXCLUDED.silenciado_por,
+			       silenciado_em = NOW()`,
+			dominio, motivo, por)
+		return err
+	}
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM alertas_silenciados
+		  WHERE domain = LOWER(REGEXP_REPLACE($1, '^https?://(www\.)?', ''))`, dominio)
+	return err
 }

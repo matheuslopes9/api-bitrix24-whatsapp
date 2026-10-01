@@ -211,6 +211,14 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 	// sem permissao de admin o bind nao acontece e ninguem fica sabendo.
 	res["abas_crm"] = h.healthAbasCRM(ctx, creds)
 
+	// Cliente com alerta desligado precisa dizer isso AQUI. Quem abre a Saude
+	// esta' perguntando "esta' tudo bem?", e um portal mudo responde que sim
+	// de um jeito que nao se pode confiar: ninguem seria avisado se nao
+	// estivesse. O silencio so' e' seguro quando e' visivel.
+	if mudo, merr := h.repo.AlertasSilenciados(ctx, domain); merr == nil && mudo {
+		res["alertas_silenciados"] = true
+	}
+
 	// Linhas Abertas do portal — o suporte precisa saber POR QUAL linha o
 	// cliente esta atendendo, e quais existem pra escolher.
 	if raw, lerr := h.bitrixClient.ListOpenLines(ctx, creds); lerr == nil {

@@ -106,6 +106,27 @@ Para lançar um pagamento use **Registrar pagamento**, informando quando pagou e
 até quando cobre. A vigência se estende sozinha, e fica registrado **quem**
 lançou.
 
+### "Estamos recebendo alerta de um cliente que cancelou"
+
+Vá em **Alertas → De quais clientes somos avisados**, ache o cliente e clique
+em **Desligar alerta**. O sistema pede um motivo — escreva algo que responda a
+pergunta daqui a seis meses, do tipo `contrato encerrado em 09/2026`.
+
+**O cliente continua inteiro no sistema.** Histórico de conversas, licenças e
+pagamentos ficam como estão; só os avisos por e-mail param. Apagar o cliente
+para parar de receber e-mail seria destruir registro por causa de ruído.
+
+Isso importa porque **alerta que não exige ação ensina o plantão a ignorar a
+caixa** — e o próximo aviso de verdade chega no meio do que já aprenderam a
+pular.
+
+Para religar, o mesmo lugar: **Reativar alerta**.
+
+> Um cliente silenciado aparece com o aviso **⚠ Alertas DESLIGADOS** na Saúde
+> dele. Olhe para isso antes de concluir que está tudo bem: um portal mudo
+> responde "sem problemas" de um jeito em que não dá para confiar, porque
+> ninguém seria avisado se não estivesse.
+
 ---
 
 ## 3. As telas, uma a uma
@@ -119,7 +140,7 @@ lançou.
 | **Licenças** | Contratos, vigência e histórico de pagamentos |
 | **Sistema** | O processo em tempo real (memória, filas) |
 | **Logs ao vivo** | Stream direto do servidor, quando a Saúde não bastou |
-| **Alertas** | Quem recebe aviso, de quê, e a cada quanto tempo |
+| **Alertas** | Quem recebe aviso, de quê, a cada quanto tempo — e de quais clientes |
 | **Usuários admin** | Quem entra no painel |
 | **IPs bloqueados** | Bloqueios por tentativa de invasão |
 | **Auditoria** | Histórico de quem fez o quê |

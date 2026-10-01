@@ -413,6 +413,29 @@ const adminHomeHTML = `<!doctype html>
         </div>
       </div>
 
+      <div class="section-title" style="margin-top:18px">👥 De quais clientes somos avisados</div>
+      <div class="card" style="padding:14px 18px">
+        <p class="meta" style="margin:0 0 10px">
+          Cliente que cancelou continua aqui com todo o histórico — nada é apagado.
+          Desligue o alerta dele para o time parar de receber aviso de um contrato encerrado.
+          <strong>Alerta que não exige ação ensina a ignorar os que exigem.</strong>
+        </p>
+        <div class="row" style="gap:8px;margin-bottom:10px">
+          <input class="search" id="al-cli-busca" placeholder="Filtrar por domínio…" oninput="renderAlertaClientes()" style="flex:1">
+          <select class="filter" id="al-cli-filtro" onchange="renderAlertaClientes()">
+            <option value="">Todos</option>
+            <option value="ativo">Só com alerta ativo</option>
+            <option value="mudo">Só silenciados</option>
+          </select>
+        </div>
+        <div class="tablewrap"><div class="tablescroll" style="max-height:300px">
+          <table>
+            <thead><tr><th>Cliente</th><th>Alerta</th><th>Motivo</th><th style="text-align:right">Ação</th></tr></thead>
+            <tbody id="al-clientes"><tr><td colspan="4" class="loading">Carregando…</td></tr></tbody>
+          </table>
+        </div></div>
+      </div>
+
       <div class="section-title" style="margin-top:18px">📨 Alertas enviados</div>
       <div class="tablewrap"><div class="tablescroll" style="max-height:320px">
         <table>
@@ -794,6 +817,58 @@ window.addEventListener('resize',fechaMenus);
 window.addEventListener('scroll',fechaMenus,true);
 
 function setToolDomain(d){irPara('tools');document.getElementById('tool-domain').value=decodeURIComponent(d);}
+var AL_CLIENTES=[];
+function carregarAlertaClientes(){
+  fetch('/admin/api/alertas/clientes').then(function(r){return r.json();}).then(function(d){
+    AL_CLIENTES=d.clientes||[]; renderAlertaClientes();
+  }).catch(function(){
+    document.getElementById('al-clientes').innerHTML='<tr><td colspan="4" class="empty">Falha ao carregar.</td></tr>';
+  });
+}
+function renderAlertaClientes(){
+  var tb=document.getElementById('al-clientes'); if(!tb) return;
+  var q=(document.getElementById('al-cli-busca').value||'').toLowerCase().trim();
+  var f=document.getElementById('al-cli-filtro').value;
+  var list=AL_CLIENTES.filter(function(c){
+    if(q&&c.domain.toLowerCase().indexOf(q)===-1) return false;
+    if(f==='ativo'&&c.silenciado) return false;
+    if(f==='mudo'&&!c.silenciado) return false;
+    return true;
+  });
+  if(!list.length){tb.innerHTML='<tr><td colspan="4" class="empty">Nenhum cliente encontrado.</td></tr>';return;}
+  tb.innerHTML=list.map(function(c){
+    var d=encodeURIComponent(c.domain);
+    return '<tr><td>'+_esc(c.domain)+'</td>'+
+      '<td>'+(c.silenciado
+        ? '<span class="badge b-none">silenciado</span>'
+        : '<span class="badge b-active">ativo</span>')+'</td>'+
+      '<td class="meta">'+(c.silenciado
+        ? _esc(c.motivo||'')+(c.silenciado_em?' <span style="opacity:.6">· '+_esc(c.silenciado_em)+'</span>':'')
+        : '—')+'</td>'+
+      '<td style="text-align:right"><button class="btn" onclick="alSilenciar(\''+d+'\','+(c.silenciado?'false':'true')+')">'+
+        (c.silenciado?'Reativar alerta':'Desligar alerta')+'</button></td></tr>';
+  }).join('');
+}
+function alSilenciar(domEnc,silenciar){
+  var dom=decodeURIComponent(domEnc);
+  var motivo='';
+  if(silenciar){
+    // Motivo obrigatorio: daqui a seis meses "por que paramos de ser avisados
+    // deste cliente?" e' a primeira pergunta de quem estranhar.
+    motivo=prompt('Desligar os alertas de '+dom+'?'+'\n'+'\n'+
+      'O cliente CONTINUA no sistema, com todo o historico. So os avisos por e-mail param.'+'\n'+'\n'+
+      'Motivo (ex: contrato encerrado em 09/2026):','');
+    if(motivo===null) return;
+    if(!motivo.trim()){ toast('informe o motivo',false); return; }
+  }else if(!confirm('Reativar os alertas de '+dom+'?')){ return; }
+  fetch('/admin/api/alertas/cliente',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({domain:dom,silenciado:!!silenciar,motivo:motivo})})
+   .then(function(r){return r.json();}).then(function(d){
+     if(d.error){toast(d.error,false);return;}
+     toast(d.mensagem||'Pronto',true); carregarAlertaClientes();
+   }).catch(function(e){toast('erro de rede: '+e.message,false);});
+}
+
 function carregarAlertas(){
   fetch('/admin/api/alertas/config').then(function(r){return r.json();}).then(function(d){
     var c=d.config||{};
@@ -816,6 +891,8 @@ function carregarAlertas(){
       e.innerHTML='<div class="alerta">Nenhum alerta sai enquanto servidor, remetente e destinatários não estiverem preenchidos.</div>';
     }
   }).catch(function(){toast('falha ao carregar configuração',false);});
+
+  carregarAlertaClientes();
 
   fetch('/admin/api/alertas/historico').then(function(r){return r.json();}).then(function(d){
     var tb=document.getElementById('al-historico'); var as=d.alertas||[];
@@ -1152,6 +1229,10 @@ function carregarHealth(){
               ab.abas.map(function(x){return (x.vinculada?'✅ ':'❌ ')+_esc(x.onde);}).join('  '));
         if(ab.problema){ c+=_alerta(ab.problema+' '+(ab.acao||'')); est='ruim'; }
         else if(ab.nota){ c+='<div class="meta" style="margin-top:4px">'+ab.nota+'</div>'; }
+      }
+      if(b.alertas_silenciados){
+        c+='<div class="meta" style="margin-top:8px;color:#fbbf24">⚠ Alertas DESLIGADOS para este cliente. '+
+           'Nada aqui gera aviso por e-mail — reative em Alertas se ele voltou a operar.</div>';
       }
       if(est==='bom') c+=_ok('integracao saudavel');
     }

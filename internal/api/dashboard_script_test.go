@@ -20,15 +20,22 @@ import (
 // IGNORA o arquivo em qualquer build normal. Os testes somem da lista sem erro
 // nenhum — `go test` responde "ok" e nao roda nada. Aconteceu aqui.
 
-// scriptDoPainel devolve o JS embutido no HTML do dashboard.
-func scriptDoPainel(t *testing.T) string {
+// paineis sao os dois HTMLs com JavaScript embutido. Os dois correm o mesmo
+// risco, e o do admin e' onde o suporte trabalha: uma tela morta la' significa
+// ninguem conseguindo diagnosticar cliente nenhum.
+func paineis(t *testing.T) map[string]string {
 	t.Helper()
-	ini := strings.Index(dashboardHTML, "\n<script>\n")
-	fim := strings.LastIndex(dashboardHTML, "\n</script>")
-	if ini < 0 || fim < 0 || fim <= ini {
-		t.Fatal("nao achei o bloco <script> do painel — este teste precisa ser reapontado")
+	fontes := map[string]string{"painel do cliente": dashboardHTML, "painel admin": adminHomeHTML}
+	out := map[string]string{}
+	for nome, html := range fontes {
+		i := strings.Index(html, "\n<script>\n")
+		f := strings.LastIndex(html, "\n</script>")
+		if i < 0 || f < 0 || f <= i {
+			t.Fatalf("nao achei o bloco <script> do %s — este teste precisa ser reapontado", nome)
+		}
+		out[nome] = html[i:f]
 	}
-	return dashboardHTML[ini:fim]
+	return out
 }
 
 // Um onclick montado por concatenacao precisa de \' para fechar a string JS de
@@ -36,18 +43,24 @@ func scriptDoPainel(t *testing.T) string {
 // `permGestor(” + x + ”)` — string vazia concatenada, e o parser quebra no
 // token seguinte. Foi exatamente o que aconteceu.
 func TestOnclickMontadoNaoPerdeuAEscapa(t *testing.T) {
-	js := scriptDoPainel(t)
+	for nome, js := range paineis(t) {
+		verificarOnclick(t, nome, js)
+	}
+}
+
+func verificarOnclick(t *testing.T, nome, js string) {
+	t.Helper()
 	// Captura `onclick="funcao(` seguido do que vier ate' a aspa.
 	re := regexp.MustCompile(`onclick="[A-Za-z_][A-Za-z0-9_]*\((''|\\')`)
 	achados := re.FindAllStringSubmatch(js, -1)
 	// Sem isto o teste passaria por nao encontrar nada — e um teste que nao
 	// olha para nada da' a mesma sensacao de seguranca que um que olha.
 	if len(achados) < 5 {
-		t.Fatalf("so' %d onclick montado encontrado; o padrao mudou e o teste virou vazio", len(achados))
+		t.Fatalf("%s: so' %d onclick montado encontrado; o padrao mudou e o teste virou vazio", nome, len(achados))
 	}
 	for _, m := range achados {
 		if m[1] == "''" {
-			t.Errorf("onclick montado sem escape: %q — a barra se perdeu e o JS nao parseia", m[0])
+			t.Errorf("%s: onclick montado sem escape: %q — a barra se perdeu e o JS nao parseia", nome, m[0])
 		}
 	}
 }
@@ -56,7 +69,13 @@ func TestOnclickMontadoNaoPerdeuAEscapa(t *testing.T) {
 // sem template literal nao permite, e o arquivo inteiro deixa de carregar. O
 // caso real foi um \n de confirm() que virou newline literal.
 func TestConfirmEAlertNaoTemQuebraDeLinhaCrua(t *testing.T) {
-	js := scriptDoPainel(t)
+	for nome, js := range paineis(t) {
+		verificarStringsDeDialogo(t, nome, js)
+	}
+}
+
+func verificarStringsDeDialogo(t *testing.T, nome, js string) {
+	t.Helper()
 	for _, chamada := range []string{"confirm('", "alert('", "toast('"} {
 		pos := 0
 		for {
@@ -91,18 +110,35 @@ func TestConfirmEAlertNaoTemQuebraDeLinhaCrua(t *testing.T) {
 // onclick apontando pra funcao inexistente so' falha quando alguem clica — e o
 // erro fica no console do navegador, onde ninguem olha.
 func TestFuncoesChamadasPorOnclickExistem(t *testing.T) {
-	js := scriptDoPainel(t)
-	re := regexp.MustCompile(`onclick="(perm[A-Za-z0-9_]*)\(`)
+	for nome, js := range paineis(t) {
+		verificarFuncoesExistem(t, nome, js)
+	}
+}
+
+func verificarFuncoesExistem(t *testing.T, nome, js string) {
+	t.Helper()
+	re := regexp.MustCompile(`onclick="([a-zA-Z_][A-Za-z0-9_]*)\(`)
+	// onclick aceita JS inline de verdade — `onclick="if(x) y()"` e' valido e
+	// nao e' chamada de funcao nossa. Sem esta lista o teste acusaria que a
+	// "funcao if" nao existe, que e' ruido puro.
+	palavraChave := map[string]bool{
+		"if": true, "for": true, "while": true, "switch": true, "return": true,
+		"typeof": true, "new": true, "delete": true, "void": true, "catch": true,
+		"function": true, "do": true,
+	}
 	vistas := map[string]bool{}
 	for _, m := range re.FindAllStringSubmatch(js, -1) {
+		if palavraChave[m[1]] {
+			continue
+		}
 		vistas[m[1]] = true
 	}
 	if len(vistas) == 0 {
-		t.Fatal("nenhum onclick de permissoes encontrado — o teste virou vazio")
+		t.Fatalf("%s: nenhum onclick encontrado — o teste virou vazio", nome)
 	}
 	for fn := range vistas {
 		if !strings.Contains(js, "function "+fn+"(") {
-			t.Errorf("onclick chama %s(), que nao existe no script", fn)
+			t.Errorf("%s: onclick chama %s(), que nao existe no script", nome, fn)
 		}
 	}
 }

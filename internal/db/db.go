@@ -915,6 +915,26 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			 WHERE COALESCE(session_jid, '') <> ''
 			ON CONFLICT DO NOTHING;
 		`},
+		{"055_alertas_silenciados", `
+			-- Silenciar alertas de um cliente SEM apagar o cliente.
+			--
+			-- Cliente que cancelou continua no banco: o historico de conversas,
+			-- as licencas e os pagamentos sao registro, e apagar para parar de
+			-- receber e-mail seria destruir informacao por causa de ruido. Mas
+			-- enquanto ele fica la', o token vence e o numero cai — e o time
+			-- recebe alerta de um contrato que acabou. Alerta que nao exige
+			-- acao ensina a ignorar os que exigem.
+			--
+			-- Presenca nesta tabela = silenciado. O motivo e quem silenciou
+			-- ficam junto, porque "por que paramos de ser avisados deste
+			-- cliente?" e' a primeira pergunta quando alguem estranha.
+			CREATE TABLE IF NOT EXISTS alertas_silenciados (
+				domain          TEXT PRIMARY KEY,
+				motivo          TEXT NOT NULL DEFAULT '',
+				silenciado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				silenciado_por  TEXT NOT NULL DEFAULT ''
+			);
+		`},
 	}
 
 	for _, m := range migrations {
