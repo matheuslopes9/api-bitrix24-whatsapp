@@ -49,17 +49,17 @@ const (
 
 // CloudSession representa uma sessão Cloud API ativa em memória.
 type CloudSession struct {
-	JID            string // cloud:<phone_id>@s.whatsapp.net
-	PhoneNumberID  string
-	WABAID         string
-	AccessToken    string
-	AppSecret      string
-	VerifyToken    string
-	DisplayPhone   string
-	APIVersion     string
-	BaseURL        string
-	LastOK         time.Time
-	mu             sync.RWMutex
+	JID           string // cloud:<phone_id>@s.whatsapp.net
+	PhoneNumberID string
+	WABAID        string
+	AccessToken   string
+	AppSecret     string
+	VerifyToken   string
+	DisplayPhone  string
+	APIVersion    string
+	BaseURL       string
+	LastOK        time.Time
+	mu            sync.RWMutex
 }
 
 // CloudManager gerencia sessões Cloud API. Coexiste com o Manager whatsmeow.
@@ -318,11 +318,11 @@ func (cm *CloudManager) SendText(ctx context.Context, sessionJID, toPhone, text 
 // modo "Oficial" e seleciona um template cadastrado em message_templates
 // com meta_template_name preenchido.
 //
-//   sessionJID: cloud:<phone_id>@s.whatsapp.net
-//   toPhone:    destinatario em E.164
-//   name:       nome exato como aprovado no Meta Business Manager
-//   lang:       language code (ex: pt_BR, en_US)
-//   variables:  valores das variaveis {{1}}, {{2}}... NA ORDEM. Vazio = sem variavel.
+//	sessionJID: cloud:<phone_id>@s.whatsapp.net
+//	toPhone:    destinatario em E.164
+//	name:       nome exato como aprovado no Meta Business Manager
+//	lang:       language code (ex: pt_BR, en_US)
+//	variables:  valores das variaveis {{1}}, {{2}}... NA ORDEM. Vazio = sem variavel.
 //
 // Retorna wamid do Meta. Se Meta nao aceitar (template nao existe, lang
 // errado, variaveis erradas), retorna erro com mensagem do proprio Meta.

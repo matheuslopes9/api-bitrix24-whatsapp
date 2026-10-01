@@ -90,7 +90,7 @@ func (c *Client) lockRefresh(key string) func() {
 
 func NewClient(repo *db.Repository, log *zap.Logger) *Client {
 	return &Client{
-		repo:        repo,
+		repo: repo,
 		// 45s e nao 15s. MEDIDO: a listagem de usuarios manda lotes que voltam
 		// com ~800KB; o Bitrix responde em ~3s quando chamado direto, mas pelo
 		// app o mesmo lote estourava o limite de 15s ("Client.Timeout exceeded
@@ -1401,6 +1401,16 @@ func (c *Client) ListBoundPlacements(ctx context.Context, creds TenantCreds) ([]
 		return nil, fmt.Errorf("parse placement.get: %w (raw: %s)", err, string(raw))
 	}
 	return vinculados, nil
+}
+
+// AppInfo pergunta ao portal se este app ainda existe la'.
+//
+// E' a checagem mais barata e mais direta de instalacao: nao depende de linha
+// aberta, de conector nem de permissao de usuario. Quando o cliente remove o
+// app, ela responde APPLICATION_NOT_FOUND — e esse e' o unico aviso que o
+// Bitrix da'. Nao existe evento de desinstalacao chegando aqui.
+func (c *Client) AppInfo(ctx context.Context, creds TenantCreds) (json.RawMessage, error) {
+	return c.call(ctx, creds, "app.info", map[string]interface{}{})
 }
 
 // ListPlacements devolve o CATALOGO de placements disponiveis (placement.list).

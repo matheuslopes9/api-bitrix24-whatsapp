@@ -935,6 +935,25 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 				silenciado_por  TEXT NOT NULL DEFAULT ''
 			);
 		`},
+		{"056_portal_desinstalado", `
+			-- Cliente que desinstala o app NAO avisa ninguem.
+			--
+			-- O Bitrix simplesmente passa a responder APPLICATION_NOT_FOUND em
+			-- toda chamada daquele portal. Sem registrar isso, o portal ficava
+			-- na lista de clientes com cara de ativo, a Saude dizia "integracao
+			-- saudavel", e os alertas continuavam avisando que o token daquele
+			-- cliente venceu — sobre um app que nao existe mais.
+			--
+			-- Guardamos a data e NAO apagamos o portal: historico de conversas,
+			-- licenca e pagamentos continuam valendo, e cliente que reinstala
+			-- precisa achar tudo onde estava.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS desinstalado_em TIMESTAMPTZ,
+				ADD COLUMN IF NOT EXISTS desinstalado_motivo TEXT NOT NULL DEFAULT '';
+
+			CREATE INDEX IF NOT EXISTS idx_portals_desinstalado
+				ON bitrix_portals (desinstalado_em) WHERE desinstalado_em IS NOT NULL;
+		`},
 	}
 
 	for _, m := range migrations {

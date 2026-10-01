@@ -219,6 +219,18 @@ func (h *handlers) healthBitrix(ctx context.Context, domain string) fiber.Map {
 		res["alertas_silenciados"] = true
 	}
 
+	// Cliente que removeu o app. Precisa vir ANTES de qualquer conclusao de
+	// saude: token, licenca e conector continuam validos no NOSSO banco, entao
+	// sem isto a tela somava sinais verdes e dizia "integracao saudavel" sobre
+	// um app que nao existe mais no portal.
+	if portal.Desinstalado() {
+		res["desinstalado"] = true
+		res["desinstalado_em"] = portal.DesinstaladoEm.Format("02/01/2006 15:04")
+		res["problema"] = "o cliente DESINSTALOU o UC Talk do portal. " +
+			"Nada aqui funciona ate' ele instalar de novo — e nada aqui foi perdido: " +
+			"conversas, licenca e pagamentos continuam salvos."
+	}
+
 	// Linhas Abertas do portal — o suporte precisa saber POR QUAL linha o
 	// cliente esta atendendo, e quais existem pra escolher.
 	if raw, lerr := h.bitrixClient.ListOpenLines(ctx, creds); lerr == nil {

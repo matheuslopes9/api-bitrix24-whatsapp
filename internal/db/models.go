@@ -162,4 +162,15 @@ type BitrixPortal struct {
 	// Usado pra validar autenticidade de chamadas em
 	// /bitrix/bp/send com constant-time compare.
 	ApplicationToken string `db:"application_token"`
+	// DesinstaladoEm: quando o Bitrix passou a responder APPLICATION_NOT_FOUND
+	// para este portal. nil = instalado.
+	//
+	// O cliente que desinstala nao avisa ninguem; o unico sinal e' o portal
+	// recusar toda chamada. Sem guardar isso, ele ficava na lista com cara de
+	// ativo e gerando alerta de token vencido sobre um app que nao existe mais.
+	DesinstaladoEm     *time.Time `db:"desinstalado_em"`
+	DesinstaladoMotivo string     `db:"desinstalado_motivo"`
 }
+
+// Desinstalado diz se o cliente removeu o app do portal.
+func (p *BitrixPortal) Desinstalado() bool { return p != nil && p.DesinstaladoEm != nil }

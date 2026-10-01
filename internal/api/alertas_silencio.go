@@ -56,7 +56,7 @@ func (h *handlers) adminAlertasClientes(c *fiber.Ctx) error {
 		if p.Domain == p.MemberID {
 			continue
 		}
-		item := fiber.Map{"domain": p.Domain, "silenciado": false}
+		item := fiber.Map{"domain": p.Domain, "silenciado": false, "desinstalado": p.Desinstalado()}
 		if info, mudo := porDominio[normalizeDomainKey(p.Domain)]; mudo {
 			item["silenciado"] = true
 			item["motivo"] = info["motivo"]

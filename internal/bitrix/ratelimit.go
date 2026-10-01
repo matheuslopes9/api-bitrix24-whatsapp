@@ -70,9 +70,9 @@ func (l *methodLimiter) wait(ctx context.Context) error {
 
 // rateLimiter mantem 1 methodLimiter por (domain, method).
 type rateLimiter struct {
-	mu             sync.Mutex
-	limiters       map[string]*methodLimiter
-	defaultPerSec  int
+	mu            sync.Mutex
+	limiters      map[string]*methodLimiter
+	defaultPerSec int
 }
 
 func newRateLimiter() *rateLimiter {

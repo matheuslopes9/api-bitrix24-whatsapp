@@ -106,6 +106,31 @@ Para lançar um pagamento use **Registrar pagamento**, informando quando pagou e
 até quando cobre. A vigência se estende sozinha, e fica registrado **quem**
 lançou.
 
+### "O cliente desinstalou o app"
+
+O sistema descobre sozinho, de hora em hora: quando o portal passa a responder
+`APPLICATION_NOT_FOUND`, o cliente é marcado como **DESINSTALADO**. O Bitrix
+não avisa ninguém — esse é o único sinal que existe.
+
+Onde aparece:
+
+- **Tenants** — selo vermelho `DESINSTALADO` no nome, linha esmaecida
+- **Saúde do cliente** — cartão vermelho com a data da detecção
+- **Alertas** — o cliente aparece como `desinstalado`, e **para de gerar
+  aviso por e-mail**. Não há ação possível: "o token do cliente X venceu"
+  sobre um app removido é um chamado que ninguém consegue fechar.
+
+**Nada é apagado.** Conversas, licença e pagamentos continuam salvos, e o
+cliente que reinstala encontra tudo onde estava — o sistema desmarca sozinho
+na próxima verificação.
+
+> Antes de falar com o comercial, confirme a data da detecção na Saúde. O
+> sistema só marca com o código definitivo do Bitrix: token vencido, portal
+> fora do ar e timeout **não** marcam ninguém, justamente para não declarar
+> cancelado um cliente que está atendendo.
+
+---
+
 ### "Estamos recebendo alerta de um cliente que cancelou"
 
 Vá em **Alertas → De quais clientes somos avisados**, ache o cliente e clique

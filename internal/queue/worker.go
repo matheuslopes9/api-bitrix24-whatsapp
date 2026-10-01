@@ -24,7 +24,7 @@ type WorkerPool struct {
 	// jidLocks garante que mensagens para o mesmo JID não sejam enviadas em paralelo.
 	// Cada JID tem seu próprio mutex — workers diferentes podem rodar em paralelo
 	// desde que sejam para JIDs diferentes.
-	jidMu   sync.Mutex
+	jidMu    sync.Mutex
 	jidLocks map[string]*sync.Mutex
 }
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -69,6 +70,11 @@ func (h *handlers) reconciliarConectores(ctx context.Context) {
 			continue
 		}
 		creds := h.portalToCreds(p)
+
+		// Checa, de hora em hora, se o app ainda existe no portal. E' o unico
+		// jeito de saber: o cliente que desinstala nao avisa, e o Bitrix nao
+		// manda nada — ele so' passa a recusar tudo com APPLICATION_NOT_FOUND.
+		h.conferirInstalacao(ctx, creds, p)
 		for _, a := range contas {
 			// Sem linha nao da' pra checar: o imconnector.status responde
 			// CONFIGURED=false para LINE=0 qualquer que seja o conector, e
@@ -128,4 +134,43 @@ func (h *handlers) conectorAtivo(ctx context.Context, creds bitrix.TenantCreds, 
 		return false, false
 	}
 	return s.Status, true
+}
+
+// conferirInstalacao descobre se o cliente removeu o app — ou reinstalou.
+//
+// Usa app.info porque ela e' a pergunta mais direta ("este app existe aqui?"),
+// e porque falha com APPLICATION_NOT_FOUND exatamente no caso que interessa.
+// Qualquer outro erro e' tratado como "nao deu pra saber": token vencido,
+// portal fora do ar e timeout nao significam desinstalacao, e marcar por causa
+// deles poria "cliente cancelou" na tela do suporte durante uma instabilidade
+// de rede.
+func (h *handlers) conferirInstalacao(ctx context.Context, creds bitrix.TenantCreds, p *db.BitrixPortal) {
+	_, err := h.bitrixClient.AppInfo(ctx, creds)
+
+	if db.ErroDeAppRemovido(err) {
+		if p.Desinstalado() {
+			return // ja' sabiamos; nao reescreve a data da primeira deteccao
+		}
+		if merr := h.repo.MarcarDesinstalado(ctx, p.Domain, "o portal respondeu APPLICATION_NOT_FOUND"); merr != nil {
+			h.log.Warn("desinstalacao: falha ao marcar", zap.String("domain", p.Domain), zap.Error(merr))
+			return
+		}
+		// Error e nao Warn: um cliente a menos e' informacao de negocio, nao
+		// so' ruido operacional. Alguem precisa saber hoje, nao no fechamento.
+		h.log.Error("cliente DESINSTALOU o UC Talk",
+			zap.String("domain", p.Domain),
+			zap.String("acao", "confirme com o comercial; os dados do cliente continuam salvos"))
+		return
+	}
+	if err != nil {
+		return // nao deu pra saber — segue como esta'
+	}
+
+	// Respondeu: o app esta' la'. Se estava marcado, o cliente reinstalou.
+	if p.Desinstalado() {
+		if voltou, merr := h.repo.MarcarInstalado(ctx, p.Domain); merr == nil && voltou {
+			h.log.Info("cliente REINSTALOU o UC Talk — voltou a ser monitorado",
+				zap.String("domain", p.Domain))
+		}
+	}
 }

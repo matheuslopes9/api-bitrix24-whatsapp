@@ -1498,7 +1498,8 @@ func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID str
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
-		       COALESCE(application_token, '')
+		       COALESCE(application_token, ''),
+		       desinstalado_em, COALESCE(desinstalado_motivo, '')
 		FROM bitrix_portals WHERE member_id = $1
 		ORDER BY installed_at DESC LIMIT 1`, memberID)
 
@@ -1506,7 +1507,8 @@ func (r *Repository) GetBitrixPortalByMemberID(ctx context.Context, memberID str
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
 		&p.LegacyAdminUserID,
-		&p.ApplicationToken)
+		&p.ApplicationToken,
+		&p.DesinstaladoEm, &p.DesinstaladoMotivo)
 	if err != nil {
 		return nil, err
 	}
@@ -1544,14 +1546,16 @@ func (r *Repository) GetBitrixPortalByDomain(ctx context.Context, domain string)
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
-		       COALESCE(application_token, '')
+		       COALESCE(application_token, ''),
+		       desinstalado_em, COALESCE(desinstalado_motivo, '')
 		FROM bitrix_portals WHERE domain = $1`, domain)
 
 	var p BitrixPortal
 	err := row.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 		&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
 		&p.LegacyAdminUserID,
-		&p.ApplicationToken)
+		&p.ApplicationToken,
+		&p.DesinstaladoEm, &p.DesinstaladoMotivo)
 	if err != nil {
 		return nil, err
 	}
@@ -1651,7 +1655,8 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		SELECT id, domain, access_token, refresh_token, expires_at, member_id,
 		       connector_id, open_line_id, installed_at, updated_at,
 		       COALESCE(legacy_admin_user_id, ''),
-		       COALESCE(application_token, '')
+		       COALESCE(application_token, ''),
+		       desinstalado_em, COALESCE(desinstalado_motivo, '')
 		FROM bitrix_portals ORDER BY installed_at DESC`)
 	if err != nil {
 		return nil, err
@@ -1664,7 +1669,8 @@ func (r *Repository) ListBitrixPortals(ctx context.Context) ([]*BitrixPortal, er
 		if err := rows.Scan(&p.ID, &p.Domain, &p.AccessToken, &p.RefreshToken, &p.ExpiresAt,
 			&p.MemberID, &p.ConnectorID, &p.OpenLineID, &p.InstalledAt, &p.UpdatedAt,
 			&p.LegacyAdminUserID,
-			&p.ApplicationToken); err != nil {
+			&p.ApplicationToken,
+			&p.DesinstaladoEm, &p.DesinstaladoMotivo); err != nil {
 			return nil, err
 		}
 		portals = append(portals, &p)

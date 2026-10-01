@@ -29,6 +29,18 @@ func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, 
 			// recuperavel; deixar de avisar de um cliente ativo nao e'.
 			mudo = false
 		}
+		if !mudo {
+			// Portal desinstalado tambem nao gera alerta — e por um motivo mais
+			// forte que o silencio manual: NAO HA ACAO POSSIVEL. "O token do
+			// cliente X venceu" sobre um app que foi removido do portal e' um
+			// chamado que ninguem consegue fechar. O estado aparece na lista de
+			// clientes e na Saude, que e' onde ele serve pra alguma coisa.
+			//
+			// Mesma regra do silencio: erro de leitura nao silencia.
+			if fora, derr := r.PortalDesinstalado(ctx, dominio); derr == nil && fora {
+				mudo = true
+			}
+		}
 		if mudo {
 			return false, nil
 		}

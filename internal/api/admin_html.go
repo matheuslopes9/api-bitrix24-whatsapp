@@ -771,7 +771,16 @@ function renderTenants(){
     var tokLbl={valid:'válido',expiring:'expirando',expired:'expirado'}[t.token_status]||t.token_status;
     var vig=t.valid_until?'<div class="meta">até '+fmtDia(t.valid_until)+'</div>':'';
     var d=encodeURIComponent(t.domain);
-    return '<tr><td><div class="domain">'+t.domain+'</div><div class="meta">Linha '+(t.open_line_id||'—')+' · desde '+fmtDate(t.installed_at)+'</div></td>'+
+    // Desinstalado vem antes de tudo na linha: e' o estado que torna todo o
+    // resto irrelevante. Token "valido" e licenca "em vigor" num portal sem app
+    // nao sao sinais bons, sao sinais sem sentido.
+    var marcaDesinst = t.desinstalado
+      ? '<span class="badge b-expired" style="margin-left:6px">DESINSTALADO</span>'
+      : '';
+    var subDesinst = t.desinstalado
+      ? '<div class="meta" style="color:var(--red)">app removido do portal'+(t.desinstalado_em?' em '+_esc(t.desinstalado_em):'')+'</div>'
+      : '';
+    return '<tr'+(t.desinstalado?' style="opacity:.6"':'')+'><td><div class="domain">'+t.domain+marcaDesinst+'</div><div class="meta">Linha '+(t.open_line_id||'—')+' · desde '+fmtDate(t.installed_at)+'</div>'+subDesinst+'</td>'+
       '<td>'+featTags(t)+'<div class="meta">'+(t.max_sessions||1)+' número(s)</div></td>'+
       '<td>'+licBadge(t)+vig+'</td>'+
       '<td>'+conn+'</td><td>'+(t.msgs_24h||0)+'<div class="meta">'+(t.msgs_inbound_24h||0)+'↓ '+(t.msgs_outbound_24h||0)+'↑</div></td>'+
@@ -839,10 +848,14 @@ function renderAlertaClientes(){
   tb.innerHTML=list.map(function(c){
     var d=encodeURIComponent(c.domain);
     return '<tr><td>'+_esc(c.domain)+'</td>'+
-      '<td>'+(c.silenciado
-        ? '<span class="badge b-none">silenciado</span>'
-        : '<span class="badge b-active">ativo</span>')+'</td>'+
-      '<td class="meta">'+(c.silenciado
+      '<td>'+(c.desinstalado
+        ? '<span class="badge b-expired">desinstalado</span>'
+        : c.silenciado
+          ? '<span class="badge b-none">silenciado</span>'
+          : '<span class="badge b-active">ativo</span>')+'</td>'+
+      '<td class="meta">'+(c.desinstalado
+        ? 'app removido do portal — nao ha alerta a enviar'
+        : c.silenciado
         ? _esc(c.motivo||'')+(c.silenciado_em?' <span style="opacity:.6">· '+_esc(c.silenciado_em)+'</span>':'')
         : '—')+'</td>'+
       '<td style="text-align:right"><button class="btn" onclick="alSilenciar(\''+d+'\','+(c.silenciado?'false':'true')+')">'+
@@ -1223,18 +1236,31 @@ function carregarHealth(){
       // existe — e ninguem sabe que deveria existir.
       var ab=b.abas_crm||{};
       if(ab.indeterminado){
-        c+='<div class="meta" style="margin-top:8px">Abas do CRM: '+_esc(ab.detalhe||'nao consegui conferir')+'</div>';
+        // "Nao consegui conferir" nao e' "esta' quebrado" — por isso nao vira
+        // alarme. Mas tambem NAO pode somar com um card verde: era assim que a
+        // tela mostrava "APPLICATION_NOT_FOUND" e "OK integracao saudavel"
+        // lado a lado, no portal de um cliente que tinha desinstalado o app.
+        c+='<div class="meta" style="margin-top:8px;color:#fbbf24">Abas do CRM: '+_esc(ab.detalhe||'nao consegui conferir')+'</div>';
+        if(est==='bom') est='incerto';
       } else if(ab.abas){
         c+=_l('Abas no card',ab.total_vinculadas+' de '+ab.total_esperadas+' — '+
               ab.abas.map(function(x){return (x.vinculada?'✅ ':'❌ ')+_esc(x.onde);}).join('  '));
         if(ab.problema){ c+=_alerta(ab.problema+' '+(ab.acao||'')); est='ruim'; }
         else if(ab.nota){ c+='<div class="meta" style="margin-top:4px">'+ab.nota+'</div>'; }
       }
+      if(b.desinstalado){
+        c+=_alerta(b.problema+(b.desinstalado_em?' (detectado em '+_esc(b.desinstalado_em)+')':''));
+        est='ruim';
+      }
       if(b.alertas_silenciados){
         c+='<div class="meta" style="margin-top:8px;color:#fbbf24">⚠ Alertas DESLIGADOS para este cliente. '+
            'Nada aqui gera aviso por e-mail — reative em Alertas se ele voltou a operar.</div>';
       }
       if(est==='bom') c+=_ok('integracao saudavel');
+      else if(est==='incerto'){
+        c+='<div class="meta" style="margin-top:6px">Sem problema conhecido, mas nao deu pra conferir tudo.</div>';
+        est='bom'; // o card nao fica vermelho por uma consulta que falhou
+      }
     }
     html+=_card('Conexao Bitrix',c,est);
 

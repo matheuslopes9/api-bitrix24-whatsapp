@@ -532,9 +532,14 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		UpdatedAt   time.Time `json:"updated_at"`
 		TokenExpAt  time.Time `json:"token_expires_at"`
 		TokenStatus string    `json:"token_status"` // valid | expiring | expired
-		OpenLineID  int       `json:"open_line_id"`
-		ConnQR      int       `json:"connections_qr"`
-		ConnCloud   int       `json:"connections_cloud"`
+		// Desinstalado: o cliente removeu o app do portal. Sem isto, ele ficava
+		// na lista com cara de ativo — token "valido", licenca em vigor — e
+		// ninguem via que nao havia mais integracao nenhuma.
+		Desinstalado   bool   `json:"desinstalado"`
+		DesinstaladoEm string `json:"desinstalado_em,omitempty"`
+		OpenLineID     int    `json:"open_line_id"`
+		ConnQR         int    `json:"connections_qr"`
+		ConnCloud      int    `json:"connections_cloud"`
 		// ConnQRVivas e ConnQRSemVinculo separam o que o BANCO acha do que
 		// esta' mesmo de pe. Sem isso a coluna Conexoes mostrava "1 QR" para
 		// um numero fora do ar ha' dias — foi o caso do teclife em 30/09.
@@ -584,6 +589,10 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		// Key normalizada para lookup nos maps agregados (que usam mesma
 		// normalizacao: strip https:// / http:// / www., lowercase).
 		key := normalizeDomainKey(p.Domain)
+		if p.Desinstalado() {
+			card.Desinstalado = true
+			card.DesinstaladoEm = p.DesinstaladoEm.Format("02/01/2006")
+		}
 
 		// Status do token: usa o expires_at do bitrix_tokens (atualizado a cada
 		// refresh, TTL ~1h do access). Se nao tem token na tabela, marca expirado.
