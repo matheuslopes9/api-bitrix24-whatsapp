@@ -886,7 +886,12 @@ func (m *Manager) SendAudio(ctx context.Context, sessionJID, toJID string, data 
 		return "", fmt.Errorf("upload audio: %w", err)
 	}
 
-	seconds := uint32(0) // duração desconhecida
+	// Duracao lida do proprio arquivo. Antes era sempre 0, e a mensagem de voz
+	// chegava marcada "0:00" — tecnicamente certa, visivelmente quebrada.
+	seconds := uint32(0)
+	if d, ok := DuracaoOggOpus(data); ok {
+		seconds = d
+	}
 	msg := &waProto.Message{
 		AudioMessage: &waProto.AudioMessage{
 			Mimetype:      &mime,

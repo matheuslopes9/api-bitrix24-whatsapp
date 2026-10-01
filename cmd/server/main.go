@@ -302,7 +302,12 @@ func main() {
 					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
 				}
 			case fileMime == "audio/mpeg" || strings.HasPrefix(fileMime, "audio/"):
-				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, fileMime, false)
+				// Ogg/Opus chega como MENSAGEM DE VOZ; os outros formatos
+				// continuam como anexo de audio. Marcar um MP3 como voz
+				// produz uma bolha que parte dos aparelhos nao toca — falha
+				// depois de parecer que ia funcionar.
+				voz := whatsapp.EhMensagemDeVoz(fileMime)
+				waID, err = waManager.SendAudio(c, job.SessionJID, job.ToJID, fileData, fileMime, voz)
 				if err != nil {
 					log.Warn("SendAudio failed, falling back to SendDocument", zap.Error(err))
 					waID, err = waManager.SendDocument(c, job.SessionJID, job.ToJID, fileData, fileMime, fileName)
