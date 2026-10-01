@@ -864,6 +864,57 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			-- depois. O indice sustenta a limpeza por idade.
 			CREATE INDEX IF NOT EXISTS idx_enquetes_criado_em ON enquetes (criado_em);
 		`},
+		{"054_permissao_aberta_por_padrao", `
+			-- INVERTE O PADRAO da permissao por numero.
+			--
+			-- O modelo antigo negava por padrao: sem uma linha em
+			-- crm_user_permissions ninguem enviava, e so' UM usuario (o
+			-- master) podia criar linha. Na pratica, conectar um numero novo
+			-- deixava TODO o time sem conseguir responder pela aba do CRM, e a
+			-- unica saida que a tela oferecia era transferir o master inteiro
+			-- pra outra pessoa — perdendo o controle pra resolver um bloqueio.
+			--
+			-- Agora numero nasce LIBERADO para o colaborador interno ativo, e
+			-- restringir e' uma acao deliberada. Presenca nesta tabela =
+			-- restrito.
+			CREATE TABLE IF NOT EXISTS crm_numero_restrito (
+				domain       TEXT NOT NULL,
+				session_jid  TEXT NOT NULL,
+				restrito_em  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				restrito_por TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (domain, session_jid)
+			);
+
+			-- Gestores: quem pode liberar e restringir, alem do master.
+			--
+			-- O master unico era um ponto unico de falha organizacional: ele
+			-- sai de ferias, muda de area ou deixa a empresa e ninguem mais
+			-- mexe em permissao. Admin do portal Bitrix ja' e' gestor por
+			-- direito (checado na hora); esta tabela e' pra nomear quem NAO e'
+			-- admin do Bitrix mas precisa gerenciar.
+			CREATE TABLE IF NOT EXISTS crm_gestores (
+				domain     TEXT NOT NULL,
+				user_id    TEXT NOT NULL,
+				user_name  TEXT NOT NULL DEFAULT '',
+				criado_em  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				criado_por TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (domain, user_id)
+			);
+
+			-- MIGRACAO DE COMPORTAMENTO, nao so' de schema.
+			--
+			-- Numero que JA' tinha permissao cadastrada estava sendo
+			-- controlado de proposito — provavelmente separando setores. Abrir
+			-- esses na virada daria ao time inteiro um numero que alguem
+			-- restringiu por decisao. Eles continuam restritos; so' os numeros
+			-- sem nenhuma permissao (os que hoje ninguem consegue usar)
+			-- nascem abertos.
+			INSERT INTO crm_numero_restrito (domain, session_jid, restrito_por)
+			SELECT DISTINCT domain, session_jid, 'migracao_054'
+			  FROM crm_user_permissions
+			 WHERE COALESCE(session_jid, '') <> ''
+			ON CONFLICT DO NOTHING;
+		`},
 	}
 
 	for _, m := range migrations {

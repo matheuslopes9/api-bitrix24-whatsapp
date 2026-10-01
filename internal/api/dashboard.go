@@ -854,12 +854,17 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
       <button class="btn btn-ghost btn-sm" id="perm-transfer-btn" onclick="abrirModalTransferirMaster()" style="font-size:12px;display:none;">↪ Transferir controle</button>
     </div>
 
-    <!-- "Atuar como" — quando master ja configurado, lembra qual user_id estou usando.
-         Esconde quando ainda nao tem master (onboarding e' o caminho). -->
-    <div id="perm-caller-card" class="card" style="padding:12px 18px;margin-bottom:14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="font-size:11.5px;color:#94a3b8;">Atuar como master (user_id):</span>
-      <input type="text" id="perm-caller-input" class="inp" placeholder="Cole o user_id do master pra editar" style="flex:1;min-width:180px;max-width:240px;font-size:12px;" oninput="onPermCallerChange()">
-      <span id="perm-caller-status" style="font-size:11px;color:#64748b;">read-only</span>
+    <!-- O campo "Atuar como master (user_id)" foi REMOVIDO daqui.
+         Ele deixou de ter efeito em 28/09, quando o servidor passou a tirar a
+         identidade do cookie assinado e a ignorar o corpo — antes disso,
+         digitar o id do master (que a propria tela exibia) liberava qualquer
+         numero pra si. Depois da correcao ele virou pior que inutil: continuava
+         na tela ensinando que digitar o id certo era a solucao, enquanto a
+         chamada seguia sendo recusada. Os elementos ficam ocultos para o JS
+         antigo nao quebrar ao procura-los. -->
+    <div id="perm-caller-card" style="display:none;">
+      <input type="text" id="perm-caller-input" style="display:none;">
+      <span id="perm-caller-status" style="display:none;"></span>
     </div>
 
     <!-- Modal: escolher master inicial (onboarding pelo dashboard) -->
@@ -880,6 +885,26 @@ body.tema-claro #lista-sessoes .card [style*="background:rgba(255,255,255,.03)"]
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Numeros: aberto por padrao, restrito por decisao -->
+    <div class="card" style="padding:14px 18px;margin-bottom:14px;">
+      <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Controle por número</div>
+      <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:10px;">
+        Número <strong style="color:#cbd5e1;">liberado</strong> pode ser usado por qualquer colaborador interno ativo.
+        Restrinja só quando quiser limitar o número a um grupo — a lista de pessoas abaixo passa a valer apenas para os restritos.
+      </div>
+      <div id="perm-numeros-list"></div>
+    </div>
+
+    <!-- Quem gerencia -->
+    <div class="card" style="padding:14px 18px;margin-bottom:14px;">
+      <div style="font-size:11px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Quem pode gerenciar</div>
+      <div style="font-size:12px;color:#64748b;line-height:1.6;margin-bottom:10px;">
+        Administradores do Bitrix24 gerenciam por direito, sem precisar de cadastro.
+        Nomeie gestores para quem precisa gerenciar <strong style="color:#cbd5e1;">sem ser admin</strong> do portal.
+      </div>
+      <div id="perm-gestores-list"></div>
     </div>
 
     <!-- Filtro -->
@@ -2610,6 +2635,12 @@ function carregarPermissoes(forceRefresh) {
     if (s.error) { box.innerHTML = '<div style="padding:18px;color:#f87171;font-size:12px;text-align:center;">Erro ao carregar sessões: ' + _permEsc(s.error) + '</div>'; return; }
     _permUsers = u.users || [];
     _permSessions = s.sessions || [];
+    _permEu = u.eu || {sou_gestor:false};
+    _permRestritos = {};
+    (u.numeros_restritos||[]).forEach(function(j){ _permRestritos[_permNorm(j)] = true; });
+    _permGestores = u.gestores || [];
+    renderNumerosRestritos();
+    renderGestores();
     renderPermUsers();
     if (forceRefresh) toast('Lista atualizada', 'success');
   }).catch(function(err){
@@ -2654,7 +2685,11 @@ function renderMasterCard() {
   var label = _permMaster.master_user_name || ('User #' + _permMaster.master_user_id);
   nameEl.innerHTML = _permEsc(label) + ' <span style="color:#475569;font-weight:400;font-size:11px;">#' + _permEsc(_permMaster.master_user_id) + '</span>';
   nameEl.style.color = '#e2e8f0';
-  hintEl.textContent = 'Apenas o master pode alterar permissões e transferir o controle.';
+  // Nao diz mais "apenas o master altera": nao e' verdade desde que
+  // administradores do Bitrix e gestores nomeados passaram a gerenciar. O
+  // master ficou sendo so' quem transfere a titularidade historica.
+  hintEl.textContent = 'O master transfere a titularidade. Para liberar numeros, '
+    + 'administradores do Bitrix24 e gestores nomeados tambem podem.';
   setupBtn.style.display = 'none';
   transferBtn.style.display = '';
 
@@ -2813,6 +2848,100 @@ function onPermCallerChange() {
   renderPermUsers();
 }
 
+// renderNumerosRestritos desenha o controle por numero.
+//
+// E' o bloco que faltava: antes nao havia nenhuma forma de dizer "este numero e'
+// de todo mundo". Um numero recem-conectado simplesmente nao funcionava pra
+// ninguem, e a tela so' oferecia transferir o master.
+function renderNumerosRestritos() {
+  var box = document.getElementById('perm-numeros-list');
+  if (!box) return;
+  if (!_permSessions.length) {
+    box.innerHTML = '<div style="font-size:12px;color:#475569;padding:6px 0;">Nenhum número conectado ainda.</div>';
+    return;
+  }
+  var canEdit = permCanEdit();
+  var html = '';
+  for (var i = 0; i < _permSessions.length; i++) {
+    var sess = _permSessions[i];
+    var jid = sess.jid;
+    var restrito = !!_permRestritos[_permNorm(jid)];
+    var rotulo = sess.phone ? ('+' + sess.phone) : jid;
+    html += '<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05);flex-wrap:wrap;">' +
+      '<span style="font-size:13px;color:#e2e8f0;font-weight:600;min-width:150px;">' + _permEsc(rotulo) + '</span>' +
+      (restrito
+        ? '<span class="badge" style="background:rgba(251,191,36,.15);color:#fbbf24;padding:2px 9px;border-radius:999px;font-size:11px;">restrito à lista</span>'
+        : '<span class="badge" style="background:rgba(37,211,102,.14);color:#25D366;padding:2px 9px;border-radius:999px;font-size:11px;">liberado para todos</span>') +
+      '<button class="btn btn-ghost btn-sm" style="font-size:11.5px;margin-left:auto;"' +
+        (canEdit ? '' : ' disabled title="' + _permEsc(permPorQue()) + '"') +
+        ' onclick="permRestringir(\'' + _permEsc(jid) + '\',' + (restrito ? 'false' : 'true') + ')">' +
+        (restrito ? 'Liberar para todos' : 'Restringir a uma lista') +
+      '</button></div>';
+  }
+  box.innerHTML = html;
+}
+
+function permRestringir(jid, restrito) {
+  if (!permCanEdit()) { toast('Você não pode alterar permissões: ' + permPorQue() + '.', 'error'); return; }
+  if (restrito && !confirm('Restringir este número?\n\nA partir de agora só quem estiver na lista poderá enviar por ele. ' +
+      'Quem já estava liberado continua liberado.')) return;
+  fetch(apiUrl('/ui/permissions/restrict'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session_jid: jid, restrito: !!restrito}),
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.error) { toast(d.error, 'error'); return; }
+    toast(d.mensagem || 'Pronto', 'success');
+    carregarPermissoes(false);
+  }).catch(function(e){ toast('Erro de rede: ' + e.message, 'error'); });
+}
+
+// renderGestores mostra quem pode mexer — e, para quem pode, como nomear outro.
+//
+// Admin do Bitrix NAO aparece na lista de proposito: ele gerencia por direito e
+// e' conferido na hora no portal. Copiar esses nomes pra ca' faria a lista
+// envelhecer errado — quem perdesse o cargo de admin continuaria aparecendo
+// aqui como se ainda pudesse.
+function renderGestores() {
+  var box = document.getElementById('perm-gestores-list');
+  if (!box) return;
+  var canEdit = permCanEdit();
+  var html = '<div style="font-size:12px;color:#64748b;margin-bottom:8px;">' +
+    (canEdit ? '✅ ' + _permEsc(permPorQue()) : '🔒 ' + _permEsc(permPorQue())) + '.</div>';
+
+  if (!_permGestores.length) {
+    html += '<div style="font-size:12px;color:#475569;padding:4px 0;">Nenhum gestor nomeado — só os administradores do Bitrix24 gerenciam.</div>';
+  } else {
+    for (var i = 0; i < _permGestores.length; i++) {
+      var g = _permGestores[i];
+      var nome = g.user_name || ('User #' + g.user_id);
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);">' +
+        '<span style="font-size:13px;color:#e2e8f0;">' + _permEsc(nome) + '</span>' +
+        '<span style="font-size:11px;color:#64748b;">#' + _permEsc(g.user_id) + (g.origem === 'master' ? ' · master' : '') + '</span>' +
+        (canEdit && g.origem !== 'master'
+          ? '<button class="btn btn-ghost btn-sm" style="font-size:11px;margin-left:auto;" onclick="permGestor(\'' + _permEsc(g.user_id) + '\',\'\',false)">Remover</button>'
+          : '') +
+        '</div>';
+    }
+  }
+  box.innerHTML = html;
+}
+
+function permGestor(userID, userName, virar) {
+  if (!permCanEdit()) { toast('Você não pode alterar permissões: ' + permPorQue() + '.', 'error'); return; }
+  if (!virar && userID === (_permEu||{}).user_id &&
+      !confirm('Remover VOCÊ da lista de gestores?\n\nSe você não for administrador do Bitrix24, ' +
+               'não poderá mais alterar permissões neste portal.')) return;
+  fetch(apiUrl('/ui/permissions/manager'), {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: userID, user_name: userName || '', gestor: !!virar}),
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.error) { toast(d.error, 'error'); return; }
+    if (d.aviso) alert(d.aviso);
+    toast(virar ? 'Gestor nomeado' : 'Gestor removido', 'success');
+    carregarPermissoes(false);
+  }).catch(function(e){ toast('Erro de rede: ' + e.message, 'error'); });
+}
+
 function renderPermUsers() {
   var box = document.getElementById('perm-user-list');
   if (!_permUsers.length) {
@@ -2867,24 +2996,55 @@ function renderPermUsers() {
     var chips = '';
     for (var j = 0; j < _permSessions.length; j++) {
       var s = _permSessions[j];
+      // Numero LIBERADO: o chip nao decide nada, porque todo mundo ja' pode
+      // usar. Deixar o chip clicavel seria a pior combinacao — a pessoa marca,
+      // o servidor grava a linha, e o comportamento nao muda. Ela conclui que
+      // a tela esta' quebrada. Melhor dizer que o numero e' de todos.
+      var aberto = !_permRestritos[_permNorm(s.jid)];
       var on = hasWildcard || !!allowedSet[_permNorm(s.jid)];
-      var bg = on ? 'rgba(37,211,102,.16)' : 'rgba(255,255,255,.04)';
-      var fg = on ? '#25D366' : '#94a3b8';
-      var border = on ? '1px solid rgba(37,211,102,.4)' : '1px solid rgba(255,255,255,.08)';
-      var ico = on ? '✓' : '+';
       var tipo = s.type === 'cloud_api' ? ' Cloud' : ' QR';
       var statusMark = s.status === 'active' ? '' : ' ·';
       var lbl = '+' + (s.phone || s.jid) + tipo + statusMark;
-      var clickAttr = (canEdit && !isMasterRow)
-        ? 'onclick="permToggle(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\', \'' + _permEsc(s.jid) + '\', ' + (on?'true':'false') + ')"'
-        : '';
-      var cursor = (canEdit && !isMasterRow) ? 'pointer' : 'not-allowed';
-      var opacity = (canEdit && !isMasterRow) ? '1' : '.55';
+      var podeClicar = canEdit && !isMasterRow && !aberto;
+      var bg, fg, border, ico, titulo;
+      if (aberto) {
+        bg = 'rgba(37,211,102,.10)'; fg = '#25D366';
+        border = '1px dashed rgba(37,211,102,.35)'; ico = '✓';
+        titulo = 'Numero liberado para todos. Para controlar quem usa, restrinja-o em Controle por numero.';
+      } else if (on) {
+        bg = 'rgba(37,211,102,.16)'; fg = '#25D366';
+        border = '1px solid rgba(37,211,102,.4)'; ico = '✓';
+        titulo = 'Liberado para esta pessoa';
+      } else {
+        bg = 'rgba(255,255,255,.04)'; fg = '#94a3b8';
+        border = '1px solid rgba(255,255,255,.08)'; ico = '+';
+        titulo = 'Sem acesso a este numero';
+      }
+      var clickAttr = podeClicar
+        ? 'onclick="permToggle(\'' + _permEsc(u.id) + '\', \'' + _permEsc(u.name) + '\', \'' + _permEsc(s.jid) + '\', ' + (on?'true':'false') + ')" title="' + _permEsc(titulo) + '"'
+        : 'title="' + _permEsc(titulo) + '"';
+      var cursor = podeClicar ? 'pointer' : 'default';
+      var opacity = podeClicar ? '1' : (aberto ? '.8' : '.55');
       chips += '<button class="perm-chip" data-user="' + _permEsc(u.id) + '" data-jid="' + _permEsc(s.jid) + '" data-on="' + (on?'1':'0') + '" '
             +  clickAttr + ' '
             +  'style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:14px;background:' + bg + ';color:' + fg + ';border:' + border + ';font-size:11.5px;font-weight:600;cursor:' + cursor + ';transition:all .15s;margin:3px;opacity:' + opacity + ';">'
             +    '<span style="font-weight:700;">' + ico + '</span> ' + _permEsc(lbl)
             +  '</button>';
+    }
+
+    // Nomear gestor direto na linha da pessoa. Antes a unica forma de dar
+    // poder a alguem era TRANSFERIR o master — ou seja, perde-lo.
+    var jaGestor = false;
+    for (var g = 0; g < _permGestores.length; g++) {
+      if (_permGestores[g].user_id === u.id) { jaGestor = true; break; }
+    }
+    var btnGestor = '';
+    if (canEdit && !isMasterRow) {
+      btnGestor = '<button class="btn btn-ghost btn-sm" style="font-size:10.5px;flex-shrink:0;" onclick="permGestor(\'' +
+        _permEsc(u.id) + '\',\'' + _permEsc(u.name||'') + '\',' + (jaGestor ? 'false' : 'true') + ')">' +
+        (jaGestor ? 'Remover gestor' : 'Tornar gestor') + '</button>';
+    } else if (jaGestor) {
+      btnGestor = '<span style="font-size:10px;color:#fbbf24;flex-shrink:0;">gestor</span>';
     }
 
     var wildcardBadge = '';
@@ -2902,6 +3062,7 @@ function renderPermUsers() {
          +        (u.email ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.email) + (u.position ? ' · ' + _permEsc(u.position) : '') + '</div>' : (u.position ? '<div style="font-size:11px;color:#64748b;">' + _permEsc(u.position) + '</div>' : ''))
          +        wildcardBadge
          +      '</div>'
+         +      btnGestor
          +    '</div>'
          +    '<div style="padding-left:40px;">' + chips + '</div>'
          +  '</div>';
@@ -2936,13 +3097,29 @@ function _permIrPara(p) {
   if (box && box.scrollIntoView) box.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
+// Quem pode editar e' decidido pelo SERVIDOR e so' lido aqui.
+//
+// Antes isto comparava com o que a pessoa digitasse no campo "Atuar como
+// master" — conferencia que valia nada (o servidor ja' ignora o corpo) e que
+// ainda ensinava o caminho errado: o campo existia, entao parecia que digitar
+// o id certo era a solucao.
 function permCanEdit() {
-  return _permMaster.configured && _permCaller && _permCaller === _permMaster.master_user_id;
+  return !!(_permEu && _permEu.sou_gestor);
+}
+
+// porQuePossoEditar: a tela precisa explicar de onde vem o poder, senao
+// "perdi o acesso" vira um chamado sem resposta.
+function permPorQue() {
+  var o = (_permEu||{}).origem;
+  if (o === 'admin_bitrix') return 'você gerencia por ser administrador do Bitrix24';
+  if (o === 'gestor')       return 'você foi nomeado gestor neste portal';
+  if (o === 'master')       return 'você é o usuário master deste portal';
+  return 'somente administradores do Bitrix24 e gestores nomeados podem alterar';
 }
 
 function permToggle(userID, userName, sessionJID, isOn) {
   if (!permCanEdit()) {
-    toast('Preencha "Atuar como master" com o user_id do master atual pra editar.', 'error');
+    toast('Você não pode alterar permissões: ' + permPorQue() + '.', 'error');
     return;
   }
   var key = userID + '|' + sessionJID;

@@ -153,6 +153,10 @@ func New(
 	// mexem na MESMA tabela — assimetria de middleware entre operacoes irmas e'
 	// o tipo de coisa que passa despercebida ate' virar buraco.
 	ui.Post("/permissions/revoke", h.escoparAoTenant, h.uiPermissionsRevoke)
+	// Restringir/liberar um numero inteiro, e nomear quem gerencia. As duas
+	// mexem em quem pode atender — mesmo escopo de tenant das irmas acima.
+	ui.Post("/permissions/restrict", h.escoparAoTenant, h.uiPermissionsRestrict)
+	ui.Post("/permissions/manager", h.escoparAoTenant, h.uiPermissionsManager)
 	// ─── Templates de mensagem — feature contratada ─────────────────────
 	// /list e /debug seguem abertos: a UI so' fica vazia pra quem nao tem
 	// Templates no contrato. O que escreve exige a feature.

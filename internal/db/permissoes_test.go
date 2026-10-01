@@ -1,64 +1,59 @@
 package db
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// A normalizacao do session_jid decide quem consegue ENVIAR mensagem. Errar
-// pra um lado bloqueia operador liberado (o bug relatado); errar pro outro
-// libera quem nao deveria — inclusive entre contas Cloud diferentes.
-func TestNormalizarSessionJID(t *testing.T) {
-	casos := []struct{ entrada, querido, porque string }{
-		{"558196807479:5@s.whatsapp.net", "558196807479", "tira device suffix e dominio"},
-		{"558196807479:1@s.whatsapp.net", "558196807479", "suffix antigo da no mesmo numero"},
-		{"558196807479@s.whatsapp.net", "558196807479", "sem suffix tambem normaliza"},
-		{"558196807479", "558196807479", "ja normalizado nao muda"},
-		{"", "", "wildcard do master preservado"},
-		{"   ", "", "espaco conta como wildcard"},
-		{"cloud:123456@s.whatsapp.net", "cloud:123456@s.whatsapp.net", "Cloud fica intacta"},
-		{"cloud:999@x", "cloud:999@x", "Cloud com outro id fica intacta"},
-	}
-	for _, c := range casos {
-		if got := normalizarSessionJID(c.entrada); got != c.querido {
-			t.Errorf("normalizarSessionJID(%q) = %q, queria %q (%s)",
-				c.entrada, got, c.querido, c.porque)
-		}
-	}
-}
+// A permissao por numero negava por padrao, e o resultado era o contrario do
+// pretendido: conectar um numero novo deixava o time inteiro sem conseguir
+// responder pela aba do CRM. A mensagem mandava "pedir para um admin liberar",
+// e o unico usuario que podia liberar — o master — tinha como unica acao
+// disponivel TRANSFERIR o master pra outra pessoa.
+//
+// Estes testes leem o SQL. Nao substituem o teste contra Postgres, mas pegam a
+// classe de erro que mais assusta aqui: inverter a condicao e abrir (ou fechar)
+// tudo de uma vez, para todos os clientes, sem ninguem notar.
 
-// Duas contas Cloud DIFERENTES nao podem colapsar no mesmo identificador —
-// seria dar a permissao de uma conta oficial para outra.
-func TestCloudNaoColapsa(t *testing.T) {
-	a := normalizarSessionJID("cloud:111@s.whatsapp.net")
-	b := normalizarSessionJID("cloud:222@s.whatsapp.net")
-	if a == b {
-		t.Fatalf("duas contas Cloud colapsaram em %q", a)
-	}
-}
+func TestRegraDePermissaoLiberaQuandoNumeroNaoEstaRestrito(t *testing.T) {
+	q := strings.Join(strings.Fields(sqlPermissaoDeEnvio), " ")
 
-// Dois device suffixes do MESMO numero precisam colapsar — e' exatamente o
-// que faz a permissao sobreviver ao re-pareamento.
-func TestMesmoNumeroColapsa(t *testing.T) {
-	a := normalizarSessionJID("558196807479:1@s.whatsapp.net")
-	b := normalizarSessionJID("558196807479:5@s.whatsapp.net")
-	if a != b {
-		t.Fatalf("mesmo numero nao colapsou: %q vs %q", a, b)
+	// "NOT EXISTS ... crm_numero_restrito" e' o padrao aberto. Se virar
+	// "EXISTS", todo numero sem restricao passa a bloquear — o bug antigo de
+	// volta, e silencioso.
+	if !strings.Contains(q, "NOT EXISTS ( SELECT 1 FROM crm_numero_restrito") {
+		t.Error("a regra deixou de liberar numero nao-restrito — padrao voltou a ser negar")
+	}
+	// O OR e' o que torna a restricao uma EXCECAO. Com AND, exigiria as duas
+	// coisas e ninguem enviaria por numero aberto.
+	if !strings.Contains(q, ") OR EXISTS (") {
+		t.Error("as duas condicoes nao estao em OR — restricao deixaria de ser excecao")
+	}
+	// Wildcard do master: sem isto, quem tinha acesso a todos os numeros
+	// perderia o acesso na virada.
+	if !strings.Contains(q, "session_jid = $3 OR session_jid = ''") {
+		t.Error("o wildcard do master sumiu da regra")
 	}
 }
 
-// A permissao e' GRAVADA por numero base (sobrevive ao re-pareamento) mas a
-// interface precisa do JID corrente pra casar com o seletor de numero.
-// Quando os dois formatos se misturavam, o master conseguia enviar e o
-// operador comum ficava sem numero disponivel.
-func TestPermissaoGravadaCasaComSessaoViva(t *testing.T) {
-	gravado := "558196807479"               // como fica no banco
-	vivo := "558196807479:6@s.whatsapp.net" // JID corrente da sessao
-
-	if normalizarSessionJID(gravado) != normalizarSessionJID(vivo) {
-		t.Fatalf("o gravado (%q) precisa casar com a sessao viva (%q)", gravado, vivo)
+// Numero restrito so' deixa passar quem tem linha. Se a subconsulta de
+// permissao parar de filtrar por user_id, QUALQUER pessoa do portal passaria
+// num numero restrito — o controle existiria na tela e nao no servidor.
+func TestRegraDePermissaoFiltraPorUsuarioNoNumeroRestrito(t *testing.T) {
+	q := strings.Join(strings.Fields(sqlPermissaoDeEnvio), " ")
+	if !strings.Contains(q, "FROM crm_user_permissions WHERE domain = $1 AND user_id = $2") {
+		t.Error("a checagem do numero restrito nao filtra por dominio e usuario")
 	}
+}
 
-	// E nao pode casar com OUTRO numero.
-	outro := "5511999998888:2@s.whatsapp.net"
-	if normalizarSessionJID(gravado) == normalizarSessionJID(outro) {
-		t.Error("numeros diferentes nao podem casar")
+// Toda consulta aqui precisa escopar por dominio. Uma que esqueca o filtro
+// vazaria permissao entre clientes — a falha mais grave que este sistema pode
+// ter, e a mais facil de introduzir editando SQL depressa.
+func TestConsultasDePermissaoEscopamPorDominio(t *testing.T) {
+	if !strings.Contains(sqlPermissaoDeEnvio, "domain = $1") {
+		t.Fatal("IsSessionAllowed sem filtro de dominio")
+	}
+	if strings.Count(sqlPermissaoDeEnvio, "domain = $1") != 2 {
+		t.Error("as duas subconsultas precisam filtrar por dominio, nao so' uma")
 	}
 }

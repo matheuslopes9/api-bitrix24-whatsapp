@@ -31,22 +31,22 @@ type WhatsAppSession struct {
 	SessionFile string        `db:"session_file"`
 	Type        SessionType   `db:"type"`
 	// Credenciais Cloud API (vazias para sessões QR)
-	CloudPhoneNumberID string `db:"cloud_phone_number_id"`
-	CloudWABAID        string `db:"cloud_waba_id"`
-	CloudAccessToken   string `db:"cloud_access_token"`
-	CloudVerifyToken   string `db:"cloud_verify_token"`
-	CloudAppSecret     string `db:"cloud_app_secret"`
-	CloudDisplayPhone  string `db:"cloud_display_phone"`
+	CloudPhoneNumberID string     `db:"cloud_phone_number_id"`
+	CloudWABAID        string     `db:"cloud_waba_id"`
+	CloudAccessToken   string     `db:"cloud_access_token"`
+	CloudVerifyToken   string     `db:"cloud_verify_token"`
+	CloudAppSecret     string     `db:"cloud_app_secret"`
+	CloudDisplayPhone  string     `db:"cloud_display_phone"`
 	CreatedAt          time.Time  `db:"created_at"`
 	LastSeen           *time.Time `db:"last_seen"`
 }
 
 type ContactMapping struct {
-	ID            uuid.UUID  `db:"id"`
-	WAJID         string     `db:"wa_jid"`
-	WAPhone       string     `db:"wa_phone"`
-	WAName        string     `db:"wa_name"`
-	BitrixEntity  string     `db:"bitrix_entity"`
+	ID           uuid.UUID `db:"id"`
+	WAJID        string    `db:"wa_jid"`
+	WAPhone      string    `db:"wa_phone"`
+	WAName       string    `db:"wa_name"`
+	BitrixEntity string    `db:"bitrix_entity"`
 	// bitrix_id e' coluna TEXT no Postgres. Era declarado int64 aqui, e o
 	// pgx v5.5 convertia calado; o v5.11 recusa:
 	//   failed to encode args[5]: unable to encode 0 into text format
@@ -54,11 +54,11 @@ type ContactMapping struct {
 	// Como UpsertContact roda dentro do ensureContact, a falha derrubava o
 	// ProcessInbound em TODA mensagem recebida — nada chegava no Contact
 	// Center. O tipo agora acompanha a coluna.
-	BitrixID      string     `db:"bitrix_id"`
-	BitrixChatID  string     `db:"bitrix_chat_id"`
-	SessionID     *uuid.UUID `db:"session_id"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	BitrixID     string     `db:"bitrix_id"`
+	BitrixChatID string     `db:"bitrix_chat_id"`
+	SessionID    *uuid.UUID `db:"session_id"`
+	CreatedAt    time.Time  `db:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at"`
 }
 
 type MessageDirection string
@@ -107,7 +107,7 @@ type Message struct {
 type BitrixToken struct {
 	ID           uuid.UUID `db:"id"`
 	Domain       string    `db:"domain"`
-	ClientID     string    `db:"client_id"`  // separa tokens do Local App e Partner App
+	ClientID     string    `db:"client_id"` // separa tokens do Local App e Partner App
 	AccessToken  string    `db:"access_token"`
 	RefreshToken string    `db:"refresh_token"`
 	ExpiresAt    time.Time `db:"expires_at"`
@@ -144,11 +144,11 @@ type BitrixAccount struct {
 // Independente de BitrixAccount — não requer configuração manual pelo admin.
 type BitrixPortal struct {
 	ID           uuid.UUID `db:"id"`
-	Domain       string    `db:"domain"`       // ex: "empresa.bitrix24.com.br"
+	Domain       string    `db:"domain"` // ex: "empresa.bitrix24.com.br"
 	AccessToken  string    `db:"access_token"`
 	RefreshToken string    `db:"refresh_token"`
 	ExpiresAt    time.Time `db:"expires_at"`
-	MemberID     string    `db:"member_id"`    // identificador único do portal
+	MemberID     string    `db:"member_id"` // identificador único do portal
 	ConnectorID  string    `db:"connector_id"`
 	OpenLineID   int       `db:"open_line_id"` // 0 = não configurado
 	InstalledAt  time.Time `db:"installed_at"`
@@ -163,4 +163,3 @@ type BitrixPortal struct {
 	// /bitrix/bp/send com constant-time compare.
 	ApplicationToken string `db:"application_token"`
 }
-

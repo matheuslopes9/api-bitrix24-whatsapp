@@ -2042,25 +2042,6 @@ func (r *Repository) ListUserAllowedSessions(ctx context.Context, domain, userID
 	return out, nil
 }
 
-// IsSessionAllowed: o user pode enviar com esta sessao?
-// Match exato + match wildcard (session_jid=”).
-func (r *Repository) IsSessionAllowed(ctx context.Context, domain, userID, sessionJID string) (bool, error) {
-	// O caller manda o JID corrente da sessao (com device suffix). O banco
-	// guarda o numero base. Normaliza os dois lados pra comparar.
-	sessionJID = normalizarSessionJID(sessionJID)
-	var n int
-	err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM crm_user_permissions
-		 WHERE domain = $1
-		   AND user_id = $2
-		   AND (session_jid = $3 OR session_jid = '')`,
-		domain, userID, sessionJID).Scan(&n)
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
 // ListPhonesByDomain retorna os telefones QR (nao-Cloud) associados a um dominio
 // Bitrix. Usado para limpeza de session files por tenant.
 func (r *Repository) ListPhonesByDomain(ctx context.Context, domain string) ([]string, error) {

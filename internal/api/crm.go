@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -148,7 +149,7 @@ func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
 		entry, ok := allUsersCache[key]
 		allUsersCacheMu.RUnlock()
 		if ok && time.Since(entry.cachedAt) < allUsersCacheTTL {
-			return c.JSON(buildAllUsersResponse(ctx, h, key, entry.users, true))
+			return c.JSON(h.enriquecerPermissoes(ctx, c, domain, buildAllUsersResponse(ctx, h, key, entry.users, true)))
 		}
 	}
 
@@ -168,7 +169,7 @@ func (h *handlers) uiPermissionsAllUsers(c *fiber.Ctx) error {
 	allUsersCache[key] = allUsersCacheEntry{users: users, cachedAt: time.Now()}
 	allUsersCacheMu.Unlock()
 	h.log.Info("ui: ListAllUsers ok", zap.String("domain", domain), zap.Int("count", len(users)))
-	return c.JSON(buildAllUsersResponse(ctx, h, key, users, false))
+	return c.JSON(h.enriquecerPermissoes(ctx, c, domain, buildAllUsersResponse(ctx, h, key, users, false)))
 }
 
 // buildAllUsersResponse retorna lista de users com as session_jids ja
@@ -219,6 +220,38 @@ func buildAllUsersResponse(ctx context.Context, h *handlers, domainKey string, u
 		"granted_users": len(byUser),
 		"from_cache":    fromCache,
 	}
+}
+
+// enriquecerPermissoes anexa o que a tela nova precisa: quais numeros estao
+// restritos, quem gerencia, e se QUEM ESTA' OLHANDO pode mexer.
+//
+// O ultimo item e' o que faltava: a tela antiga mostrava os botoes para todo
+// mundo e so' descobria o impedimento no erro da chamada. Quem nao podia agir
+// clicava, lia "apenas o usuario master atual pode transferir o controle" e
+// ficava sem saber o que fazer a respeito.
+func (h *handlers) enriquecerPermissoes(ctx context.Context, c *fiber.Ctx, domain string, base fiber.Map) fiber.Map {
+	chave := normalizeDomainKey(domain)
+
+	restritos, _ := h.repo.NumerosRestritos(ctx, chave)
+	lista := make([]string, 0, len(restritos))
+	for jid := range restritos {
+		lista = append(lista, jid)
+	}
+	sort.Strings(lista)
+	base["numeros_restritos"] = lista
+	base["gestores"] = h.gestoresDoPortal(ctx, domain)
+
+	_, uid, _, temIdentidade := verifyUserCookie(h.cfg.App.Secret, c.Cookies(userCookieName))
+	souGestor, origem := false, ""
+	if temIdentidade && uid != "" {
+		souGestor, origem = h.ehGestor(ctx, domain, uid)
+	}
+	base["eu"] = fiber.Map{
+		"user_id":    uid,
+		"sou_gestor": souGestor,
+		"origem":     origem, // admin_bitrix | gestor | master | ""
+	}
+	return base
 }
 
 // GET /ui/permissions/user-info?user_id=N — busca info de 1 user no Bitrix.
@@ -303,16 +336,25 @@ func (h *handlers) uiPermissionsMutate(c *fiber.Ctx, grant bool) error {
 	req.CallerUserID = uid
 	key := strings.ToLower(domain)
 
-	// Guard: so o master atual do tenant pode mexer em permissoes.
-	portal, err := h.repo.GetBitrixPortalByDomain(ctx, normalizePortalDomain(domain))
-	if err != nil || portal == nil {
-		return c.Status(404).JSON(fiber.Map{"error": "portal nao encontrado"})
+	// Guard: gestor do portal. Era "so' o master", e com um unico botao de
+	// saida — transferir o master inteiro. Quem precisava liberar um colega
+	// tinha que abrir mao do controle; quem nao era master lia "apenas o
+	// usuario master atual pode transferir o controle" e parava.
+	//
+	// Agora administrador do Bitrix gerencia por direito, e quem nao e' admin
+	// pode ser nomeado gestor. Ver permissoes_gestao.go.
+	if ok, _ := h.ehGestor(ctx, domain, uid); !ok {
+		return c.Status(403).JSON(fiber.Map{
+			"error": "voce nao pode alterar permissoes deste portal. " +
+				"Quem pode: administradores do Bitrix24 e os gestores nomeados aqui.",
+			"codigo": "nao_gestor",
+		})
 	}
-	if portal.LegacyAdminUserID == "" {
-		return c.Status(409).JSON(fiber.Map{"error": "master nao configurado — execute o onboarding primeiro"})
-	}
-	if portal.LegacyAdminUserID != req.CallerUserID {
-		return c.Status(403).JSON(fiber.Map{"error": "apenas o usuario master pode alterar permissoes"})
+
+	// O numero tem que ser deste portal: sem isto um gestor liberaria acesso a
+	// um numero de outro cliente.
+	if ok, r := h.exigirNumeroDoPortal(c, req.SessionJID); !ok {
+		return r
 	}
 
 	if grant {
@@ -1163,7 +1205,9 @@ func (h *handlers) bitrixCRMSend(c *fiber.Ctx) error {
 	}
 	if !ok {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "voce nao tem permissao pra enviar com este numero. Peca para um admin liberar.",
+			"error": "este numero esta' restrito e voce nao esta' na lista dele. " +
+				"Peca a um administrador do Bitrix24 (ou a um gestor do UC Talk) para liberar " +
+				"em UC Talk > Permissoes.",
 		})
 	}
 
@@ -1298,7 +1342,9 @@ func (h *handlers) bitrixCRMUpload(c *fiber.Ctx) error {
 	}
 	if !ok {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "voce nao tem permissao pra enviar arquivos com este numero. Peca para um admin liberar.",
+			"error": "este numero esta' restrito e voce nao esta' na lista dele. " +
+				"Peca a um administrador do Bitrix24 (ou a um gestor do UC Talk) para liberar " +
+				"em UC Talk > Permissoes.",
 		})
 	}
 
