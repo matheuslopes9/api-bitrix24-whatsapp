@@ -55,6 +55,52 @@ func telefoneLegivel(fone string) string {
 	return "+" + n
 }
 
+// RotuloPessoa identifica alguem de um grupo pro atendente: "Rafael (+55 19
+// 99123-4567)", como as outras integracoes de WhatsApp mostram. So' o nome ou
+// so' o telefone quando falta o outro. fone tem que ser telefone de verdade —
+// LID nao entra aqui (ver whatsapp.Manager.IdentificarPessoa).
+func RotuloPessoa(nome, fone string) string {
+	nome = strings.TrimSpace(nome)
+	fone = telefoneLegivel(fone)
+	switch {
+	case nome != "" && fone != "":
+		return nome + " (" + fone + ")"
+	case nome != "":
+		return nome
+	default:
+		return fone
+	}
+}
+
+// TrocarMencoes troca cada "@<numero>" do texto pelo rotulo da pessoa. Em
+// grupo o WhatsApp escreve a mencao com o LID ("@98681319620715"), que nao e'
+// o telefone de ninguem; quem le no WhatsApp ve "@Rafael uctech".
+//
+// rotulos vai do numero que aparece depois do "@" para o rotulo. So' troca
+// quando o numero acaba ali: "@123" nao mexe em "@1234".
+func TrocarMencoes(texto string, rotulos map[string]string) string {
+	if len(rotulos) == 0 || !strings.Contains(texto, "@") {
+		return texto
+	}
+	var b strings.Builder
+	for i := 0; i < len(texto); {
+		if texto[i] == '@' {
+			j := i + 1
+			for j < len(texto) && texto[j] >= '0' && texto[j] <= '9' {
+				j++
+			}
+			if r, ok := rotulos[texto[i+1:j]]; ok && j > i+1 && r != "" {
+				b.WriteString("@" + r)
+				i = j
+				continue
+			}
+		}
+		b.WriteByte(texto[i])
+		i++
+	}
+	return b.String()
+}
+
 // nomeDoContato decide o nome que vai aparecer no Contact Center.
 //
 // BUG: antes era so' job.FromName, que e' o PushName do WhatsApp. Esse campo
@@ -188,17 +234,16 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 			chatName = "Grupo WhatsApp"
 		}
 		chatPhone = "" // grupo nao tem telefone individual
-		sender := job.FromName
-		if sender == "" {
-			sender = job.FromPhone
-		}
+		// "*Rafael (+55 19 99123-4567):*" e a mensagem na linha de baixo —
+		// so' o nome nao basta pro atendente saber quem e' quem no grupo.
+		sender := RotuloPessoa(job.FromName, job.FromPhone)
 		if sender == "" {
 			sender = "Membro"
 		}
 		if job.Text != "" {
-			msgText = "*" + sender + ":* " + job.Text
+			msgText = "*" + sender + ":*\n" + job.Text
 		} else {
-			msgText = "*" + sender + ":* [" + job.MessageType + "]"
+			msgText = "*" + sender + ":*\n[" + job.MessageType + "]"
 		}
 	} else {
 		// TRAVA: sem remetente nao existe conversa. Um job que chega aqui sem

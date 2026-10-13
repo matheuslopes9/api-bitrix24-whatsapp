@@ -925,6 +925,35 @@ func buildMessageHandler(
 			}
 		}
 
+		// Grupo: os dados do grupo saem ANTES de gravar, porque resolvem quem
+		// e' quem — o remetente e as pessoas marcadas vem como LID.
+		isGroup := evt.Info.IsGroup
+		var grupo *types.GroupInfo
+		if isGroup {
+			if gi, err := waManager.GroupInfo(ctx, sessionJID, evt.Info.Chat); err == nil {
+				grupo = gi
+			}
+		}
+
+		// Mencoes: no texto o WhatsApp escreve "@98681319620715" (o LID de
+		// quem foi marcado), e o atendente via esse numero que nao e' de
+		// ninguem. Vira "@Rafael uctech (+55 19 99123-4567)". Antes de gravar,
+		// pra aba do CRM mostrar igual.
+		if mencionados := contextoDaMensagem(waMsg).GetMentionedJID(); len(mencionados) > 0 && text != "" {
+			rotulos := map[string]string{}
+			for _, m := range mencionados {
+				jid, err := types.ParseJID(m)
+				if err != nil {
+					continue
+				}
+				nome, fone := waManager.IdentificarPessoa(ctx, sessionJID, jid, grupo)
+				if r := bitrix.RotuloPessoa(nome, fone); r != "" {
+					rotulos[jid.User] = r
+				}
+			}
+			text = bitrix.TrocarMencoes(text, rotulos)
+		}
+
 		// Salva mensagem no banco com status "received"
 		ts := evt.Info.Timestamp
 		// from_jid = quem enviou (o cliente WhatsApp).
@@ -976,19 +1005,23 @@ func buildMessageHandler(
 		if !evt.Info.SenderAlt.IsEmpty() && evt.Info.Sender.Server == "lid" {
 			jobFromJID = evt.Info.SenderAlt.String()
 			jobFromPhone = evt.Info.SenderAlt.User
+		} else if isGroup && evt.Info.Sender.Server == types.HiddenUserServer {
+			// Remetente de grupo como LID e sem SenderAlt: o "telefone" seria o
+			// LID, e o rotulo "Rafael (+98681319620715)" mostraria um numero
+			// que nao existe. Resolve pelo grupo; sem achar, fica sem numero.
+			// So' o rotulo usa isto — o chat do grupo e' chaveado pelo grupo.
+			_, fone := waManager.IdentificarPessoa(ctx, sessionJID, evt.Info.Sender, grupo)
+			jobFromPhone = fone
 		}
 
 		// Grupos WhatsApp: o chat no Open Channel deve ser unico por GRUPO,
-		// nao por participante. Detecta IsGroup e captura JID + nome do grupo
-		// pro processor.go usar como chave de chat.
-		isGroup := evt.Info.IsGroup
+		// nao por participante. Captura JID + nome do grupo pro processor.go
+		// usar como chave de chat.
 		var groupJID, groupName string
 		if isGroup {
 			groupJID = stripDeviceSuffix(evt.Info.Chat.String())
-			// Tenta resolver nome do grupo via group.metadata (best-effort).
-			// Cacheia no banco pra nao chamar toda vez (TODO futuro).
-			if gi, err := waManager.GroupInfo(ctx, sessionJID, evt.Info.Chat); err == nil && gi != nil {
-				groupName = gi.Name
+			if grupo != nil {
+				groupName = grupo.Name
 			}
 			if groupName == "" {
 				groupName = "Grupo " + groupJID
@@ -1142,6 +1175,22 @@ func textoDeLocalizacao(lat, lon float64, nome, endereco string) string {
 	b.WriteString(fmt.Sprintf("\n%.6f, %.6f", lat, lon))
 	b.WriteString(fmt.Sprintf("\nhttps://maps.google.com/?q=%.6f,%.6f", lat, lon))
 	return b.String()
+}
+
+// contextoDaMensagem devolve o ContextInfo do tipo que veio — e' nele que
+// ficam as pessoas marcadas. Texto e legenda de midia carregam mencao.
+func contextoDaMensagem(m *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case m.GetExtendedTextMessage() != nil:
+		return m.GetExtendedTextMessage().GetContextInfo()
+	case m.GetImageMessage() != nil:
+		return m.GetImageMessage().GetContextInfo()
+	case m.GetVideoMessage() != nil:
+		return m.GetVideoMessage().GetContextInfo()
+	case m.GetDocumentMessage() != nil:
+		return m.GetDocumentMessage().GetContextInfo()
+	}
+	return nil
 }
 
 // tipoNaoTratado nomeia o payload de uma mensagem que nao produziu conteudo.

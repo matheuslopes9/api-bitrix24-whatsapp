@@ -612,6 +612,65 @@ func (m *Manager) GroupInfo(ctx context.Context, sessionJID string, groupJID typ
 	return sess.Client.GetGroupInfo(ctx, groupJID)
 }
 
+// IdentificarPessoa devolve nome e telefone (so' digitos) de quem aparece num
+// grupo — remetente ou mencionado.
+//
+// Em grupo o WhatsApp identifica as pessoas pelo LID ("98681319620715@lid"),
+// um numero que NAO e' o telefone: era ele que aparecia no Bitrix quando
+// alguem marcava outra pessoa ("@98681319620715"). O telefone sai, nesta
+// ordem, dos participantes do grupo (cada um traz LID e PhoneNumber) e do
+// mapa LID->telefone que o proprio WhatsApp sincroniza no store.
+//
+// O nome e' o que o celular conectado mostraria: o salvo na agenda dele, senao
+// o nome que a pessoa escolheu no WhatsApp. Sem telefone, fone volta vazio —
+// nunca o LID, que pareceria um numero de verdade.
+func (m *Manager) IdentificarPessoa(ctx context.Context, sessionJID string, jid types.JID, grupo *types.GroupInfo) (nome, fone string) {
+	jid = jid.ToNonAD()
+	pn := jid
+	if jid.Server == types.HiddenUserServer {
+		pn = types.EmptyJID
+		if grupo != nil {
+			for _, p := range grupo.Participants {
+				if p.LID.User == jid.User && !p.PhoneNumber.IsEmpty() {
+					pn = p.PhoneNumber.ToNonAD()
+					break
+				}
+			}
+		}
+	}
+	sess, ok := m.resolveSession(sessionJID)
+	if !ok || sess.Client == nil || sess.Client.Store == nil {
+		if pn.Server == types.DefaultUserServer {
+			fone = pn.User
+		}
+		return "", fone
+	}
+	st := sess.Client.Store
+	if pn.IsEmpty() && st.LIDs != nil {
+		if achado, err := st.LIDs.GetPNForLID(ctx, jid); err == nil {
+			pn = achado.ToNonAD()
+		}
+	}
+	if pn.Server == types.DefaultUserServer {
+		fone = pn.User
+	}
+	if st.Contacts != nil {
+		alvo := jid
+		if !pn.IsEmpty() {
+			alvo = pn
+		}
+		if c, err := st.Contacts.GetContact(ctx, alvo); err == nil && c.Found {
+			for _, n := range []string{c.FullName, c.FirstName, c.PushName, c.BusinessName} {
+				if n = strings.TrimSpace(n); n != "" {
+					nome = n
+					break
+				}
+			}
+		}
+	}
+	return nome, fone
+}
+
 // SendTyping envia o indicador de "digitando..." para o contato e para automaticamente
 // quando a mensagem for enviada. Deve ser chamado logo antes de SendMessage/SendDocument/SendAudio.
 func (m *Manager) SendTyping(ctx context.Context, sessionJID, toJID string, duration time.Duration) {
