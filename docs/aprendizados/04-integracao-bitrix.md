@@ -69,6 +69,32 @@ caminho de envio abandonou `GetCRMChatLastID`/`SendOperatorMessage` e passou a u
 um caminho único: envia direto no WhatsApp + espelha via `PushInbound`. Ver bug #6
 em [02-bugs-resolvidos.md](02-bugs-resolvidos.md).
 
+### ⚠️ O chat do Bitrix não lê markdown do WhatsApp
+
+`*negrito*`, `_itálico_` e `~riscado~` apareciam crus no Canal Aberto. O
+Bitrix só desenha BBCode, então `ConnectorSendMessage` converte tudo com
+[`formatacao.ParaBitrix`](../../internal/formatacao/bitrix.go). O parser é
+porte do próprio WhatsApp Web e é testado contra ele
+([testdata](../../internal/formatacao/testdata/whatsapp_web.json)).
+
+O que foi **medido** no messenger (13/10/2026), não só lido na documentação:
+
+| Código | No chat |
+|---|---|
+| `[B] [I] [U] [S]` | funcionam e aninham |
+| `[CODE]` | bloco com barra lateral, **sem** monoespaçada, sempre quebra a linha. O `\n` logo depois de `[/CODE]` some |
+| `>>` no início da linha | citação nativa; linhas seguidas viram um bloco só |
+| `[QUOTE]` | **não** existe, aparece cru |
+| markdown (`*a*`, `` `a` ``) | aparece cru |
+
+**Texto do cliente vira BBCode se ninguém impedir.** `[SEND=x]clique[/SEND]`
+vira um botão que manda mensagem, e `[URL=...]texto[/URL]` um link disfarçado
+na tela do operador. O escape que funciona é `[` + U+200B (zero-width space).
+`&#91;` **não** funciona: o Bitrix decodifica e formata do mesmo jeito.
+
+`imconnector.*` recusa chamada com sessão de usuário ("authorization type is
+denied"): para testar por esse caminho, só com o token do app.
+
 ## Placement / LEFT_MENU (o menu do app)
 
 ### ⚠️ LEFT_MENU vem do MANIFESTO, não de placement

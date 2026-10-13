@@ -12,6 +12,14 @@ var chartJS []byte
 //go:embed assets/logo.png
 var logoPNG []byte
 
+// waFormatoJS desenha a formatacao do WhatsApp nas bolhas da aba UC Talk.
+// Vai embutido no HTML da aba (ver init em crm.go), nao servido em /assets:
+// o /assets tem cache de 1 dia e a aba tem no-store — servido a parte, uma
+// correcao no parser levaria um dia pra chegar no operador.
+//
+//go:embed assets/wa_formato.js
+var waFormatoJS string
+
 //go:embed assets/logo_uc.png
 var logoUCPNG []byte
 

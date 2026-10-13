@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/formatacao"
 	"go.uber.org/zap"
 )
 
@@ -742,11 +743,18 @@ func (c *Client) ActivateConnector(ctx context.Context, creds TenantCreds, conne
 }
 
 // ConnectorSendMessage entrega uma mensagem de cliente ao Contact Center.
+//
+// O texto chega no formato do WhatsApp (*negrito*, _italico_...) — do
+// cliente, do espelho "Mensagem enviada externamente" ou do remetente de
+// grupo — e o Bitrix nao entende isso: mostrava os asteriscos crus. Aqui ele
+// vira o BBCode do Bitrix, e todo caminho que entrega ao Contact Center passa
+// por este ponto.
 func (c *Client) ConnectorSendMessage(ctx context.Context, creds TenantCreds, connectorID string, lineID int, msg ConnectorMessage) (string, error) {
 	t, err := c.token(ctx, creds)
 	if err != nil {
 		return "", err
 	}
+	msg.Message.Text = formatacao.ParaBitrix(msg.Message.Text)
 
 	domain := normalizeDomain(creds.Domain)
 	params := map[string]interface{}{

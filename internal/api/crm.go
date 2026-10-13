@@ -2057,6 +2057,10 @@ func normalizeWAPhone(phone string) string {
 
 // portalToCreds já está definido em partner.go
 
+func init() {
+	crmTabHTML = strings.Replace(crmTabHTML, "/*__WA_FORMATO__*/", waFormatoJS, 1)
+}
+
 var crmTabHTML = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -2165,6 +2169,10 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 .bst{font-size:11px;line-height:1}
 .bst.sent{color:#94a3b8}.bst.delivered{color:#94a3b8}.bst.failed{color:#f87171}
 .bmedia{display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:11px;font-style:italic;margin-bottom:2px}
+.wa-code{display:block;font-family:Consolas,'Courier New',monospace;font-size:12px;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:6px 8px;margin:2px 0}
+.wa-icode{font-family:Consolas,'Courier New',monospace;font-size:12px;background:rgba(0,0,0,.25);border-radius:4px;padding:1px 4px}
+.wa-q{display:block;border-left:3px solid #64748b;padding-left:8px;color:#cbd5e1}
+.wa-li{display:inline-block;min-width:14px;margin-right:4px;color:#94a3b8}
 .bimg{display:block;max-width:240px;max-height:240px;border-radius:8px;cursor:zoom-in;margin-bottom:2px}
 .baudio{display:block;width:240px;max-width:100%;height:36px}
 .bvideo{display:block;max-width:260px;max-height:260px;border-radius:8px;background:#000}
@@ -2311,6 +2319,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 </div>
 
 <script src="https://api.bitrix24.com/api/v1/"></script>
+<script>/*__WA_FORMATO__*/</script>
 <script>
 var _domain = '', _entityType = 'contact', _entityId = '', _userID = '';
 var _allowedSessions = null; // Set de session_jids liberados pra este user (null=ainda carregando)
@@ -2837,9 +2846,9 @@ function renderSessionMessages() {
     var content = '';
     if (m.type && m.type !== 'text') {
       content = renderMidia(m);
-      if (m.content) content += '<div style="margin-top:3px">' + esc(m.content) + '</div>';
+      if (m.content) content += '<div style="margin-top:3px">' + fmtMsg(m.content) + '</div>';
     } else {
-      content = esc(m.content || '');
+      content = fmtMsg(m.content || '');
     }
     var authorLabel = (isOut && m.author_name) ? '<div style="font-size:10px;color:#4ade80;margin-bottom:2px;font-weight:600">' + esc(m.author_name) + '</div>' : '';
     html += '<div class="bw ' + (isOut?'out':'in') + '"><div class="bubble ' + (isOut?'out':'in') + '">'
@@ -2959,8 +2968,8 @@ function appendOptimistic(text, filename) {
   var now  = new Date();
   var time = now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
   var content = filename
-    ? '<div class="bmedia">📎 ' + esc(filename) + '</div>' + (text ? '<div>' + esc(text) + '</div>' : '')
-    : esc(text);
+    ? '<div class="bmedia">📎 ' + esc(filename) + '</div>' + (text ? '<div>' + fmtMsg(text) + '</div>' : '')
+    : fmtMsg(text);
   var el = document.createElement('div');
   el.className = 'bw out';
   el.innerHTML = '<div class="bubble out">' + content + '<div class="bmeta"><span class="btime">' + time + '</span><span class="bst sent">✓</span></div></div>';
@@ -2973,6 +2982,10 @@ function onKey(e) { if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sen
 function autoResize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
 function enc(s){ return encodeURIComponent(s); }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+// fmtMsg desenha a formatacao do WhatsApp (*negrito*, _italico_...) como o
+// proprio WhatsApp — o motor vem de assets/wa_formato.js. Se ele faltar, cai
+// no texto escapado de sempre.
+function fmtMsg(s){ return window.waFormato ? waFormato.html(s) : esc(s); }
 function showAlert(t,m){ var el=document.getElementById('inline-alert'); el.className='inline-alert '+t; el.textContent=m; el.style.display='block'; }
 function hideAlert(){ var el=document.getElementById('inline-alert'); el.style.display='none'; }
 
