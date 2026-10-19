@@ -118,6 +118,30 @@ type Queue struct {
 	rdb *redis.Client
 	cfg *config.QueueConfig
 	log *zap.Logger
+
+	// aoDesistirDeSaida e' chamado quando uma mensagem de saida vai pra
+	// dead queue. Ver AoDesistirDeSaida.
+	aoDesistirDeSaida func(job *OutboundJob)
+}
+
+// AoDesistirDeSaida registra quem avisa o operador quando a fila desiste de
+// uma mensagem dele.
+//
+// O PORQUE: o webhook do Bitrix responde 200 na hora e o envio acontece
+// depois, na fila. Quando o envio falhava de vez, o job ia pra dead queue e
+// ninguem ficava sabendo: no Bitrix a mensagem do operador continuava com
+// cara de enviada. So' aparecia no contador do painel.
+func (q *Queue) AoDesistirDeSaida(fn func(job *OutboundJob)) {
+	q.aoDesistirDeSaida = fn
+}
+
+// mandarSaidaPraDead e' o unico caminho de um job de saida pra dead queue.
+func (q *Queue) mandarSaidaPraDead(ctx context.Context, job *OutboundJob) error {
+	err := q.push(ctx, keyDead, job)
+	if q.aoDesistirDeSaida != nil {
+		q.aoDesistirDeSaida(job)
+	}
+	return err
 }
 
 func New(rdb *redis.Client, cfg *config.QueueConfig, log *zap.Logger) *Queue {
@@ -270,7 +294,7 @@ func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob, motivo erro
 			zap.String("id", job.ID), zap.String("para", job.ToJID),
 			zap.String("motivo", job.LastError))
 		job.RetryCount = q.cfg.MaxRetry + 1 // marca como esgotado, sem tentar
-		return q.push(ctx, keyDead, job)
+		return q.mandarSaidaPraDead(ctx, job)
 	}
 	if EhLimiteDeTaxa(motivo) {
 		job.LimiteHits++
@@ -287,7 +311,7 @@ func (q *Queue) RetryOutbound(ctx context.Context, job *OutboundJob, motivo erro
 	if job.RetryCount > q.cfg.MaxRetry {
 		q.log.Warn("outbound job moved to dead queue",
 			zap.String("id", job.ID), zap.String("motivo", job.LastError))
-		return q.push(ctx, keyDead, job)
+		return q.mandarSaidaPraDead(ctx, job)
 	}
 	delay := q.backoff(job.RetryCount)
 	time.Sleep(delay)

@@ -513,6 +513,23 @@ func (r *Repository) UpdateMessageStatus(ctx context.Context, waMessageID string
 	return err
 }
 
+// AvancarStatusSaida aplica o recibo do WhatsApp a uma mensagem enviada:
+// sent -> delivered -> read, e so' pra frente. Os recibos chegam fora de ordem
+// (o "lido" de um aparelho antes do "entregue" de outro, ou repetidos ao
+// reconectar), e sem a trava um "entregue" atrasado desfazia o "lido".
+func (r *Repository) AvancarStatusSaida(ctx context.Context, waMessageID string, status MessageStatus) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE messages
+		   SET status = $1,
+		       delivered_at = COALESCE(delivered_at, NOW())
+		 WHERE wa_message_id = $2
+		   AND direction = 'outbound'
+		   AND (CASE status WHEN 'read' THEN 3 WHEN 'delivered' THEN 2 ELSE 1 END)
+		     < (CASE $1::text WHEN 'read' THEN 3 WHEN 'delivered' THEN 2 ELSE 1 END)`,
+		status, waMessageID)
+	return err
+}
+
 func (r *Repository) IncrementRetry(ctx context.Context, waMessageID string) error {
 	_, err := r.pool.Exec(ctx,
 		`UPDATE messages SET retry_count = retry_count + 1 WHERE wa_message_id = $1`, waMessageID)

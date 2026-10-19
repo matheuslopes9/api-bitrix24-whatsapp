@@ -141,6 +141,11 @@ func main() {
 	// Cria manager sem handler primeiro; handler é injetado após (precisa de waManager)
 	waManager := whatsapp.NewManager(&cfg.WhatsApp, repo, log, nil)
 	waManager.SetMessageHandler(buildMessageHandler(ctx, q, repo, waManager, bitrixClient, cfg.App.BaseURL(), metrics, midias, log))
+	// Recibo do celular do cliente -> status da mensagem e "entregue" no
+	// Bitrix. Fila desistiu da mensagem -> aviso na bolha do operador.
+	// Ver confirmacao.go.
+	waManager.SetReceiptHandler(tratarRecibo(bitrixClient, repo, q, log))
+	q.AoDesistirDeSaida(avisarOperadorDesistencia(bitrixClient, repo, log))
 
 	// Carrega todas as sessões QR salvas no banco
 	if err := waManager.LoadAll(ctx); err != nil {
@@ -396,43 +401,40 @@ func main() {
 			MediaMime:   fileMime,
 			MediaURL:    mediaRef,
 			MediaSize:   int64(len(fileData)),
-			Status:      db.MsgDelivered,
+			Status:      db.MsgSent, // "delivered" so' com o recibo do celular
 			SentAt:      &now,
 		}
 		if err := repo.InsertMessage(c, outMsg); err != nil {
 			log.Warn("insert outbound message failed", zap.String("wa_id", waID), zap.Error(err))
 		}
 
-		// Confirma delivery ao Bitrix para parar o spinner na mensagem do operador
+		// O "entregue" do Bitrix tambem marca LIDA: so' vai quando o celular do
+		// cliente devolver o recibo (tratarRecibo). Aqui fica a pendencia — ou a
+		// confirmacao na hora, se o recibo chegou antes. Ver confirmacao.go.
 		if job.BitrixConnector != "" && job.BitrixImMsgID != "" {
-			log.Info("outbound delivery: confirming",
-				zap.String("connector", job.BitrixConnector),
-				zap.String("im_msg_id", job.BitrixImMsgID),
-				zap.String("wa_id", waID))
+			pend := queue.ConfirmacaoPendente{
+				SessionJID: job.SessionJID,
+				Connector:  job.BitrixConnector,
+				Line:       job.BitrixLine,
+				ImChatID:   job.BitrixImChatID,
+				ImMsgID:    job.BitrixImMsgID,
+				ChatExtID:  job.BitrixChatExtID,
+			}
+			log.Info("outbound: aceito pelo servidor do WhatsApp, aguardando recibo do celular",
+				zap.String("im_msg_id", job.BitrixImMsgID), zap.String("wa_id", waID))
 			go semPanico(log, "confirmacao de entrega", func() {
 				bgCtx := context.Background()
-				acct, err := repo.GetBitrixAccountByJID(bgCtx, job.SessionJID)
+				ja, err := q.GuardarConfirmacao(bgCtx, waID, pend)
 				if err != nil {
-					log.Warn("outbound delivery: bitrix account not found", zap.String("session", job.SessionJID), zap.Error(err))
+					// Sem Redis nao da' pra esperar o recibo. Confirma ja': operador
+					// com "entregue" cedo e' melhor que bolha girando pra sempre.
+					log.Warn("outbound: confirmacao pendente nao gravada, confirmando ja'",
+						zap.String("wa_id", waID), zap.Error(err))
+					confirmarEntregaNoBitrix(bgCtx, bitrixClient, repo, log, waID, pend)
 					return
 				}
-				creds := bitrix.TenantCreds{
-					Domain:       acct.Domain,
-					ClientID:     acct.ClientID,
-					ClientSecret: acct.ClientSecret,
-					RedirectURI:  acct.RedirectURI,
-				}
-				if err := bitrixClient.ConnectorSetOutboundDelivery(
-					bgCtx,
-					creds,
-					job.BitrixConnector,
-					job.BitrixLine,
-					job.BitrixImChatID,
-					job.BitrixImMsgID,
-					waID,
-					job.BitrixChatExtID,
-				); err != nil {
-					log.Warn("outbound delivery confirmation failed", zap.Error(err))
+				if ja != nil {
+					confirmarEntregaNoBitrix(bgCtx, bitrixClient, repo, log, waID, *ja)
 				}
 			})
 		} else {

@@ -69,6 +69,22 @@ caminho de envio abandonou `GetCRMChatLastID`/`SendOperatorMessage` e passou a u
 um caminho único: envia direto no WhatsApp + espelha via `PushInbound`. Ver bug #6
 em [02-bugs-resolvidos.md](02-bugs-resolvidos.md).
 
+### ⚠️ "Entregue" no Bitrix também marca LIDA
+
+`imconnector.send.status.delivery` é a única confirmação que o Bitrix tem, e
+a documentação diz que ela marca a mensagem como **lida pelo interlocutor**.
+Mandávamos assim que o servidor do WhatsApp aceitava: o operador via "lida"
+numa mensagem que o celular do cliente nem tinha recebido. Agora ela espera o
+recibo do aparelho (`queue.ConfirmacaoPendente`). Consequência visível: com o
+celular do cliente desligado, ou se ele bloqueou o número, a mensagem fica no
+estado de envio até o recibo chegar — que é a verdade.
+
+`imconnector.send.status.reading` existia na documentação antiga e não está
+na atual.
+
+Quando a fila desiste de uma mensagem (dead queue), a bolha do operador vira o
+aviso de falha (`AoDesistirDeSaida`). Antes a falha era muda.
+
 ### ⚠️ O chat do Bitrix não lê markdown do WhatsApp
 
 `*negrito*`, `_itálico_` e `~riscado~` apareciam crus no Canal Aberto. O

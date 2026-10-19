@@ -2167,7 +2167,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 .bmeta{display:flex;align-items:center;gap:3px;margin-top:2px;padding:0 2px}
 .btime{font-size:10px;color:#64748b}
 .bst{font-size:11px;line-height:1}
-.bst.sent{color:#94a3b8}.bst.delivered{color:#94a3b8}.bst.failed{color:#f87171}
+.bst.sent{color:#94a3b8}.bst.delivered{color:#94a3b8}.bst.read{color:#53bdeb}.bst.failed{color:#f87171}
 .bmedia{display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:11px;font-style:italic;margin-bottom:2px}
 .wa-code{display:block;font-family:Consolas,'Courier New',monospace;font-size:12px;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:6px 8px;margin:2px 0}
 .wa-icode{font-family:Consolas,'Courier New',monospace;font-size:12px;background:rgba(0,0,0,.25);border-radius:4px;padding:1px 4px}
@@ -2842,7 +2842,11 @@ function renderSessionMessages() {
     if (day !== lastDay) { html += '<div class="day-div"><span>' + day + '</span></div>'; lastDay = day; }
     var isOut = m.direction === 'outbound';
     var time  = dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    var st = isOut ? '<span class="bst delivered">✓✓</span>' : '';
+    // ✓ servidor do WhatsApp aceitou; ✓✓ chegou no celular; ✓✓ azul leu.
+    // Historico antigo nao tem "sent": tudo nascia "delivered".
+    var st = !isOut ? '' : m.status === 'sent' ? '<span class="bst sent">✓</span>'
+           : m.status === 'read' ? '<span class="bst read">✓✓</span>'
+           : '<span class="bst delivered">✓✓</span>';
     var content = '';
     if (m.type && m.type !== 'text') {
       content = renderMidia(m);

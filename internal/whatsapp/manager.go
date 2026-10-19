@@ -52,6 +52,13 @@ type Manager struct {
 	// sinalizado. Positivos apenas: numero que nao esta no WhatsApp
 	// continua sendo reconsultado (pode entrar depois).
 	jidCache sync.Map // string -> jidResolvido
+
+	// pausas: numero da sessao -> pausaReconexao (ver conexao.go). Em
+	// memoria de proposito: um restart, ou deploy com whatsmeow novo, tem
+	// que poder tentar de novo.
+	pausas sync.Map
+
+	onRecibo ReceiptHandler
 }
 
 // jidResolvido e' uma entrada do jidCache.
@@ -1573,7 +1580,14 @@ func (m *Manager) connectSession(ctx context.Context, s *db.WhatsAppSession) err
 
 func (m *Manager) buildEventHandler(sess *Session) func(interface{}) {
 	return func(rawEvt interface{}) {
+		if m.tratarFalhaDeConexao(sess, rawEvt) {
+			return
+		}
 		switch evt := rawEvt.(type) {
+		case *events.Receipt:
+			if m.onRecibo != nil {
+				m.onRecibo(sess.JID, evt)
+			}
 		case *events.Message:
 			m.log.Info("message event received",
 				zap.String("jid", sess.JID),

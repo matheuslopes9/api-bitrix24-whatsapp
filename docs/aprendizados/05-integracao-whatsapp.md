@@ -51,6 +51,25 @@ Se uma entrada existe no mapa mas `!IsConnected()` (zumbi), o `Reconnect` deve
 `Disconnect` + remover do mapa antes de reconectar — senão retorna `nil` e a
 sessão nunca volta.
 
+### ⚠️ Três recusas em que reconectar só piora
+
+O whatsmeow **não** reconecta sozinho nestes casos: quem insistia era o
+watchdog, a cada 30s. Agora ele pausa
+([conexao.go](../../internal/whatsapp/conexao.go)):
+
+| Evento | O que é | Pausa |
+|---|---|---|
+| `StreamReplaced` | outro processo conectou com a mesma sessão | 10 min — reconectar toma a sessão de volta e os dois ficam se alternando |
+| `ClientOutdated` (405) | whatsmeow velho para o protocolo | 30 min — **refazer o QR não resolve**; atualize a dependência e faça deploy |
+| `TemporaryBan` | número restrito pelo WhatsApp | o prazo que o próprio evento informa |
+
+### ⚠️ `SendMessage` voltar não é o cliente receber
+
+O retorno só diz que o **servidor** do WhatsApp aceitou. O celular do cliente
+confirma depois, por `events.Receipt` (entregue, lido, ouvido). A saída nasce
+`sent` e avança com o recibo, nunca para trás
+([confirmacao.go](../../cmd/server/confirmacao.go)).
+
 ### Eventos de sessão
 
 `SessionConnectHandler` / `fireSessionConnect` / `ConnectedSessions()` /

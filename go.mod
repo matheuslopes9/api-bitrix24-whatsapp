@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/HugoSmits86/nativewebp v1.3.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/gofiber/fiber/v2 v2.52.15
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -60,6 +61,7 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
 	go.mau.fi/util v0.10.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect

@@ -80,6 +80,13 @@ const (
 	MsgQueued    MessageStatus = "queued"
 	MsgDelivered MessageStatus = "delivered"
 	MsgFailed    MessageStatus = "failed"
+
+	// Saida pelo QR: "sent" quando o servidor do WhatsApp aceitou,
+	// "delivered" quando o celular do cliente recebeu, "read" quando leu.
+	// Antes toda saida nascia "delivered" — o servidor aceitar nao e' o
+	// cliente receber.
+	MsgSent MessageStatus = "sent"
+	MsgRead MessageStatus = "read"
 )
 
 type Message struct {

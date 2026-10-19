@@ -72,6 +72,14 @@ func (w *Watchdog) check(ctx context.Context) {
 			alive++
 			continue
 		}
+		// Sessao tomada por outro processo, whatsmeow desatualizado (405) ou
+		// numero restrito: reconectar agora so' piora. Ver whatsapp/conexao.go.
+		if pausada, motivo, falta := w.waManager.ReconexaoPausada(s.JID); pausada {
+			w.log.Warn("watchdog: reconexao pausada",
+				zap.String("jid", s.JID), zap.String("motivo", motivo),
+				zap.Duration("volta_em", falta.Round(time.Second)))
+			continue
+		}
 
 		// Sessão não está respondendo — tenta reconectar
 		w.log.Warn("session not responding, attempting reconnect", zap.String("jid", s.JID))
