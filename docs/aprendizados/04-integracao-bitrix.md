@@ -82,8 +82,13 @@ estado de envio até o recibo chegar — que é a verdade.
 `imconnector.send.status.reading` existia na documentação antiga e não está
 na atual.
 
-Quando a fila desiste de uma mensagem (dead queue), a bolha do operador vira o
-aviso de falha (`AoDesistirDeSaida`). Antes a falha era muda.
+Quando a fila desiste **de vez** de uma mensagem, a bolha do operador vira o
+aviso de falha (`AoDesistirDeSaida`) e a falha entra no histórico — a aba UC
+Talk mostra ❌ com o motivo. "De vez" importa: falha temporária volta sozinha
+pelo reprocesso automático (15 min, até 3 voltas), e avisar na primeira morte
+apagava a bolha de uma mensagem que ainda ia chegar — quem reenviasse mandava
+em dobro. O aviso sai em falha permanente, depois da última volta, ou quando o
+reprocesso descarta a mensagem porque o número estava desconectado.
 
 ### ⚠️ O chat do Bitrix não lê markdown do WhatsApp
 

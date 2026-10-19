@@ -91,6 +91,16 @@ func (m *Manager) tratarFalhaDeConexao(sess *Session, rawEvt interface{}) bool {
 			zap.String("jid", sess.JID), zap.Int("motivo", int(evt.Reason)),
 			zap.String("mensagem", evt.Message))
 		_ = m.repo.UpdateSessionStatus(context.Background(), sess.JID, db.SessionDisconnected)
+	case *events.KeepAliveTimeout:
+		// Socket aberto que nao responde: a "conexao zumbi" que parece viva
+		// pro watchdog (Ping so' olha o socket). O whatsmeow derruba e
+		// reconecta sozinho depois de 3 min sem resposta; o log existe pra
+		// isso aparecer no diagnostico em vez de virar "mensagem sumiu".
+		m.log.Warn("WhatsApp sem responder ao keepalive (conexao pode estar zumbi)",
+			zap.String("jid", sess.JID), zap.Int("falhas", evt.ErrorCount),
+			zap.Duration("sem_resposta_ha", time.Since(evt.LastSuccess).Round(time.Second)))
+	case *events.KeepAliveRestored:
+		m.log.Info("keepalive voltou a responder", zap.String("jid", sess.JID))
 	default:
 		return false
 	}

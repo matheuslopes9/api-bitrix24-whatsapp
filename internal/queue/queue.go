@@ -136,12 +136,28 @@ func (q *Queue) AoDesistirDeSaida(fn func(job *OutboundJob)) {
 }
 
 // mandarSaidaPraDead e' o unico caminho de um job de saida pra dead queue.
+//
+// So' avisa quando a desistencia e' DEFINITIVA. Falha temporaria volta sozinha
+// pela fila (ReprocessarDeadAuto, a cada 15 min, ate' maxAutoReprocessos
+// voltas): avisar na primeira morte apagava a bolha do operador, e a mensagem
+// chegava no cliente 15 min depois — quem reenviasse mandava em dobro.
 func (q *Queue) mandarSaidaPraDead(ctx context.Context, job *OutboundJob) error {
 	err := q.push(ctx, keyDead, job)
+	if desistenciaDefinitiva(job) {
+		q.avisarDesistencia(job)
+	}
+	return err
+}
+
+// desistenciaDefinitiva: nada mais vai tentar de novo sozinho.
+func desistenciaDefinitiva(job *OutboundJob) bool {
+	return EhFalhaPermanente(errors.New(job.LastError)) || job.AutoReprocessos >= maxAutoReprocessos
+}
+
+func (q *Queue) avisarDesistencia(job *OutboundJob) {
 	if q.aoDesistirDeSaida != nil {
 		q.aoDesistirDeSaida(job)
 	}
-	return err
 }
 
 func New(rdb *redis.Client, cfg *config.QueueConfig, log *zap.Logger) *Queue {
@@ -441,6 +457,16 @@ func (q *Queue) reprocessarDead(ctx context.Context, sessoesValidas map[string]b
 			descartados++
 			q.log.Info("dead queue: descartado (sessao nao existe mais)",
 				zap.String("id", sonda.ID), zap.String("session_jid", sonda.SessionJID))
+			// Mensagem do operador sumindo aqui era a outra falha muda: o
+			// numero estava desconectado na hora do reprocesso e ninguem
+			// ficava sabendo.
+			if sonda.Direcao == DirecaoSaida {
+				var job OutboundJob
+				if json.Unmarshal([]byte(raw), &job) == nil {
+					job.LastError = "o número de WhatsApp estava desconectado (" + job.LastError + ")"
+					q.avisarDesistencia(&job)
+				}
+			}
 			continue
 		}
 

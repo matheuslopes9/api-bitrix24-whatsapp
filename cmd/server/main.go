@@ -361,32 +361,8 @@ func main() {
 			msgType = tipoDaMidia(fileMime)
 			mediaRef = api.SalvarMidia(midias, log, fileName, fileMime, fileData)
 		}
-		toJIDForDB := stripDeviceSuffix(job.ToJID)
-		if strings.HasSuffix(toJIDForDB, "@lid") {
-			if phone, lookupErr := repo.GetPhoneByLID(c, toJIDForDB); lookupErr == nil && phone != "" {
-				toJIDForDB = phone + "@s.whatsapp.net"
-				log.Info("outbound: resolved @lid via lid_phone_map",
-					zap.String("lid", stripDeviceSuffix(job.ToJID)),
-					zap.String("phone", phone),
-				)
-			} else if contact, lookupErr := repo.GetContactByWAJID(c, toJIDForDB); lookupErr == nil && contact.WAPhone != "" {
-				// Fallback: contact_mapping (caso lid_phone_map ainda esteja vazio)
-				toJIDForDB = contact.WAPhone + "@s.whatsapp.net"
-			}
-		}
-		// session_id precisa ser gravado: a tela de saude conta mensagem por
-		// tenant com JOIN em whatsapp_sessions, entao linha de saida sem
-		// session_id some da contagem — "saida_24h" aparecia como 0 mesmo com
-		// envio funcionando, enquanto o inbound (que ja' preenchia) contava
-		// certo. Best-effort: se a sessao nao for encontrada, grava sem, que e'
-		// o que acontecia antes.
-		var outSessionID *uuid.UUID
-		if sess, serr := repo.GetSessionByJIDTolerante(c, job.SessionJID); serr == nil && sess != nil {
-			outSessionID = &sess.ID
-		} else if serr != nil {
-			log.Warn("outbound: sessao nao encontrada para gravar session_id",
-				zap.String("session_jid", job.SessionJID), zap.Error(serr))
-		}
+		toJIDForDB := destinoParaBanco(c, repo, log, job.ToJID)
+		outSessionID := sessaoParaBanco(c, repo, log, job.SessionJID)
 		now := time.Now()
 		outMsg := &db.Message{
 			ID:          uuid.New(),

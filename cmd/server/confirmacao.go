@@ -15,7 +15,10 @@ package main
 
 import (
 	"context"
+	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
@@ -89,8 +92,10 @@ func tratarRecibo(bitrixClient *bitrix.Client, repo *db.Repository, q *queue.Que
 // avisarOperadorDesistencia transforma a bolha do operador no aviso de falha
 // quando a fila desiste da mensagem.
 //
-// Mensagem sem bolha no Bitrix (aba do CRM, robo de automacao) nao tem onde
-// avisar: fica so' o log, como antes.
+// Toda falha tambem vai pro historico, com o motivo: e' por ali que quem
+// mandou pela aba UC Talk fica sabendo — la' a mensagem aparecia na hora e
+// sumia sem explicacao. Mensagem do robo de automacao nao tem tela; fica o
+// historico e o log.
 func avisarOperadorDesistencia(bitrixClient *bitrix.Client, repo *db.Repository, log *zap.Logger) func(job *queue.OutboundJob) {
 	return func(job *queue.OutboundJob) {
 		motivo := job.LastError
@@ -101,10 +106,75 @@ func avisarOperadorDesistencia(bitrixClient *bitrix.Client, repo *db.Repository,
 		log.Warn("fila desistiu da mensagem — avisando o operador",
 			zap.String("job_id", job.ID), zap.String("para", job.ToJID), zap.String("motivo", motivo))
 		ctx := context.Background()
+		registrarFalhaNoHistorico(ctx, repo, log, job, motivo)
 		if whatsapp.IsCloudJID(job.SessionJID) {
 			notifyOperatorError(ctx, bitrixClient, repo, log, job, aviso)
 			return
 		}
 		notifyQROperatorError(ctx, bitrixClient, repo, log, job, aviso)
 	}
+}
+
+// registrarFalhaNoHistorico grava a mensagem que nao saiu, com status
+// "failed" e o motivo, pra aba UC Talk mostrar com ❌.
+func registrarFalhaNoHistorico(ctx context.Context, repo *db.Repository, log *zap.Logger, job *queue.OutboundJob, motivo string) {
+	conteudo := job.Text
+	if conteudo == "" && job.FileName != "" {
+		conteudo = "📎 " + job.FileName
+	}
+	agora := time.Now()
+	waID := "falha-" + job.ID // a mensagem nunca ganhou ID do WhatsApp
+	msg := &db.Message{
+		ID:          uuid.New(),
+		WAMessageID: waID,
+		SessionID:   sessaoParaBanco(ctx, repo, log, job.SessionJID),
+		FromJID:     stripDeviceSuffix(job.SessionJID),
+		ToJID:       destinoParaBanco(ctx, repo, log, job.ToJID),
+		AuthorName:  job.OperatorName,
+		Direction:   db.DirOutbound,
+		MessageType: db.MsgTypeText,
+		Content:     conteudo,
+		Status:      db.MsgFailed,
+		SentAt:      &agora,
+	}
+	if err := repo.InsertMessage(ctx, msg); err != nil {
+		log.Warn("falha nao gravada no historico", zap.String("job_id", job.ID), zap.Error(err))
+		return
+	}
+	// InsertMessage nao grava error_msg; o motivo entra aqui.
+	_ = repo.UpdateMessageStatus(ctx, waID, db.MsgFailed, motivo)
+}
+
+// destinoParaBanco: o JID do destinatario como o historico guarda — telefone,
+// nao LID, senao a aba do CRM (que busca pelo telefone) nao acha a mensagem.
+func destinoParaBanco(ctx context.Context, repo *db.Repository, log *zap.Logger, toJID string) string {
+	jid := stripDeviceSuffix(toJID)
+	if !strings.HasSuffix(jid, "@lid") {
+		return jid
+	}
+	if phone, err := repo.GetPhoneByLID(ctx, jid); err == nil && phone != "" {
+		log.Info("outbound: resolved @lid via lid_phone_map", zap.String("lid", jid), zap.String("phone", phone))
+		return phone + "@s.whatsapp.net"
+	}
+	// Fallback: contact_mapping (caso lid_phone_map ainda esteja vazio)
+	if contact, err := repo.GetContactByWAJID(ctx, jid); err == nil && contact.WAPhone != "" {
+		return contact.WAPhone + "@s.whatsapp.net"
+	}
+	return jid
+}
+
+// sessaoParaBanco: session_id precisa ser gravado — a tela de saude conta
+// mensagem por tenant com JOIN em whatsapp_sessions, entao linha de saida sem
+// session_id some da contagem ("saida_24h" aparecia 0 com envio
+// funcionando). Best-effort: sem sessao, grava sem.
+func sessaoParaBanco(ctx context.Context, repo *db.Repository, log *zap.Logger, sessionJID string) *uuid.UUID {
+	sess, err := repo.GetSessionByJIDTolerante(ctx, sessionJID)
+	if err == nil && sess != nil {
+		return &sess.ID
+	}
+	if err != nil {
+		log.Warn("outbound: sessao nao encontrada para gravar session_id",
+			zap.String("session_jid", sessionJID), zap.Error(err))
+	}
+	return nil
 }

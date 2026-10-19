@@ -63,9 +63,9 @@ func TestReciboSemPendencia(t *testing.T) {
 	}
 }
 
-// A fila desistindo da mensagem tem que avisar — nas duas portas pra dead
-// queue: falha permanente e tentativas esgotadas. E so' uma vez.
-func TestDesistenciaAvisaOperador(t *testing.T) {
+// A fila desistindo DE VEZ tem que avisar: falha permanente, ou tentativas
+// esgotadas quando o reprocesso automatico ja' deu todas as voltas.
+func TestDesistenciaDefinitivaAvisaOperador(t *testing.T) {
 	q, ctx := filaDeTeste(t), context.Background()
 	var avisados []string
 	q.AoDesistirDeSaida(func(job *OutboundJob) { avisados = append(avisados, job.ID) })
@@ -73,7 +73,7 @@ func TestDesistenciaAvisaOperador(t *testing.T) {
 	perm := &OutboundJob{ID: "permanente"}
 	_ = q.RetryOutbound(ctx, perm, errors.New("numero 5581999887766 nao esta no WhatsApp"))
 
-	esgotado := &OutboundJob{ID: "esgotado", RetryCount: 2}
+	esgotado := &OutboundJob{ID: "esgotado", RetryCount: 2, AutoReprocessos: maxAutoReprocessos}
 	_ = q.RetryOutbound(ctx, esgotado, errors.New("timeout"))
 
 	if len(avisados) != 2 || avisados[0] != "permanente" || avisados[1] != "esgotado" {
@@ -81,5 +81,36 @@ func TestDesistenciaAvisaOperador(t *testing.T) {
 	}
 	if esgotado.LastError != "timeout" {
 		t.Fatalf("o aviso precisa do motivo: %q", esgotado.LastError)
+	}
+}
+
+// Falha temporaria NAO avisa: o reprocesso automatico ainda vai tentar, e a
+// mensagem pode chegar no cliente depois. Avisar aqui fazia o operador
+// reenviar e o cliente receber em dobro.
+func TestFalhaTemporariaNaoAvisaAinda(t *testing.T) {
+	q, ctx := filaDeTeste(t), context.Background()
+	avisos := 0
+	q.AoDesistirDeSaida(func(*OutboundJob) { avisos++ })
+
+	job := &OutboundJob{ID: "temporaria", RetryCount: 2, AutoReprocessos: maxAutoReprocessos - 1}
+	_ = q.RetryOutbound(ctx, job, errors.New("timeout"))
+	if avisos != 0 {
+		t.Fatal("avisou antes do reprocesso automatico desistir")
+	}
+}
+
+// Reprocesso que descarta a mensagem porque o numero esta' desconectado:
+// essa tambem e' definitiva, e era muda.
+func TestDescarteNoReprocessoAvisaOperador(t *testing.T) {
+	q, ctx := filaDeTeste(t), context.Background()
+	var motivo string
+	q.AoDesistirDeSaida(func(job *OutboundJob) { motivo = job.LastError })
+
+	_ = q.push(ctx, keyDead, &OutboundJob{ID: "x", SessionJID: "5519@s.whatsapp.net", ToJID: "5511@s.whatsapp.net", LastError: "timeout"})
+	if _, _, err := q.ReprocessarDeadAuto(ctx, map[string]bool{"5581": true}); err != nil {
+		t.Fatal(err)
+	}
+	if motivo == "" {
+		t.Fatal("descarte por numero desconectado nao avisou")
 	}
 }

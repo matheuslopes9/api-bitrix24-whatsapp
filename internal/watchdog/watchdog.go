@@ -16,10 +16,40 @@ type Watchdog struct {
 	repo      *db.Repository
 	cfg       *config.WatchdogConfig
 	log       *zap.Logger
+
+	// falhas: numero da sessao -> tentativas de reconexao que falharam em
+	// seguida. So' a goroutine do loop mexe, entao nao precisa de trava.
+	falhas map[string]*tentativas
+}
+
+// tentativas guarda o ritmo de reconexao de uma sessao.
+type tentativas struct {
+	seguidas int
+	proxima  time.Time
+}
+
+// esperaReconexao e' quanto esperar depois de N falhas seguidas: 30s, 1min,
+// 2min, 4min, e para em 5min.
+//
+// O PORQUE: o watchdog tentava a cada 30s pra sempre. Muita reconexao em
+// sequencia e' justamente o que faz o WhatsApp restringir o numero — e uma
+// sessao que nao voltou em 30s raramente volta nos 30s seguintes.
+func esperaReconexao(falhas int) time.Duration {
+	if falhas <= 0 {
+		return 0
+	}
+	d := 30 * time.Second
+	for i := 1; i < falhas && d < 5*time.Minute; i++ {
+		d *= 2
+	}
+	if d > 5*time.Minute {
+		d = 5 * time.Minute
+	}
+	return d
 }
 
 func New(waManager *whatsapp.Manager, repo *db.Repository, cfg *config.WatchdogConfig, log *zap.Logger) *Watchdog {
-	return &Watchdog{waManager: waManager, repo: repo, cfg: cfg, log: log}
+	return &Watchdog{waManager: waManager, repo: repo, cfg: cfg, log: log, falhas: map[string]*tentativas{}}
 }
 
 // Start inicia o loop do watchdog em uma goroutine separada.
@@ -68,7 +98,9 @@ func (w *Watchdog) check(ctx context.Context) {
 			alive++
 			continue
 		}
+		numero := whatsapp.PhoneFromJID(s.JID)
 		if w.waManager.Ping(s.JID) {
+			delete(w.falhas, numero) // voltou: proxima queda recomeca do ritmo normal
 			alive++
 			continue
 		}
@@ -81,10 +113,30 @@ func (w *Watchdog) check(ctx context.Context) {
 			continue
 		}
 
+		t := w.falhas[numero]
+		if t != nil && time.Now().Before(t.proxima) {
+			continue // ainda no intervalo de espera desta sessao
+		}
+
+		// Toda tentativa conta, mesmo a que "deu certo": o Reconnect voltar
+		// sem erro nao garante conexao — a recusa do WhatsApp chega depois,
+		// por evento. O contador so' zera quando o Ping acima confirmar a
+		// sessao viva num ciclo seguinte; senao uma sessao que conecta e cai
+		// ficaria no ritmo de 30s pra sempre.
+		if t == nil {
+			t = &tentativas{}
+			w.falhas[numero] = t
+		}
+		t.seguidas++
+		espera := esperaReconexao(t.seguidas)
+		t.proxima = time.Now().Add(espera)
+
 		// Sessão não está respondendo — tenta reconectar
-		w.log.Warn("session not responding, attempting reconnect", zap.String("jid", s.JID))
+		w.log.Warn("session not responding, attempting reconnect",
+			zap.String("jid", s.JID), zap.Int("tentativa", t.seguidas))
 		if err := w.waManager.Reconnect(ctx, &s); err != nil {
-			w.log.Error("watchdog reconnect failed", zap.String("jid", s.JID), zap.Error(err))
+			w.log.Error("watchdog reconnect failed", zap.String("jid", s.JID), zap.Error(err),
+				zap.Duration("proxima_tentativa_em", espera))
 			_ = w.repo.UpdateSessionStatus(ctx, s.JID, db.SessionDisconnected)
 		} else {
 			reconnected++

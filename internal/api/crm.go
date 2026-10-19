@@ -1581,6 +1581,7 @@ func localMsgsToCRM(msgs []db.Message) []crmMessage {
 			AuthorName:   m.AuthorName,
 			Status:       string(m.Status),
 			CreatedAt:    m.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			Erro:         erroDaMensagem(m),
 			SessionJID:   ourJID,
 			SessionPhone: phone,
 			Kind:         kind,
@@ -1600,6 +1601,14 @@ func localMsgsToCRM(msgs []db.Message) []crmMessage {
 		out = append(out, cm)
 	}
 	return out
+}
+
+// erroDaMensagem: o motivo so' interessa a tela quando a mensagem falhou.
+func erroDaMensagem(m db.Message) string {
+	if m.Status != db.MsgFailed {
+		return ""
+	}
+	return m.ErrorMsg
 }
 
 // classifySessionJID extrai (kind, phone) de um session_jid do nosso lado.
@@ -1804,7 +1813,9 @@ type crmMessage struct {
 	AuthorID    string `json:"author_id,omitempty"`
 	AuthorName  string `json:"author_name,omitempty"`
 	Status      string `json:"status"`
-	CreatedAt   string `json:"created_at"`
+	// Erro: por que a mensagem nao saiu (so' em status "failed").
+	Erro      string `json:"erro,omitempty"`
+	CreatedAt string `json:"created_at"`
 	// Vinculo da conexao usada — permite separar chats por sessao quando o
 	// mesmo contato falou com varios numeros do mesmo portal.
 	SessionJID   string `json:"session_jid,omitempty"`   // ex: "cloud:1160...@s.whatsapp.net" ou "5519910001772@s.whatsapp.net"
@@ -2167,6 +2178,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#1a2234;color:#e2e8f0
 .bmeta{display:flex;align-items:center;gap:3px;margin-top:2px;padding:0 2px}
 .btime{font-size:10px;color:#64748b}
 .bst{font-size:11px;line-height:1}
+.berro{font-size:11px;color:#fca5a5;margin-top:4px;border-top:1px solid rgba(248,113,113,.3);padding-top:3px}
 .bst.sent{color:#94a3b8}.bst.delivered{color:#94a3b8}.bst.read{color:#53bdeb}.bst.failed{color:#f87171}
 .bmedia{display:flex;align-items:center;gap:5px;color:#94a3b8;font-size:11px;font-style:italic;margin-bottom:2px}
 .wa-code{display:block;font-family:Consolas,'Courier New',monospace;font-size:12px;white-space:pre-wrap;background:rgba(0,0,0,.25);border-radius:6px;padding:6px 8px;margin:2px 0}
@@ -2329,6 +2341,11 @@ var _sessions = [];
 var _activeSession = '';
 var _pollTimer = null;
 var _lastMsgId = '';
+// Assinatura = id + status das ultimas 20. So' o id nao basta: a mensagem
+// enviada muda de status (✓ -> ✓✓ -> lida, ou falha) sem chegar mensagem nova.
+function assinaturaMsgs(msgs) {
+  return msgs.slice(-20).map(function(m){ return m.id + ':' + m.status; }).join('|');
+}
 var _allConvs = [];
 var _placementRaw = null;
 
@@ -2734,8 +2751,7 @@ function pollHistory() {
     .then(function(d) {
       var msgs = d.messages || [];
       if (!msgs.length) return;
-      var lastId = msgs[msgs.length-1].id;
-      if (lastId !== _lastMsgId) loadHistory();
+      if (assinaturaMsgs(msgs) !== _lastMsgId) loadHistory();
     }).catch(function(){});
 }
 
@@ -2801,7 +2817,7 @@ function renderHistory(msgs, chatID) {
   renderSessionMessages();
 
   // Atualiza preview na sidebar usando a msg mais recente GLOBAL
-  if (msgs.length) _lastMsgId = msgs[msgs.length-1].id;
+  if (msgs.length) _lastMsgId = assinaturaMsgs(msgs);
   var last = msgs[msgs.length-1];
   var idx = _allConvs.findIndex(function(c){ return c.phone === _contactPhone; });
   if (idx >= 0) {
@@ -2844,7 +2860,8 @@ function renderSessionMessages() {
     var time  = dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     // ✓ servidor do WhatsApp aceitou; ✓✓ chegou no celular; ✓✓ azul leu.
     // Historico antigo nao tem "sent": tudo nascia "delivered".
-    var st = !isOut ? '' : m.status === 'sent' ? '<span class="bst sent">✓</span>'
+    var st = !isOut ? '' : m.status === 'failed' ? '<span class="bst failed">❌ não enviada</span>'
+           : m.status === 'sent' ? '<span class="bst sent">✓</span>'
            : m.status === 'read' ? '<span class="bst read">✓✓</span>'
            : '<span class="bst delivered">✓✓</span>';
     var content = '';
@@ -2857,6 +2874,7 @@ function renderSessionMessages() {
     var authorLabel = (isOut && m.author_name) ? '<div style="font-size:10px;color:#4ade80;margin-bottom:2px;font-weight:600">' + esc(m.author_name) + '</div>' : '';
     html += '<div class="bw ' + (isOut?'out':'in') + '"><div class="bubble ' + (isOut?'out':'in') + '">'
           + authorLabel + content
+          + (m.status === 'failed' && m.erro ? '<div class="berro">' + esc(m.erro) + '</div>' : '')
           + '<div class="bmeta"><span class="btime">' + time + '</span>' + st + '</div>'
           + '</div></div>';
   });
