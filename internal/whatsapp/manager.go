@@ -724,6 +724,9 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	chave := sess.ID.String() + "|" + jid.User
 	if v, ok := m.jidCache.Load(chave); ok {
 		if e, ok := v.(jidResolvido); ok && time.Since(e.em) < jidCacheTTL {
+			m.log.Debug("resolveRecipient: destino do cache",
+				zap.String("jid", sess.JID), zap.String("pedido", jid.User),
+				zap.String("destino", e.jid.String()), zap.Time("resolvido_em", e.em))
 			return e.jid, nil
 		}
 		m.jidCache.Delete(chave)
@@ -760,6 +763,24 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 	for _, r := range results {
 		porNumero[apenasDigitos(r.Query)] = r
 	}
+
+	// A resposta do WhatsApp fica no log. Sem ela, um envio que falha com
+	// "no LID found" nao tinha como ser diagnosticado: nao dava pra saber se
+	// o WhatsApp disse que o numero nao existe ou se disse que existe e nao
+	// mandou o identificador. O campo "jid" (a sessao) faz a linha aparecer
+	// tambem no log filtrado do cliente.
+	respostas := make([]string, 0, len(candidatos))
+	for _, c := range candidatos {
+		r, ok := porNumero[c]
+		switch {
+		case !ok:
+			respostas = append(respostas, c+": sem resposta")
+		default:
+			respostas = append(respostas, fmt.Sprintf("%s: tem_whatsapp=%t id=%s fone=%s", c, r.IsIn, r.JID, r.PhoneNumber))
+		}
+	}
+	m.log.Info("resolveRecipient: resposta do WhatsApp",
+		zap.String("jid", sess.JID), zap.String("pedido", jid.User), zap.Strings("respostas", respostas))
 
 	// Preferencia: o numero como o CRM mandou. So' cai pra variante se o
 	// original NAO estiver no WhatsApp. Assim a mudanca so' pode ajudar

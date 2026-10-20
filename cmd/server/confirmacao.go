@@ -102,9 +102,11 @@ func avisarOperadorDesistencia(bitrixClient *bitrix.Client, repo *db.Repository,
 		if motivo == "" {
 			motivo = "erro desconhecido"
 		}
+		motivoTecnico := motivo
+		motivo = motivoParaOperador(motivo)
 		aviso := "a mensagem não foi entregue no WhatsApp. Motivo: " + motivo
 		log.Warn("fila desistiu da mensagem — avisando o operador",
-			zap.String("job_id", job.ID), zap.String("para", job.ToJID), zap.String("motivo", motivo))
+			zap.String("job_id", job.ID), zap.String("para", job.ToJID), zap.String("motivo", motivoTecnico))
 		ctx := context.Background()
 		registrarFalhaNoHistorico(ctx, repo, log, job, motivo)
 		if whatsapp.IsCloudJID(job.SessionJID) {
@@ -177,4 +179,24 @@ func sessaoParaBanco(ctx context.Context, repo *db.Repository, log *zap.Logger, 
 			zap.String("session_jid", sessionJID), zap.Error(err))
 	}
 	return nil
+}
+
+// motivoParaOperador traduz os motivos de falha que o operador consegue
+// resolver. O texto tecnico continua no log.
+//
+// "no LID found ... from server": o WhatsApp exige o identificador interno
+// (LID) pra mandar mensagem 1:1, e o servidor dele nao devolveu nenhum pro
+// numero — o que, na pratica, e' numero sem conta no WhatsApp. O sistema ja'
+// testou as formas com e sem o 9 antes de chegar aqui.
+func motivoParaOperador(motivo string) string {
+	t := strings.ToLower(motivo)
+	switch {
+	case strings.Contains(t, "no lid found"),
+		strings.Contains(t, "nao esta no whatsapp"),
+		strings.Contains(t, "is not on whatsapp"):
+		return "o WhatsApp não reconhece este número (testado com e sem o 9). Confira o telefone do contato."
+	case strings.Contains(t, "session not found"):
+		return "o número de WhatsApp da empresa está desconectado."
+	}
+	return motivo
 }
