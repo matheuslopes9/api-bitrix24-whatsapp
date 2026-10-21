@@ -302,6 +302,19 @@ func (r *Repository) MarkNotificationSent(ctx context.Context, domain, kind stri
 	return tag.RowsAffected() > 0, nil
 }
 
+// DesmarcarNotificacao desfaz MarkNotificationSent quando o e-mail nao saiu.
+//
+// Sem isso, uma falha do proxy de e-mail perdia o aviso de vez: a chave e'
+// (cliente, tipo, vencimento), entao aquele vencimento nunca mais seria
+// avisado.
+func (r *Repository) DesmarcarNotificacao(ctx context.Context, domain, kind string, refDate time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM license_notifications
+		 WHERE domain = $1 AND kind = $2 AND ref_date = $3`,
+		domain, kind, refDate)
+	return err
+}
+
 // ─── Apoio ao diagnostico de suporte ──────────────────────────────────────
 
 // ListBitrixAccountsByDomain devolve os vinculos sessao<->Linha Aberta do

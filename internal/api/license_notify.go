@@ -175,12 +175,18 @@ func (h *handlers) verificarVencimentos(ctx context.Context, n LicenseNotifier) 
 			if err := n.LicencaVencida(ctx, lic, -dias); err != nil {
 				h.log.Error("avisos de licenca: envio falhou",
 					zap.String("cliente", lic.Domain), zap.Error(err))
+				// Sem desfazer, este vencimento nunca mais seria avisado: a
+				// chave de deduplicacao e' (cliente, tipo, vencimento).
+				_ = h.repo.DesmarcarNotificacao(ctx, lic.Domain, tipo, *lic.ValidUntil)
 			}
 			vencidas++
 		} else {
 			if err := n.LicencaVencendo(ctx, lic, dias); err != nil {
 				h.log.Error("avisos de licenca: envio falhou",
 					zap.String("cliente", lic.Domain), zap.Error(err))
+				// Sem desfazer, este vencimento nunca mais seria avisado: a
+				// chave de deduplicacao e' (cliente, tipo, vencimento).
+				_ = h.repo.DesmarcarNotificacao(ctx, lic.Domain, tipo, *lic.ValidUntil)
 			}
 			vencendo++
 		}

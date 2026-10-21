@@ -14,6 +14,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,8 +44,16 @@ const (
 	// Permite que o resto do sistema (BitrixAccount.session_jid, contact_mapping,
 	// messages.from_jid/to_jid) continue funcionando sem distinguir o tipo.
 	cloudJIDPrefix = "cloud:"
-	// API version padrão. Pode ser sobrescrita via env.
-	defaultCloudAPIVersion = "v20.0"
+	// Versao da Graph API da Meta. Toda versao sai de linha ~2 anos depois da
+	// seguinte; vencida, a Meta redireciona a chamada pra versao mais antiga
+	// ainda ativa — funciona, mas com o comportamento de uma versao que
+	// ninguem escolheu. Em 21/10/2026 o codigo estava em v20.0 (fora de
+	// linha desde 24/09/2026) e os templates fixos em v18.0 (desde
+	// 26/01/2026). v25.0 vale ate' 29/07/2028.
+	//
+	// META_GRAPH_API_VERSION troca sem deploy — e serve de volta atras se a
+	// versao nova se comportar diferente. Ver VersaoGraphAPI.
+	defaultCloudAPIVersion = "v25.0"
 	defaultCloudAPIBaseURL = "https://graph.facebook.com"
 )
 
@@ -80,9 +90,22 @@ func NewCloudManager(repo *db.Repository, log *zap.Logger) *CloudManager {
 		repo:     repo,
 		http:     &http.Client{Timeout: 30 * time.Second},
 		log:      log,
-		apiVer:   defaultCloudAPIVersion,
+		apiVer:   VersaoGraphAPI(),
 		baseURL:  defaultCloudAPIBaseURL,
 	}
+}
+
+// versaoGraphValida: "v25.0", "v26.0"... Qualquer outra coisa na env cai no
+// padrao — um typo nao pode derrubar todo envio da Cloud API.
+var versaoGraphValida = regexp.MustCompile(`^v[0-9]{2}\.[0-9]$`)
+
+// VersaoGraphAPI e' a versao da Graph API em uso: META_GRAPH_API_VERSION se
+// valida, senao defaultCloudAPIVersion.
+func VersaoGraphAPI() string {
+	if v := strings.TrimSpace(os.Getenv("META_GRAPH_API_VERSION")); versaoGraphValida.MatchString(v) {
+		return v
+	}
+	return defaultCloudAPIVersion
 }
 
 // IsCloudJID verifica se o JID corresponde a uma sessão Cloud API.
@@ -672,7 +695,9 @@ func FetchMetaTemplates(ctx context.Context, wabaID, accessToken string, include
 		return nil, fmt.Errorf("access_token vazio")
 	}
 
-	url := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/message_templates?limit=100&fields=name,language,status,category,components", wabaID)
+	// Mesma versao do resto: estava fixa em v18.0, fora de linha.
+	url := fmt.Sprintf("%s/%s/%s/message_templates?limit=100&fields=name,language,status,category,components",
+		defaultCloudAPIBaseURL, VersaoGraphAPI(), wabaID)
 	var out []MetaTemplate
 	const maxPages = 4 // 4 paginas * 100 = 400 templates teto
 

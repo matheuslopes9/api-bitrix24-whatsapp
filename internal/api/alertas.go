@@ -116,7 +116,7 @@ func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remeten
 		return
 	}
 	for _, p := range portais {
-		ok, err := h.repo.DeveAvisar(ctx, alertaTokenVencido, p.Domain, p.Domain, janela)
+		avisoID, ok, err := h.repo.DeveAvisar(ctx, alertaTokenVencido, p.Domain, p.Domain, janela)
 		if err != nil || !ok {
 			continue
 		}
@@ -137,6 +137,7 @@ func (h *handlers) alertarTokensVencidos(ctx context.Context, rem *email.Remeten
 		if err := rem.Enviar(ctx, "[UC Talk] Token vencido — "+p.Domain, corpo); err != nil {
 			h.log.Error("alertas: falha ao enviar aviso de token",
 				zap.String("dominio", p.Domain), zap.Error(err))
+			_ = h.repo.DesfazerAviso(ctx, avisoID) // tenta de novo no proximo ciclo
 			continue
 		}
 		h.log.Info("alerta enviado: token vencido", zap.String("dominio", p.Domain))
@@ -147,8 +148,6 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 	if h.waManager == nil {
 		return
 	}
-	// O banco diz quem DEVERIA estar atendendo; o manager diz quem esta'
-	// mesmo. A diferenca e' o numero que caiu.
 	vivos := map[string]bool{}
 	for _, s := range h.waManager.ConnectedSessions() {
 		vivos[s.Phone] = true
@@ -160,11 +159,24 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 	for _, sv := range h.waManager.SessoesComSocketSemLogin() {
 		semVinculo[sv.Phone] = true
 	}
-	sessoes, err := h.repo.ListActiveSessions(ctx)
+
+	// QUEM DEVERIA ESTAR ATENDENDO: toda sessao que continua no banco.
+	//
+	// BUG que isto corrige: a lista vinha so' das sessoes com status
+	// 'active' — e o proprio sistema grava 'disconnected' no instante em que
+	// a conexao cai (evento de queda, watchdog, pausa de reconexao). O numero
+	// que caiu sumia da lista antes do alerta olhar, e so' o caso
+	// "desvinculado" (socket de pe, status ainda ativo) chegava a avisar.
+	//
+	// Desconectar de proposito pela tela APAGA a sessao do banco, entao o que
+	// sobra aqui e' numero que deveria estar no ar — a mesma lista que o
+	// watchdog tenta reconectar.
+	sessoes, err := h.repo.ListAllSessions(ctx)
 	if err != nil {
 		h.log.Warn("alertas: falha ao listar sessoes", zap.Error(err))
 		return
 	}
+	foraDoAr := map[string]bool{}
 	for _, s := range sessoes {
 		// Sessao Cloud API nao vive no manager (e' HTTPS stateless): ausencia
 		// ali nao significa queda, e alertar pelo mesmo criterio geraria
@@ -173,53 +185,114 @@ func (h *handlers) alertarSessoesCaidas(ctx context.Context, rem *email.Remetent
 			continue
 		}
 		numero := somenteNumero(s.JID)
-		if numero == "" || vivos[numero] {
+		if numero == "" || vivos[numero] || foraDoAr[numero] {
 			continue
 		}
-		dominio := ""
-		if acct, aerr := h.repo.GetBitrixAccountByJID(ctx, s.JID); aerr == nil && acct != nil {
-			dominio = acct.Domain
+		foraDoAr[numero] = true
+
+		// Numero sem vinculo com nenhum portal nao atende ninguem: nao ha'
+		// cliente a avisar nem acao a tomar.
+		acct, aerr := h.repo.GetBitrixAccountByJID(ctx, s.JID)
+		if aerr != nil || acct == nil || acct.Domain == "" {
+			continue
 		}
-		ok, derr := h.repo.DeveAvisar(ctx, alertaSessaoCaiu, numero, dominio, janela)
+		dominio := acct.Domain
+
+		// Carencia: so' avisa se o numero ja' estava fora do ar no ciclo
+		// anterior. Queda de segundos — deploy, reconexao do watchdog — volta
+		// sozinha e nao e' caso pra e-mail.
+		visto, _ := h.quedaVista.LoadOrStore(numero, time.Now())
+		desde := visto.(time.Time)
+		if time.Since(desde) < carenciaQueda {
+			continue
+		}
+
+		avisoID, ok, derr := h.repo.DeveAvisar(ctx, alertaSessaoCaiu, numero, dominio, janela)
 		if derr != nil || !ok {
 			continue
 		}
-		cliente := naoVazio(dominio, "cliente não identificado")
-		titulo := "Número de WhatsApp desconectado — " + numero
-		explicacao := "<p>O número <b>" + numero + "</b> consta como ativo no sistema, mas não há conexão viva com o WhatsApp.</p>" +
-			"<p><b>Enquanto estiver caído, o cliente não recebe nem envia mensagem por este número.</b></p>"
-		acao := "Abra Saúde do cliente e confira o bloco Sessões WhatsApp. " +
-			"Se não reconectar sozinho, pareie de novo em Conectar WhatsApp."
-		if semVinculo[numero] {
-			titulo = "Número de WhatsApp DESVINCULADO — " + numero
-			explicacao = "<p>O aparelho do número <b>" + numero + "</b> foi removido em " +
-				"<i>Aparelhos conectados</i> no WhatsApp — pelo cliente ou por troca de celular.</p>" +
-				"<p><b>Enquanto não for pareado de novo, o cliente não recebe nem envia mensagem por este número.</b></p>" +
-				"<p>Este caso <b>não se resolve sozinho</b>: a conexão continua de pé, o que falta é a autorização do aparelho.</p>"
-			acao = "Peça ao cliente para abrir Conectar WhatsApp e ler o QR Code de novo. Reiniciar o serviço não resolve."
-		}
+		titulo, explicacao, acao, assunto := textoDaQueda(numero, semVinculo[numero], h.waManager)
 		corpo := h.montarAlerta(
 			email.CatSessaoCaiu,
 			titulo,
 			explicacao,
 			acao,
 			[]email.LinhaContexto{
-				{Rotulo: "Cliente", Valor: cliente},
+				{Rotulo: "Cliente", Valor: dominio},
 				{Rotulo: "Número", Valor: numero},
+				{Rotulo: "Fora do ar desde", Valor: desde.Format("02/01/2006 15:04")},
 			})
-		assunto := "[UC Talk] Numero desconectado — " + numero
-		if semVinculo[numero] {
-			assunto = "[UC Talk] Numero DESVINCULADO (precisa ler o QR) — " + numero
-		}
 		if err := rem.Enviar(ctx, assunto, corpo); err != nil {
 			h.log.Error("alertas: falha ao enviar aviso de sessao",
 				zap.String("numero", numero), zap.Error(err))
+			_ = h.repo.DesfazerAviso(ctx, avisoID) // tenta de novo no proximo ciclo
 			continue
 		}
 		h.log.Info("alerta enviado: sessao caiu",
 			zap.String("numero", numero), zap.String("dominio", dominio),
 			zap.Bool("desvinculada", semVinculo[numero]))
 	}
+	// Quem voltou sai da contagem: a proxima queda recomeca a carencia.
+	h.quedaVista.Range(func(k, _ any) bool {
+		if !foraDoAr[k.(string)] {
+			h.quedaVista.Delete(k)
+		}
+		return true
+	})
+}
+
+// carenciaQueda: quanto tempo o numero precisa estar fora do ar pra virar
+// alerta. Pouco menos que o ciclo de 5 min, pra disparar na segunda leitura.
+const carenciaQueda = 4 * time.Minute
+
+// pausaConsultavel e' o pedaco do manager que o texto do alerta precisa —
+// interface pra o teste nao depender de uma conexao de WhatsApp.
+type pausaConsultavel interface {
+	ReconexaoPausada(jid string) (bool, string, time.Duration)
+}
+
+// textoDaQueda escreve o aviso conforme o MOTIVO, porque cada um pede uma
+// acao diferente — e alerta sem "o que fazer" e' ruido.
+func textoDaQueda(numero string, desvinculado bool, wa pausaConsultavel) (titulo, explicacao, acao, assunto string) {
+	impacto := "<p><b>Enquanto estiver fora do ar, o cliente não recebe nem envia mensagem por este número.</b></p>"
+	if desvinculado {
+		return "Número de WhatsApp DESVINCULADO — " + numero,
+			"<p>O aparelho do número <b>" + numero + "</b> foi removido em " +
+				"<i>Aparelhos conectados</i> no WhatsApp — pelo cliente ou por troca de celular.</p>" + impacto +
+				"<p>Este caso <b>não se resolve sozinho</b>: a conexão continua de pé, o que falta é a autorização do aparelho.</p>",
+			"Peça ao cliente para abrir Conectar WhatsApp e ler o QR Code de novo. Reiniciar o serviço não resolve.",
+			"[UC Talk] Numero DESVINCULADO (precisa ler o QR) — " + numero
+	}
+	// JID completo: a pausa e' guardada pelo numero extraido do JID, e um
+	// numero puro nao casa (extractPhoneFromJID exige o "@").
+	if pausada, motivo, falta := wa.ReconexaoPausada(numero + "@s.whatsapp.net"); pausada {
+		base := "<p>O WhatsApp recusou a conexão do número <b>" + numero + "</b>: " + motivo + ".</p>" + impacto
+		switch {
+		case strings.Contains(motivo, "405"):
+			return "WhatsApp recusou a conexão: versão desatualizada — " + numero,
+				base + "<p>A biblioteca do WhatsApp usada pelo UC Talk ficou antiga para o protocolo atual. " +
+					"Isso afeta <b>todos</b> os números conectados, não só este.</p>",
+				"Atualize a dependência go.mau.fi/whatsmeow e faça deploy. NÃO peça ao cliente para ler o QR de novo: não resolve.",
+				"[UC Talk] URGENTE: versao do WhatsApp desatualizada — " + numero
+		case strings.Contains(motivo, "restricao"):
+			return "Número restrito temporariamente pelo WhatsApp — " + numero,
+				base + fmt.Sprintf("<p>O próprio WhatsApp informou o prazo; o sistema tenta de novo em %s.</p>", falta.Round(time.Minute)),
+				"Aguarde o prazo e evite envios em massa por este número. Se a restrição se repetir, revise o volume de envio do cliente.",
+				"[UC Talk] Numero restrito pelo WhatsApp — " + numero
+		case strings.Contains(motivo, "outra conexao"):
+			return "Sessão tomada por outra conexão — " + numero,
+				base + "<p>Outro processo conectou com a mesma sessão. Normalmente é um deploy que deixou o container antigo vivo.</p>",
+				"Confira no EasyPanel se há dois containers do UC Talk rodando e pare o antigo.",
+				"[UC Talk] Sessao tomada por outro processo — " + numero
+		}
+		return "Número de WhatsApp desconectado — " + numero, base,
+			"Abra Saúde do cliente e confira o bloco Sessões WhatsApp.",
+			"[UC Talk] Numero desconectado — " + numero
+	}
+	return "Número de WhatsApp desconectado — " + numero,
+		"<p>O número <b>" + numero + "</b> deveria estar atendendo, mas não há conexão viva com o WhatsApp há alguns minutos.</p>" + impacto,
+		"Abra Saúde do cliente e confira o bloco Sessões WhatsApp. Se não reconectar sozinho, pareie de novo em Conectar WhatsApp.",
+		"[UC Talk] Numero desconectado — " + numero
 }
 
 // montarAlerta usa o template da UC Technology (internal/email/template.go),

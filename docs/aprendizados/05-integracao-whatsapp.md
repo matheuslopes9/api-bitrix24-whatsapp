@@ -84,6 +84,19 @@ Sessões cloud usam prefixo `cloud:` no JID (por isso o casamento por número ex
 (`fetchMetaTemplates`, contagem de variáveis, escaping). É uma feature de plano
 (gate por `Templates` nas features do tenant).
 
+### ⚠️ A versão da Graph API vence
+
+Cada versão sai de linha cerca de 2 anos depois da seguinte
+([changelog](https://developers.facebook.com/docs/graph-api/changelog)).
+Vencida, a Meta **não** recusa a chamada: redireciona para a versão mais antiga
+ainda ativa. Funciona, mas com o comportamento de uma versão que ninguém
+escolheu — e sem nenhum erro avisando.
+
+Em 21/10/2026 o código estava em `v20.0` (fora de linha desde 24/09/2026) e a
+listagem de templates fixa em `v18.0` (desde 26/01/2026). Hoje há **uma** fonte
+(`VersaoGraphAPI`, padrão `v25.0`, vale até 29/07/2028), trocável por
+`META_GRAPH_API_VERSION` sem deploy.
+
 ## Ritmo de envio (limite por número)
 
 Todo envio pelo mesmo número passa por

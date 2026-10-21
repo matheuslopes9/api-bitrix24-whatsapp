@@ -65,6 +65,33 @@ continua inalcançável — falha silenciosa cara de diagnosticar.
 | `sessao_desconectada` | Banco diz ativo, manager não tem conexão viva | 30min |
 | `licenca_vencimento` | Vence em ≤7 dias, ou venceu sem pagamento | diário |
 
+### Número desconectado: quem deveria estar no ar
+
+A primeira versão listava só sessões com `status = 'active'` e comparava com o
+manager. Só que o próprio sistema grava `disconnected` no instante em que a
+conexão cai — o número que caiu sumia da lista antes do alerta olhar, e só o
+caso "desvinculado" (socket de pé, status ainda ativo) chegava a avisar.
+
+Agora a lista é **toda sessão que continua no banco**, vinculada a um portal:
+desconectar pela tela apaga a sessão, então o que sobra deveria estar no ar (é
+a mesma lista que o watchdog tenta reconectar). Com duas travas contra ruído:
+
+- **Carência:** só avisa se o número já estava fora do ar no ciclo anterior.
+  Queda de segundos (deploy, reconexão) volta sozinha.
+- **Problema que dura dias:** depois de 3 avisos em 24h sobre a mesma coisa, o
+  próximo só sai no dia seguinte.
+
+O e-mail diz o **motivo** quando a reconexão está pausada — versão do
+whatsmeow desatualizada (405: atualizar e fazer deploy, **não** refazer o QR),
+restrição temporária do número, ou sessão tomada por outro processo.
+
+### E-mail que não saiu não conta como enviado
+
+O registro é gravado antes do envio (contra loop), mas é **desfeito** se o
+e-mail falhar: o histórico deixa de mentir e o aviso volta no próximo ciclo de
+5 minutos. Na licença isso importa mais — sem desfazer, aquele vencimento
+nunca mais era avisado.
+
 ### Por que "nenhum token válido", e não "algum token vencido"
 
 Um domínio tem **várias linhas** em `bitrix_tokens` — uma por app que já

@@ -48,6 +48,10 @@ type handlers struct {
 	// pode nunca se concretizar.
 	pareamentos sync.Map // numero base -> dominio
 
+	// quedaVista: numero -> quando o alerta viu o numero fora do ar pela
+	// primeira vez. Da' a carencia antes do e-mail (ver alertarSessoesCaidas).
+	quedaVista sync.Map
+
 	// credsApp: os portais que tem app OAuth proprio, em cache.
 	// Ver credenciais_app.go — quase sempre vazio, e' excecao por desenho.
 	credsApp *credsApp

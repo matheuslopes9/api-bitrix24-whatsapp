@@ -6,7 +6,8 @@ import (
 )
 
 // DeveAvisar decide se um alerta pode ser enviado agora, e ja' registra o
-// envio quando a resposta e' sim.
+// envio quando a resposta e' sim. Devolve o id do registro, pra
+// DesfazerAviso caso o e-mail nao saia.
 //
 // POR QUE E' UMA COISA SO': se registrar fosse chamada separada, um erro no
 // meio do envio deixaria a porta aberta pra reenviar em loop. Aqui a janela
@@ -16,7 +17,7 @@ import (
 // janela e' o intervalo minimo entre dois avisos do mesmo (tipo, ref). Token
 // vencido pede janela longa (o problema persiste por horas); queda de sessao
 // pede curta (pode voltar e cair de novo).
-func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, janela time.Duration) (bool, error) {
+func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, janela time.Duration) (int64, bool, error) {
 	// Cliente silenciado nao gera alerta — e tambem nao consome a janela.
 	//
 	// Nao registrar e' deliberado: a tabela de alertas diz o que foi ENVIADO.
@@ -42,27 +43,54 @@ func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, 
 			}
 		}
 		if mudo {
-			return false, nil
+			return 0, false, nil
 		}
 	}
 
 	var ultimo *time.Time
+	var nasUltimas24h int
 	err := r.pool.QueryRow(ctx, `
-		SELECT MAX(enviado_em) FROM alertas_operacionais
-		 WHERE tipo = $1 AND ref = $2`, tipo, ref).Scan(&ultimo)
+		SELECT MAX(enviado_em),
+		       COUNT(*) FILTER (WHERE enviado_em > NOW() - INTERVAL '24 hours')
+		  FROM alertas_operacionais
+		 WHERE tipo = $1 AND ref = $2`, tipo, ref).Scan(&ultimo, &nasUltimas24h)
 	if err != nil {
-		return false, err
+		return 0, false, err
+	}
+	// Problema que dura dias: depois de avisosAntesDeEspacar avisos em 24h
+	// sobre a mesma coisa, so' mais um por dia. Um numero parado num cliente
+	// que nao vai voltar tao cedo mandava 48 e-mails por dia com janela de
+	// 30 min — e o time aprende a ignorar justamente a caixa que importa.
+	if nasUltimas24h >= avisosAntesDeEspacar && janela < 24*time.Hour {
+		janela = 24 * time.Hour
 	}
 	if ultimo != nil && time.Since(*ultimo) < janela {
-		return false, nil
+		return 0, false, nil
 	}
-	_, err = r.pool.Exec(ctx, `
-		INSERT INTO alertas_operacionais (tipo, ref, dominio) VALUES ($1,$2,$3)`,
-		tipo, ref, dominio)
+	var id int64
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO alertas_operacionais (tipo, ref, dominio) VALUES ($1,$2,$3)
+		RETURNING id`, tipo, ref, dominio).Scan(&id)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	return true, nil
+	return id, true, nil
+}
+
+// avisosAntesDeEspacar: quantos avisos do mesmo problema em 24h antes de o
+// intervalo passar a ser diario.
+const avisosAntesDeEspacar = 3
+
+// DesfazerAviso apaga o registro de um aviso que NAO chegou a sair.
+//
+// O registro e' gravado antes do envio de proposito (ver DeveAvisar). Mas,
+// com o proxy de e-mail fora do ar, ele ficava la' dizendo "enviado": o
+// historico da tela mentia, e o proximo aviso so' saia depois da janela
+// inteira (6h no token). Desfazer devolve o aviso pro proximo ciclo, de 5
+// minutos — sem risco de loop, porque com o envio quebrado nada chega.
+func (r *Repository) DesfazerAviso(ctx context.Context, id int64) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM alertas_operacionais WHERE id = $1`, id)
+	return err
 }
 
 // LimparAlertasAntigos evita a tabela crescer pra sempre. Alerta com mais de
