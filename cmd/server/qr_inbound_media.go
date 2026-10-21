@@ -47,6 +47,12 @@ func deliverQRInboundViaPublicLink(
 	if err != nil {
 		return false, fmt.Errorf("bitrix account not found: %w", err)
 	}
+	// Mesmo bloqueio do ProcessInbound: este caminho nao passa por ele.
+	if bloq, motivo := repo.PortalBloqueado(ctx, acct.Domain); bloq {
+		log.Warn("inbound (midia grande) recusado: cliente bloqueado no painel admin",
+			zap.String("domain", acct.Domain), zap.String("motivo", motivo))
+		return true, nil // tratado: nao cai no caminho normal
+	}
 	creds := bitrix.TenantCreds{
 		Domain:       acct.Domain,
 		ClientID:     acct.ClientID,

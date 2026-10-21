@@ -3236,7 +3236,7 @@ func (h *handlers) maybeSetTenantCookieFromBitrixPost(c *fiber.Ctx) {
 
 // HTML simples que carrega BX24, valida o user_id contra check-access e
 // embute o CRM tab via iframe (com modo "lista geral", sem entity_id).
-const bitrixAppMenuHTML = `<!DOCTYPE html>
+var bitrixAppMenuHTML = `<!DOCTYPE html>
 <html lang="pt-br">
 <head>
 <meta charset="utf-8">

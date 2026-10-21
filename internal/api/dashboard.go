@@ -129,7 +129,7 @@ func (h *handlers) uiOverview(c *fiber.Ctx) error {
 	})
 }
 
-const dashboardHTML = `<!DOCTYPE html>
+var dashboardHTML = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">

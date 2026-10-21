@@ -680,3 +680,18 @@ func (q *Queue) backoff(retry int) time.Duration {
 	}
 	return d
 }
+
+// VersaoRedis e' a versao do servidor Redis (ex.: "7.4.2"), pra tela de
+// Dependencias. Vazio se nao der pra ler.
+func (q *Queue) VersaoRedis(ctx context.Context) string {
+	info, err := q.rdb.Info(ctx, "server").Result()
+	if err != nil {
+		return ""
+	}
+	for _, linha := range strings.Split(info, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(linha), "redis_version:"); ok {
+			return v
+		}
+	}
+	return ""
+}

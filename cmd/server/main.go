@@ -175,6 +175,12 @@ func main() {
 	workers.StartOutbound(ctx, func(c context.Context, job *queue.OutboundJob) error {
 		metrics.MessagesOutbound.Inc()
 
+		// Cliente bloqueado no painel admin: nada sai, por nenhum caminho
+		// (chat do Bitrix, aba do CRM, robo, API). Ver confirmacao.go.
+		if recusarEnvioBloqueado(c, bitrixClient, repo, log, job) {
+			return nil
+		}
+
 		// Cloud API: caminho alternativo para sessões oficiais (sem whatsmeow).
 		// Detecta pelo prefixo "cloud:" do SessionJID e envia via Graph API.
 		// O resto do worker (whatsmeow) continua exatamente como estava.

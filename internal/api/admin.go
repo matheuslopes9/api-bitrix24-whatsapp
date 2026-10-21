@@ -325,6 +325,9 @@ func (h *handlers) requireTenantOrAdmin(c *fiber.Ctx) error {
 	// 1) Cookie tenant assinado: extrai o domain dele.
 	if tenantCookie := c.Cookies(tenantCookieName); tenantCookie != "" {
 		if domain, ok := verifyTenantCookie(h.cfg.App.Secret, tenantCookie); ok {
+			if bloq, _ := h.repo.PortalBloqueado(c.Context(), domain); bloq {
+				return respostaBloqueado(c)
+			}
 			c.Locals("tenant_domain", domain)
 			c.Locals("auth_source", "tenant")
 			return c.Next()
@@ -537,9 +540,14 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		// ninguem via que nao havia mais integracao nenhuma.
 		Desinstalado   bool   `json:"desinstalado"`
 		DesinstaladoEm string `json:"desinstalado_em,omitempty"`
-		OpenLineID     int    `json:"open_line_id"`
-		ConnQR         int    `json:"connections_qr"`
-		ConnCloud      int    `json:"connections_cloud"`
+		// Bloqueado pelo painel admin (ver bloqueio.go).
+		Bloqueado       bool   `json:"bloqueado"`
+		BloqueadoEm     string `json:"bloqueado_em,omitempty"`
+		BloqueadoMotivo string `json:"bloqueado_motivo,omitempty"`
+		BloqueadoPor    string `json:"bloqueado_por,omitempty"`
+		OpenLineID      int    `json:"open_line_id"`
+		ConnQR          int    `json:"connections_qr"`
+		ConnCloud       int    `json:"connections_cloud"`
 		// ConnQRVivas e ConnQRSemVinculo separam o que o BANCO acha do que
 		// esta' mesmo de pe. Sem isso a coluna Conexoes mostrava "1 QR" para
 		// um numero fora do ar ha' dias — foi o caso do teclife em 30/09.
@@ -568,6 +576,11 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		LicencaNotes       string `json:"notes,omitempty"`
 	}
 
+	bloqueios, err := h.repo.ListarBloqueios(ctx)
+	if err != nil {
+		h.log.Warn("admin: ListarBloqueios failed", zap.Error(err))
+	}
+
 	cards := make([]tenantCard, 0, len(portals))
 	for _, p := range portals {
 		// Esconde placeholders: quando o app é instalado via Marketplace, o
@@ -592,6 +605,12 @@ func (h *handlers) adminListTenants(c *fiber.Ctx) error {
 		if p.Desinstalado() {
 			card.Desinstalado = true
 			card.DesinstaladoEm = p.DesinstaladoEm.Format("02/01/2006")
+		}
+		if b, ok := bloqueios[key]; ok {
+			card.Bloqueado = true
+			card.BloqueadoEm = b.Em.Format("02/01/2006 15:04")
+			card.BloqueadoMotivo = b.Motivo
+			card.BloqueadoPor = b.Por
 		}
 
 		// Status do token: usa o expires_at do bitrix_tokens (atualizado a cada

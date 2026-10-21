@@ -152,6 +152,31 @@ Para religar, o mesmo lugar: **Reativar alerta**.
 > responde "sem problemas" de um jeito em que não dá para confiar, porque
 > ninguém seria avisado se não estivesse.
 
+### "Precisamos tirar o acesso de um cliente"
+
+Vá em **Tenants**, abra o menu **⋯** do cliente e clique em **⛔ Bloquear
+acesso (remover)**. O sistema pede um motivo, que fica na própria linha.
+
+A partir daí o cliente **não usa mais nada**:
+
+- mensagem do WhatsApp **não chega** no Bitrix;
+- o operador **não consegue enviar**: a mensagem dele vira o aviso "o UC Talk
+  está bloqueado para esta empresa";
+- o painel e a aba do CRM dele mostram **"Acesso ao UC Talk bloqueado — fale
+  com a UC Technology"**. O motivo que você escreveu **não** aparece para o
+  cliente.
+
+O cliente sai da lista de **Ativos** (filtro ao lado da busca) e aparece em
+**Bloqueados**, com quem bloqueou, quando e por quê. Na tela de Licenças ele
+ganha o selo **⛔ Bloqueado**, para ninguém renovar ou cobrar sem perceber.
+Alertas e avisos de cobrança desse cliente param.
+
+**Por que não apagar:** apagar não bloqueia. Se o cliente abrir o app de novo,
+o sistema recria o cadastro e a licença sozinho, e ele volta a usar. O bloqueio
+mantém conversas, licença e pagamentos, e **🔓 Desbloquear acesso** devolve
+tudo na hora. Os números de WhatsApp continuam pareados: não é preciso ler o QR
+de novo ao desbloquear.
+
 ---
 
 ## 3. As telas, uma a uma
@@ -166,6 +191,7 @@ Para religar, o mesmo lugar: **Reativar alerta**.
 | **Sistema** | O processo em tempo real (memória, filas) |
 | **Logs ao vivo** | Stream direto do servidor, quando a Saúde não bastou |
 | **Alertas** | Quem recebe aviso, de quê, a cada quanto tempo — e de quais clientes |
+| **Dependências** | O que o UC Talk usa (bibliotecas, sistema, banco, API da Meta, serviço de e-mail), em que versão, e o que precisa de atualização. Verifica sozinha 1x por dia e manda e-mail quando algo fica **crítico** |
 | **Usuários admin** | Quem entra no painel |
 | **IPs bloqueados** | Bloqueios por tentativa de invasão |
 | **Auditoria** | Histórico de quem fez o quê |

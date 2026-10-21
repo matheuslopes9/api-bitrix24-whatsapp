@@ -151,6 +151,11 @@ func (h *handlers) verificarVencimentos(ctx context.Context, n LicenseNotifier) 
 		if !temPrazo {
 			continue
 		}
+		// Cliente bloqueado no painel ja' teve o contrato tratado: cobrar
+		// de novo seria ruido pro financeiro.
+		if bloq, _ := h.repo.PortalBloqueado(ctx, lic.Domain); bloq {
+			continue
+		}
 
 		tipo := avisoVencendo
 		if lic.Expired() {

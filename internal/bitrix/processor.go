@@ -205,6 +205,18 @@ func (p *Processor) ProcessInbound(ctx context.Context, job *queue.InboundJob) e
 		zap.String("connector_id", acct.ConnectorID),
 	)
 
+	// Cliente bloqueado no painel admin: a mensagem fica no nosso historico,
+	// mas nao entra no Bitrix. Sem erro de proposito — erro faria a fila
+	// tentar de novo e mandar pra dead queue, que o reprocesso automatico
+	// reentregaria; bloqueio nao e' falha temporaria.
+	if bloq, motivo := p.repo.PortalBloqueado(ctx, acct.Domain); bloq {
+		p.log.Warn("inbound recusado: cliente bloqueado no painel admin",
+			zap.String("domain", acct.Domain), zap.String("motivo", motivo),
+			zap.String("msg_id", job.MessageID))
+		p.markStatus(ctx, job.MessageID, db.MsgFailed, "cliente bloqueado: "+motivo)
+		return nil
+	}
+
 	creds := TenantCreds{
 		Domain:       acct.Domain,
 		ClientID:     acct.ClientID,

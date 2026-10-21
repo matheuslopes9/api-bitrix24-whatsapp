@@ -14,6 +14,7 @@ import (
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/bitrix"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/config"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/db"
+	"github.com/uctechnology/api-bitrix24-whatsapp/internal/dependencias"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/media"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/queue"
 	"github.com/uctechnology/api-bitrix24-whatsapp/internal/telemetry"
@@ -51,6 +52,10 @@ type handlers struct {
 	// quedaVista: numero -> quando o alerta viu o numero fora do ar pela
 	// primeira vez. Da' a carencia antes do e-mail (ver alertarSessoesCaidas).
 	quedaVista sync.Map
+
+	// deps: verificador da tela Dependencias, criado no primeiro uso.
+	deps     *dependencias.Verificador
+	depsOnce sync.Once
 
 	// credsApp: os portais que tem app OAuth proprio, em cache.
 	// Ver credenciais_app.go — quase sempre vazio, e' excecao por desenho.

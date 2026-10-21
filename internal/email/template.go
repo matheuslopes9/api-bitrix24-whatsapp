@@ -48,6 +48,7 @@ const (
 	CatSessaoCaiu   = "sessao_desconectada"
 	CatLicenca      = "licenca_vencimento"
 	CatTeste        = "teste"
+	CatDependencia  = "dependencia"
 )
 
 type perfilCategoria struct {
@@ -61,6 +62,7 @@ var perfis = map[string]perfilCategoria{
 	CatSessaoCaiu:   {"Conexão WhatsApp", "Número Desconectado", "/admin"},
 	CatLicenca:      {"Licenciamento", "Vencimento de Licença", "/admin"},
 	CatTeste:        {"Alertas", "Teste de Envio", "/admin"},
+	CatDependencia:  {"Manutenção", "Atualização Necessária", "/admin"},
 }
 
 // perfilDe nunca falha: categoria desconhecida cai num padrao seguro em vez

@@ -41,6 +41,11 @@ func (r *Repository) DeveAvisar(ctx context.Context, tipo, ref, dominio string, 
 			if fora, derr := r.PortalDesinstalado(ctx, dominio); derr == nil && fora {
 				mudo = true
 			}
+			// Cliente bloqueado no painel: o numero dele "cair" ou o token
+			// vencer e' consequencia esperada, nao incidente.
+			if bloq, _ := r.PortalBloqueado(ctx, dominio); bloq {
+				mudo = true
+			}
 		}
 		if mudo {
 			return 0, false, nil

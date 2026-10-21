@@ -954,6 +954,23 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, log *zap.Logger) err
 			CREATE INDEX IF NOT EXISTS idx_portals_desinstalado
 				ON bitrix_portals (desinstalado_em) WHERE desinstalado_em IS NOT NULL;
 		`},
+		{"057_portal_bloqueado", `
+			-- Bloqueio de cliente pelo painel admin: o cliente deixa de usar o
+			-- UC Talk (mensagens nao entram nem saem, painel e aba do CRM
+			-- recusam), mas o cadastro FICA.
+			--
+			-- Apagar o portal nao bloqueia: o cliente que abre o app de novo
+			-- recria portal e licenca sozinho (EnsureLicense). So' uma marca
+			-- guardada impede o uso — e mantem conversas, licenca e pagamentos
+			-- pra quando ele voltar.
+			ALTER TABLE bitrix_portals
+				ADD COLUMN IF NOT EXISTS bloqueado_em TIMESTAMPTZ,
+				ADD COLUMN IF NOT EXISTS bloqueado_motivo TEXT NOT NULL DEFAULT '',
+				ADD COLUMN IF NOT EXISTS bloqueado_por TEXT NOT NULL DEFAULT '';
+
+			CREATE INDEX IF NOT EXISTS idx_portals_bloqueado
+				ON bitrix_portals (bloqueado_em) WHERE bloqueado_em IS NOT NULL;
+		`},
 	}
 
 	for _, m := range migrations {

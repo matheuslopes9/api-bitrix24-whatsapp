@@ -84,6 +84,9 @@ func (h *handlers) exigirIdentidadeCRM(c *fiber.Ctx) error {
 	if !ok || udom != dominio {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "sessao expirada — reabra a aba do UC Talk", "codigo": "sem_identidade"})
 	}
+	if bloq, _ := h.repo.PortalBloqueado(c.Context(), dominio); bloq {
+		return respostaBloqueado(c)
+	}
 	// Pedido explicito de OUTRO portal e' recusado, nao corrigido em
 	// silencio: quem manda isso nao e' a nossa tela.
 	if q := normalizePortalDomain(c.Query("domain")); q != "" && q != dominio {

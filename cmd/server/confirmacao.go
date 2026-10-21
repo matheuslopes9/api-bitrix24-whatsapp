@@ -200,3 +200,28 @@ func motivoParaOperador(motivo string) string {
 	}
 	return motivo
 }
+
+// recusarEnvioBloqueado barra a mensagem de um cliente bloqueado no painel
+// admin. Devolve true se barrou. A bolha do operador vira o aviso, e a falha
+// vai pro historico (aba UC Talk). Sem erro de proposito: bloqueio nao e'
+// falha temporaria, e erro faria a fila tentar de novo.
+func recusarEnvioBloqueado(ctx context.Context, bitrixClient *bitrix.Client, repo *db.Repository, log *zap.Logger, job *queue.OutboundJob) bool {
+	acct, err := repo.GetBitrixAccountByJID(ctx, job.SessionJID)
+	if err != nil || acct == nil {
+		return false // sem vinculo nao da' pra saber o cliente: segue o fluxo normal
+	}
+	bloq, motivo := repo.PortalBloqueado(ctx, acct.Domain)
+	if !bloq {
+		return false
+	}
+	log.Warn("envio recusado: cliente bloqueado no painel admin",
+		zap.String("domain", acct.Domain), zap.String("motivo", motivo), zap.String("job_id", job.ID))
+	aviso := "o UC Talk está bloqueado para esta empresa. Fale com a UC Technology."
+	registrarFalhaNoHistorico(ctx, repo, log, job, aviso)
+	if whatsapp.IsCloudJID(job.SessionJID) {
+		notifyOperatorError(ctx, bitrixClient, repo, log, job, aviso)
+	} else {
+		notifyQROperatorError(ctx, bitrixClient, repo, log, job, aviso)
+	}
+	return true
+}

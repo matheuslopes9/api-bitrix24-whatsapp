@@ -2740,3 +2740,17 @@ func (r *Repository) GetTenantUsage(ctx context.Context) ([]*TenantUsage, error)
 }
 
 // ─── Plan definitions (construtor de planos) ───────────────────────────────
+
+// VersaoPostgres e' a versao do servidor de banco (ex.: "16.4"), pra tela de
+// Dependencias. Vazio se nao der pra ler.
+func (r *Repository) VersaoPostgres(ctx context.Context) string {
+	var v string
+	if err := r.pool.QueryRow(ctx, `SELECT current_setting('server_version')`).Scan(&v); err != nil {
+		return ""
+	}
+	// "16.4 (Debian 16.4-1.pgdg120+1)" -> "16.4"
+	if i := strings.IndexByte(v, ' '); i > 0 {
+		v = v[:i]
+	}
+	return v
+}

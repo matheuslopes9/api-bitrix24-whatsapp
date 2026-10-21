@@ -70,6 +70,7 @@ func New(
 	// Aviso diario de vencimento de licenca pro financeiro.
 	h.IniciarAvisosDeLicenca(context.Background())
 	h.IniciarAlertas(context.Background())
+	h.IniciarDependencias(context.Background())
 	h.IniciarReprocessoAutomatico(context.Background())
 	// Conector inativo e' a falha mais silenciosa do sistema: token e numero
 	// continuam perfeitos e a mensagem do cliente morre sem erro. Nao escala
@@ -349,6 +350,9 @@ func New(
 	admin.Get("/api/alertas/config", h.adminGetConfigAlertas)
 	admin.Post("/api/alertas/config", soAdmin, h.adminSalvarConfigAlertas)
 	admin.Get("/api/alertas/historico", h.adminHistoricoAlertas)
+	admin.Get("/api/dependencias", h.adminDependencias)
+	admin.Post("/api/tenant/bloqueio", soAdmin, h.adminBloqueioTenant)
+	admin.Post("/api/dependencias/verificar", h.adminVerificarDependencias)
 	// Ligar/desligar alerta por cliente. O GET fica aberto ao suporte (e'
 	// leitura); silenciar exige admin, como salvar a configuracao — deixar de
 	// ser avisado de um cliente e' decisao, nao consulta.

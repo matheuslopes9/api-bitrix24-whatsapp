@@ -233,6 +233,7 @@ const adminHomeHTML = `<!doctype html>
     <div class="sb-item" data-page="system" onclick="irPara('system')"><span class="ic">🖥️</span> Sistema</div>
     <div class="sb-item" data-page="logs" onclick="irPara('logs')"><span class="ic">📜</span> Logs ao vivo</div>
     <div class="sb-item" data-page="alertas" onclick="irPara('alertas')"><span class="ic">🔔</span> Alertas</div>
+    <div class="sb-item" data-page="dependencias" onclick="irPara('dependencias')"><span class="ic">🧩</span> Dependências <span class="badge-count" id="cnt-deps">0</span></div>
     <div class="sb-group">Segurança</div>
     <div class="sb-item" data-page="conta" onclick="irPara('conta')"><span class="ic">🙋</span> Minha conta</div>
     <div class="sb-item" data-page="users" onclick="irPara('users')"><span class="ic">👥</span> Usuários admin</div>
@@ -291,6 +292,11 @@ const adminHomeHTML = `<!doctype html>
           <option value="vencendo">Vencendo (7 dias)</option>
           <option value="vencida">Vencida</option>
           <option value="sem_licenca">Sem licença</option>
+        </select>
+        <select class="filter" id="tenant-acesso" onchange="renderTenants()" title="Clientes bloqueados saem da lista de ativos">
+          <option value="ativos">Ativos</option>
+          <option value="bloqueados">Bloqueados</option>
+          <option value="todos">Todos</option>
         </select>
         <span id="tenant-count" style="margin-left:auto;font-size:.8em;color:var(--dim);align-self:center"></span>
       </div>
@@ -357,6 +363,30 @@ const adminHomeHTML = `<!doctype html>
         <button class="btn" onclick="document.getElementById('log-view').innerHTML=''">🗑 Limpar</button>
       </div>
       <pre id="log-view" style="background:#05080f;border:1px solid var(--border);border-radius:12px;padding:14px;font-family:ui-monospace,Menlo,monospace;font-size:.76em;line-height:1.5;color:#a7f3d0;overflow:auto;height:60vh;white-space:pre-wrap"></pre>
+    </div>
+
+    <!-- DEPENDENCIAS -->
+    <div class="page" id="page-dependencias">
+      <div class="toolbar">
+        <select class="filter" id="deps-filter" onchange="renderDeps()">
+          <option value="atencao">Precisam de atenção</option>
+          <option value="">Todas</option>
+          <option value="critico">Só críticas</option>
+        </select>
+        <button class="btn" id="deps-btn" onclick="verificarDeps()">↻ Verificar agora</button>
+        <span class="meta" id="deps-quando"></span>
+      </div>
+      <div class="meta" style="margin-bottom:12px;line-height:1.5">
+        Versão em uso lida do próprio servidor; versão mais nova e fim de suporte consultados em
+        proxy.golang.org, endoflife.date e PyPI. A API da Meta segue a tabela de datas do changelog oficial.
+        A verificação roda sozinha 1x por dia e manda e-mail (pela configuração de Alertas) quando algo fica crítico.
+      </div>
+      <div class="tablewrap"><div class="tablescroll">
+        <table>
+          <thead><tr><th>Item</th><th>Em uso</th><th>Mais nova</th><th>Fim do suporte</th><th>Situação</th><th>O que fazer</th></tr></thead>
+          <tbody id="deps-body"><tr><td colspan="6" class="loading">Carregando…</td></tr></tbody>
+        </table>
+      </div></div>
     </div>
 
     <div class="page" id="page-alertas">
@@ -611,6 +641,7 @@ var PAGES={
   system:{title:'Sistema',sub:'Monitoramento do processo em tempo real'},
   logs:{title:'Logs ao vivo',sub:'Stream de logs direto do servidor'},
   alertas:{title:'Alertas',sub:'Quem é avisado, de quê, e a cada quanto tempo'},
+  dependencias:{title:'Dependências',sub:'O que o UC Talk usa, em que versão, e o que precisa de atualização'},
   conta:{title:'Minha conta',sub:'Sua senha'},
   users:{title:'Usuários admin',sub:'Gerenciar quem acessa o painel'},
   ips:{title:'IPs bloqueados',sub:'Controle de acesso por IP'},
@@ -631,6 +662,7 @@ function irPara(p){
   if(p==='usage')carregarUsage();
   if(p==='system')carregarSystem();
   if(p==='alertas')carregarAlertas();
+  if(p==='dependencias')carregarDeps();
   if(p==='conta')carregarConta();
   if(p==='users')carregarUsers();
   if(p==='ips')carregarIPs();
@@ -754,8 +786,11 @@ function renderKpis(m){
 function renderTenants(){
   var q=(document.getElementById('tenant-search').value||'').toLowerCase();
   var fs=document.getElementById('tenant-filter').value;
+  var acesso=(document.getElementById('tenant-acesso')||{}).value||'ativos';
   var body=document.getElementById('tenants-body');
   var list=TENANTS.filter(function(t){
+    if(acesso==='ativos'&&t.bloqueado)return false;
+    if(acesso==='bloqueados'&&!t.bloqueado)return false;
     if(q&&t.domain.toLowerCase().indexOf(q)<0)return false;
     if(fs==='vencida'&&!t.expirada)return false;
     if(fs==='vencendo'&&!(typeof t.dias_restantes==='number'&&t.dias_restantes>=0&&t.dias_restantes<=7))return false;
@@ -763,7 +798,8 @@ function renderTenants(){
     return true;
   });
   var cnt=document.getElementById('tenant-count');
-  if(cnt){cnt.textContent=(q||fs)?(list.length+' de '+TENANTS.length):(TENANTS.length+' clientes');}
+  var nBloq=TENANTS.filter(function(t){return t.bloqueado;}).length;
+  if(cnt){cnt.textContent=list.length+' de '+TENANTS.length+' clientes'+(nBloq?' · '+nBloq+' bloqueado(s)':'');}
   if(!list.length){body.innerHTML='<tr><td colspan="7" class="empty">Nenhum cliente encontrado.</td></tr>';return;}
   body.innerHTML=list.map(function(t){
     var conn=connCel(t);
@@ -780,7 +816,16 @@ function renderTenants(){
     var subDesinst = t.desinstalado
       ? '<div class="meta" style="color:var(--red)">app removido do portal'+(t.desinstalado_em?' em '+_esc(t.desinstalado_em):'')+'</div>'
       : '';
-    return '<tr'+(t.desinstalado?' style="opacity:.6"':'')+'><td><div class="domain">'+t.domain+marcaDesinst+'</div><div class="meta">Linha '+(t.open_line_id||'—')+' · desde '+fmtDate(t.installed_at)+'</div>'+subDesinst+'</td>'+
+    // Bloqueado pelo painel: o cliente nao usa nada. Motivo, quem e quando
+    // ficam na propria linha — e' a primeira pergunta de quem estranhar.
+    var marcaBloq = t.bloqueado ? '<span class="badge b-expired" style="margin-left:6px">⛔ BLOQUEADO</span>' : '';
+    var subBloq = t.bloqueado
+      ? '<div class="meta" style="color:var(--red)">bloqueado em '+_esc(t.bloqueado_em||'')+(t.bloqueado_por?' por '+_esc(t.bloqueado_por):'')+' — '+_esc(t.bloqueado_motivo||'sem motivo')+'</div>'
+      : '';
+    var acaoBloq = t.bloqueado
+      ? '<button onclick="desbloquearTenant(&#39;'+d+'&#39;)">🔓 Desbloquear acesso</button>'
+      : '<button style="color:var(--red)" onclick="bloquearTenant(&#39;'+d+'&#39;)">⛔ Bloquear acesso (remover)</button>';
+    return '<tr'+((t.desinstalado||t.bloqueado)?' style="opacity:.6"':'')+'><td><div class="domain">'+t.domain+marcaDesinst+marcaBloq+'</div><div class="meta">Linha '+(t.open_line_id||'—')+' · desde '+fmtDate(t.installed_at)+'</div>'+subDesinst+subBloq+'</td>'+
       '<td>'+featTags(t)+'<div class="meta">'+(t.max_sessions||1)+' número(s)</div></td>'+
       '<td>'+licBadge(t)+vig+'</td>'+
       '<td>'+conn+'</td><td>'+(t.msgs_24h||0)+'<div class="meta">'+(t.msgs_inbound_24h||0)+'↓ '+(t.msgs_outbound_24h||0)+'↑</div></td>'+
@@ -790,8 +835,34 @@ function renderTenants(){
         '<button onclick="verSaude(&#39;'+d+'&#39;)">🩺 Diagnosticar</button>'+
         '<div class="sep"></div>'+
         '<button onclick="setToolDomain(&#39;'+d+'&#39;)">🔧 Abrir em Ferramentas</button>'+
+        '<div class="sep"></div>'+acaoBloq+
       '</div></div></td></tr>';
   }).join('');
+}
+// Bloquear = tirar o cliente do ar: mensagens nao entram nem saem, e o
+// painel e a aba do CRM dele mostram "acesso bloqueado". O cadastro fica, e
+// desbloquear devolve tudo. Por isso pede motivo e confirmacao explicita.
+function bloquearTenant(d){
+  var dom=decodeURIComponent(d);
+  var motivo=prompt('Bloquear '+dom+'?\n\nO cliente deixa de usar o UC Talk: mensagens do WhatsApp não chegam no Bitrix, o operador não consegue enviar, e o painel e a aba do CRM mostram "acesso bloqueado".\n\nConversas, licença e pagamentos ficam guardados; desbloquear devolve tudo.\n\nInforme o motivo (obrigatório):','');
+  if(motivo===null)return;
+  motivo=motivo.trim();
+  if(!motivo){toast('Informe o motivo do bloqueio',false);return;}
+  enviarBloqueio(dom,true,motivo);
+}
+function desbloquearTenant(d){
+  var dom=decodeURIComponent(d);
+  if(!confirm('Liberar o acesso de '+dom+'?\n\nO cliente volta a usar o UC Talk na hora.'))return;
+  enviarBloqueio(dom,false,'');
+}
+function enviarBloqueio(dom,bloquear,motivo){
+  fetch('/admin/api/tenant/bloqueio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:dom,bloquear:bloquear,motivo:motivo})})
+    .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+    .then(function(x){
+      if(!x.ok){toast(x.j.error||'Falha',false);return;}
+      toast(x.j.mensagem||'Feito',true);
+      carregarTudo();
+    }).catch(function(){toast('Falha de conexão',false);});
 }
 function fechaMenus(){document.querySelectorAll('.menu.open').forEach(function(x){x.classList.remove('open');});}
 // Ancora o menu ao botao em coordenadas de viewport (o menu e' position:fixed).
@@ -880,6 +951,54 @@ function alSilenciar(domEnc,silenciar){
      if(d.error){toast(d.error,false);return;}
      toast(d.mensagem||'Pronto',true); carregarAlertaClientes();
    }).catch(function(e){toast('erro de rede: '+e.message,false);});
+}
+
+// ── Dependencias ──────────────────────────────────────────────────────
+var DEPS=null;
+function escD(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function depBadge(st){
+  if(st==='critico')return '<span class="badge b-expired">Crítico</span>';
+  if(st==='atualizar')return '<span class="badge b-trial">Atualizar</span>';
+  if(st==='em_dia')return '<span class="badge b-active">Em dia</span>';
+  return '<span class="badge b-none">Não verificado</span>';
+}
+function aplicarDeps(r){
+  DEPS=r;
+  var c=document.getElementById('cnt-deps'); if(c){c.textContent=r.criticos||0;}
+  var q=document.getElementById('deps-quando');
+  if(q&&r.verificado_em){q.textContent='Verificado em '+new Date(r.verificado_em).toLocaleString('pt-BR')+' — '+(r.criticos||0)+' crítico(s), '+(r.atualizar||0)+' para atualizar';}
+  renderDeps();
+}
+function carregarDeps(){
+  fetch('/admin/api/dependencias').then(function(r){return r.json();}).then(aplicarDeps)
+    .catch(function(){document.getElementById('deps-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
+}
+function verificarDeps(){
+  var b=document.getElementById('deps-btn'); b.disabled=true; b.textContent='Verificando…';
+  fetch('/admin/api/dependencias/verificar',{method:'POST'}).then(function(r){return r.json();}).then(function(r){aplicarDeps(r);toast('Verificação concluída',true);})
+    .catch(function(){toast('Falha ao verificar',false);})
+    .finally(function(){b.disabled=false;b.textContent='↻ Verificar agora';});
+}
+function renderDeps(){
+  var b=document.getElementById('deps-body');
+  if(!DEPS){return;}
+  var f=document.getElementById('deps-filter').value;
+  var list=(DEPS.itens||[]).filter(function(it){
+    if(f==='critico')return it.status==='critico';
+    if(f==='atencao')return it.status==='critico'||it.status==='atualizar';
+    return true;
+  });
+  if(!list.length){b.innerHTML='<tr><td colspan="6" class="empty">'+(f?'Nada precisando de atenção. ✅':'Nenhum item.')+'</td></tr>';return;}
+  b.innerHTML=list.map(function(it){
+    var nome=it.fonte?'<a href="'+escD(it.fonte)+'" target="_blank" rel="noopener" style="color:inherit">'+escD(it.nome)+'</a>':escD(it.nome);
+    return '<tr><td><div class="domain">'+nome+(it.critico?' <span class="meta">• essencial</span>':'')+'</div>'+
+      '<div class="meta">'+escD(it.categoria)+' — '+escD(it.para_que)+'</div></td>'+
+      '<td style="font-family:ui-monospace,Menlo,monospace;font-size:.8em">'+escD(it.em_uso||'—')+'</td>'+
+      '<td style="font-family:ui-monospace,Menlo,monospace;font-size:.8em">'+escD(it.mais_nova||'—')+'</td>'+
+      '<td>'+(it.fim_suporte?new Date(it.fim_suporte).toLocaleDateString('pt-BR',{timeZone:'UTC'}):'<span class="meta">—</span>')+'</td>'+
+      '<td>'+depBadge(it.status)+'</td>'+
+      '<td style="max-width:420px;font-size:.82em;line-height:1.45">'+escD(it.detalhe)+'</td></tr>';
+  }).join('');
 }
 
 function carregarAlertas(){
@@ -1031,6 +1150,13 @@ function carregarLicencas(){
     LICENCAS=d.licenses||[]; renderLicencas();
   }).catch(function(){document.getElementById('licencas-body').innerHTML='<tr><td colspan="6" class="empty">Falha ao carregar.</td></tr>';});
 }
+// Cliente bloqueado no painel: a licenca continua aqui (e' registro), mas
+// marcada — pra ninguem renovar ou cobrar um contrato encerrado sem notar.
+function tenantBloqueado(dom){
+  var k=String(dom||'').toLowerCase();
+  for(var i=0;i<TENANTS.length;i++){if(String(TENANTS[i].domain||'').toLowerCase()===k)return !!TENANTS[i].bloqueado;}
+  return false;
+}
 function renderLicencas(){
   var q=(document.getElementById('lic-search').value||'').toLowerCase();
   var f=document.getElementById('lic-filter').value;
@@ -1049,7 +1175,7 @@ function renderLicencas(){
       '<td>'+(l.max_sessions||1)+'</td>'+
       '<td>'+featTags(l)+'</td>'+
       '<td>'+(l.valid_until?fmtDia(l.valid_until):'<span class="meta">sem prazo</span>')+'</td>'+
-      '<td>'+licBadge(l)+'</td>'+
+      '<td>'+licBadge(l)+(tenantBloqueado(l.domain)?' <span class="badge b-expired">⛔ Bloqueado</span>':'')+'</td>'+
       '<td style="text-align:right"><div class="actions"><button class="btn" onclick="toggleMenu(this)">&#8943;</button><div class="menu">'+
         '<button onclick="abrirLicenca(&#39;'+d+'&#39;)">Editar contrato</button>'+
         '<button onclick="abrirPagamento(&#39;'+d+'&#39;)">Registrar pagamento</button>'+
@@ -1725,6 +1851,10 @@ function carregarMensagensRecentes(){
 
 function carregarTudo(){
   carregarMensagensRecentes();
+  // So' o contador do menu: le o ultimo resultado guardado, sem consultar a internet.
+  fetch('/admin/api/dependencias?so_cache=1').then(function(r){return r.json();}).then(function(d){
+    var c=document.getElementById('cnt-deps'); if(c){c.textContent=d.criticos||0;}
+  }).catch(function(){});
   fetch('/admin/api/licenses').then(function(r){return r.json();}).then(function(d){
     LICENCAS=d.licenses||[];
     renderRenovacoes(LICENCAS);
