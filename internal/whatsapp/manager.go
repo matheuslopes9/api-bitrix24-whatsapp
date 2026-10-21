@@ -855,6 +855,23 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 					zap.String("input", jid.User), zap.String("canonical", target.User))
 			}
 		}
+	default:
+		// O numero do CRM "existe", mas a conta e' de OUTRO telefone.
+		//
+		// O servidor e' tolerante com o 9o digito: pra "5535999507638" ele
+		// responde que existe, mas devolve como telefone da conta o canonico
+		// ("553599507638"). O par LID<->telefone que o whatsmeow guarda e' o do
+		// canonico, e o SendMessage pro numero do CRM procura o LID do numero
+		// errado: "no LID found". Era exatamente o primeiro envio ATIVO que
+		// falhava — quando o cliente escreve primeiro, a mensagem dele ja' vem
+		// com o canonico e a resposta sai pra ele.
+		//
+		// Sai pro telefone canonico, sempre na forma de telefone (nunca LID).
+		if canon := telefoneCanonico(escolhida); !canon.IsEmpty() && canon.User != jid.User {
+			target = canon
+			m.log.Info("resolveRecipient: WhatsApp devolveu outro telefone pra conta — enviando pro canonico",
+				zap.String("jid", sess.JID), zap.String("pedido", jid.User), zap.String("canonico", canon.User))
+		}
 	}
 
 	// NAO chamar GetUserDevices aqui.
@@ -871,6 +888,19 @@ func (m *Manager) resolveRecipient(ctx context.Context, sess *Session, toJID str
 
 	m.jidCache.Store(chave, jidResolvido{jid: target, em: time.Now()})
 	return target, nil
+}
+
+// telefoneCanonico e' o telefone da conta segundo o WhatsApp, na forma
+// @s.whatsapp.net. Vem no pn_jid quando a resposta e' por LID, ou no proprio
+// JID quando o servidor responde por telefone. Vazio se nao houver.
+func telefoneCanonico(r types.IsOnWhatsAppResponse) types.JID {
+	if r.PhoneNumber.Server == types.DefaultUserServer && r.PhoneNumber.User != "" {
+		return r.PhoneNumber.ToNonAD()
+	}
+	if r.JID.Server == types.DefaultUserServer && r.JID.User != "" {
+		return r.JID.ToNonAD()
+	}
+	return types.EmptyJID
 }
 
 // apenasDigitos tira tudo que nao e' numero. Usado pra casar o campo Query
